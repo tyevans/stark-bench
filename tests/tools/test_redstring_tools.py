@@ -1,6 +1,8 @@
 import pytest
+from pydantic import BaseModel
 from redstring import (
     FakeEmbeddingProvider,
+    FakeLlmProvider,
     InMemoryChunkStore,
     InMemoryGraphStore,
     TenantId,
@@ -76,3 +78,34 @@ async def test_the_toolset_exposes_no_writer(toolset):
     tools = toolset
     for forbidden in ("upsert_entities", "upsert_many", "delete_by_tenant"):
         assert not hasattr(tools, forbidden)
+
+
+class _Answer(BaseModel):
+    text: str
+
+
+@pytest.mark.asyncio
+async def test_extract_delegates_to_the_llm_provider_and_is_recorded():
+    graph, chunks = InMemoryGraphStore(), InMemoryChunkStore(dimension=8)
+    tenant = TenantId(uuid4())
+    llm = FakeLlmProvider(script=[{"text": "cyclooxygenase"}])
+    tools = RedstringToolset(
+        chunks=chunks,
+        graph=graph,
+        embeddings=FakeEmbeddingProvider(dimension=8),
+        tenant_id=tenant,
+        dataset="prime",
+        llm=llm,
+    )
+
+    result = await tools.extract("what does aspirin inhibit?", _Answer)
+
+    assert result == _Answer(text="cyclooxygenase")
+    assert [c.tool for c in tools.calls] == ["extract"]
+
+
+@pytest.mark.asyncio
+async def test_extract_without_an_llm_raises(toolset):
+    tools = toolset
+    with pytest.raises(RuntimeError):
+        await tools.extract("what does aspirin inhibit?", _Answer)

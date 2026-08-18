@@ -10,20 +10,23 @@ Hit@1 alone cannot express it.
 Traversal comes from `RelationshipStore`, not from `Retriever`: redstring's
 `Retriever` holds `EntityReader` only and has no traversal at all.
 
-`complete` is not a straight pass-through of `LlmProvider`: the port's only
-method is `extract(text, schema, ...)`, structured extraction against a
-caller-supplied pydantic schema, not free-text completion -- there is no
-`complete`/`.text`/`.total_tokens` shape on the port to forward. A one-field
-schema recovers a plain string answer without inventing a second LLM
-boundary.
+The LLM seam is `extract(prompt, schema)`, a direct pass-through to
+`LlmProvider.extract`: the port's only method is structured extraction
+against a caller-supplied pydantic schema, and there is no free-text
+`complete`/`.text` shape on it to fake. A typed result is also what an agent
+wants -- parsing prose out of a completion is where that kind of thing breaks
+first.
+
+Token counts are not recorded on any `ToolCall`: `LlmProvider.extract`
+reports no usage data, so a `tokens` field could only ever be a fabricated
+zero. LLM cost is counted in *calls* instead -- reporting distinguishes tool
+calls from LLM calls by `tool == "extract"`.
 """
 
 from __future__ import annotations
 
 from time import perf_counter
 from typing import TYPE_CHECKING
-
-from pydantic import BaseModel
 
 from redstring import ChunkRetriever, RetrievalMode
 
@@ -32,6 +35,8 @@ from stark_bench.ports import Ranked, ToolCall
 from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for, node_id_of
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from redstring import EmbeddingProvider, LlmProvider, TenantId
 
 MODES = {
@@ -39,12 +44,6 @@ MODES = {
     "lexical": RetrievalMode.LEXICAL,
     "hybrid": RetrievalMode.HYBRID,
 }
-
-
-class _Completion(BaseModel):
-    """The one-field schema `complete` extracts against."""
-
-    answer: str
 
 
 class RedstringToolset:
@@ -70,13 +69,12 @@ class RedstringToolset:
         self._retriever = ChunkRetriever(embeddings=embeddings, chunks=chunks)
         self.calls: list[ToolCall] = []
 
-    def _record(self, tool: str, started: float, count: int, tokens: int = 0) -> None:
+    def _record(self, tool: str, started: float, count: int) -> None:
         self.calls.append(
             ToolCall(
                 tool=tool,
                 duration_s=perf_counter() - started,
                 result_count=count,
-                tokens=tokens,
             )
         )
 
@@ -148,10 +146,10 @@ class RedstringToolset:
         self._record("get_relationships", started, len(edges))
         return edges
 
-    async def complete(self, prompt: str) -> str:
+    async def extract[S: BaseModel](self, prompt: str, schema: type[S]) -> S:
         if self._llm is None:
             raise RuntimeError("this toolset was built without an LLM provider")
         started = perf_counter()
-        response = await self._llm.extract(prompt, _Completion)
-        self._record("complete", started, 1)
-        return response.answer
+        result = await self._llm.extract(prompt, schema)
+        self._record("extract", started, 1)
+        return result

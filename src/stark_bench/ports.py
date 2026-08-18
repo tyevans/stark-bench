@@ -12,7 +12,10 @@ structural rather than a matter of discipline.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +46,6 @@ class ToolCall:
     tool: str
     duration_s: float
     result_count: int
-    tokens: int = 0
 
 
 @runtime_checkable
@@ -63,7 +65,7 @@ class Toolset(Protocol):
     async def get_node(self, node_id: str) -> dict[str, object] | None: ...
     async def neighbors(self, node_id: str, *, depth: int = 1) -> list[str]: ...
     async def get_relationships(self, node_id: str) -> list[tuple[str, str, str]]: ...
-    async def complete(self, prompt: str) -> str: ...
+    async def extract[S: BaseModel](self, prompt: str, schema: type[S]) -> S: ...
 
 
 @runtime_checkable
