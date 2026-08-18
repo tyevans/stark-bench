@@ -15,6 +15,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from stark_bench.ports import Query
 
 if TYPE_CHECKING:
@@ -63,3 +65,26 @@ def read_queries(path: Path) -> Iterator[tuple[Query, list[str]]]:
             record = json.loads(line)
             answers = [str(a) for a in record["answer_ids"]]
             yield Query(query_id=int(record["query_id"]), text=record["text"]), answers
+
+
+def _read_embeddings(path: Path) -> dict[str, np.ndarray]:
+    """Reads an `(ids, vectors)` npz into an `{id: vector}` dict.
+
+    Ids are string-keyed on the way out, matching every other artifact here
+    (`SkbNode.node_id`, `Query.query_id` aside), so a caller never has to
+    juggle two id representations to join an embedding against a node.
+    """
+    with np.load(path) as npz:
+        ids = npz["ids"]
+        vectors = npz["vectors"]
+    return {str(int(node_id)): vectors[i] for i, node_id in enumerate(ids)}
+
+
+def read_doc_embeddings(path: Path) -> dict[str, np.ndarray]:
+    """STaRK's precomputed candidate embeddings, keyed by node id."""
+    return _read_embeddings(path)
+
+
+def read_query_embeddings(path: Path) -> dict[str, np.ndarray]:
+    """STaRK's precomputed query embeddings, keyed by query id."""
+    return _read_embeddings(path)
