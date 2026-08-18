@@ -2053,6 +2053,61 @@ git add -A && git commit -m "Export STaRK's SKB to neutral artifacts from a 3.11
 
 ---
 
+### Task 10b: Acquire STaRK's precomputed ada-002 embeddings
+
+**Files:**
+- Create: `src/stark_bench/sidecar/embeddings.py`
+- Test: `tests/sidecar/test_embedding_artifacts.py`
+
+**Interfaces:**
+- Produces: `data/prime/doc_emb.npz` (node_id -> vector) and `data/prime/query_emb.npz`
+  (query_id -> vector), plus `read_doc_embeddings(path)` / `read_query_embeddings(path)`.
+
+**These embeddings are keyed by ID, not by text.** STaRK ships
+`candidate_emb_dict.pt` (`node_id -> tensor`) and `query_emb_dict.pt`
+(`query_id -> tensor`). That is better than the text-keyed lookup this plan
+originally specified: an id lookup is exact by construction, with no dependence
+on our chunk text being byte-identical to what they embedded.
+
+They live on Google Drive, not HuggingFace, reached with `gdown`. From STaRK's
+`emb_download.py`, for prime:
+
+```
+query embeddings: 1MshwJttPZsHEM2cKA5T13SIrsLeBEdyU
+node  embeddings: 16EJvCMbgkVrQ0BuIBvLBp-BYPaye-Edy
+```
+
+- [ ] **Step 1: Download and convert, in the sidecar**
+
+Write `src/stark_bench/sidecar/embeddings.py`, run BY PATH under the sidecar
+interpreter (it needs `torch` and `gdown`, neither of which belongs in the
+harness). It downloads both files, loads them with `torch.load`, and writes two
+`.npz` files holding an `ids` array and a `vectors` array — a format the 3.13
+harness can read with numpy alone.
+
+```bash
+uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" --with gdown \
+    python src/stark_bench/sidecar/embeddings.py --dataset prime --out data/prime
+```
+
+- [ ] **Step 2: Verify what arrived**
+
+Report the vector count and dimension for both files. **ada-002 is 1536.** If the
+dimension is not 1536, stop and report — a different width means a different model
+and the control is not a control.
+
+Assert the doc embedding ids cover the candidate set: any candidate without a
+vector cannot be retrieved by the control at all, and that ceiling must be known
+and reported rather than discovered as a bad score.
+
+- [ ] **Step 3: Commit** (`data/` is gitignored; only code is committed)
+
+```bash
+git add -A && git commit -m "Acquire STaRK's precomputed ada-002 embeddings, keyed by id"
+```
+
+---
+
 ### Task 11: Real backing, real ingest, and the first STaRK number
 
 **Files:**
