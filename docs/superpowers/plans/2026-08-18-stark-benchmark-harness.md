@@ -880,8 +880,7 @@ async def ingest(
         source_id = SourceId(entity_id_for(dataset, node.node_id))
         result = chunker.chunk(node.document)
         texts = [c.text for c in result.chunks]
-        vectors = embeddings.embed(texts)
-        vectors = await vectors if hasattr(vectors, "__await__") else vectors
+        vectors = await embeddings.embed(texts)
         for piece, vector in zip(result.chunks, vectors, strict=True):
             chunk_batch.append(
                 StoredChunk(
