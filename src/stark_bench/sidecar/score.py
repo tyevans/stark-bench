@@ -4,9 +4,14 @@ We compute no metric ourselves. An expected value produced by the code under
 test measures determinism rather than correctness, and a reimplemented MRR is
 exactly that.
 
-Invoked as a subprocess:
-    uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" python -m stark_bench.sidecar.score \
-        --predictions preds.json --answers answers.json --out metrics.json
+Invoked as a subprocess, BY PATH -- `--no-project` means `stark_bench` is not
+installed in this environment, so `-m stark_bench.sidecar.score` cannot
+resolve and is not the real call site. `harness/scoring.py` builds this
+command:
+    uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" python \
+        /path/to/src/stark_bench/sidecar/score.py \
+        --predictions preds.json --answers answers.json \
+        --candidates candidates.json --out metrics.json
 """
 
 from __future__ import annotations
