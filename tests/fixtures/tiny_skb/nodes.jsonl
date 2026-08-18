@@ -1,0 +1,12 @@
+{"node_id": "1", "node_type": "drug", "name": "aspirin", "document": "Aspirin is a salicylate that irreversibly inhibits cyclooxygenase. It is used for pain, fever and inflammation, and at low dose for cardiovascular prophylaxis. Long text follows to force more than one chunk. " }
+{"node_id": "2", "node_type": "gene", "name": "PTGS2", "document": "PTGS2 encodes cyclooxygenase-2, an enzyme induced during inflammation."}
+{"node_id": "3", "node_type": "gene", "name": "PTGS1", "document": "PTGS1 encodes cyclooxygenase-1, expressed constitutively in most tissues."}
+{"node_id": "4", "node_type": "disease", "name": "inflammation", "document": "Inflammation is a protective response involving immune cells and mediators."}
+{"node_id": "5", "node_type": "drug", "name": "ibuprofen", "document": "Ibuprofen is a nonselective NSAID inhibiting cyclooxygenase enzymes reversibly."}
+{"node_id": "6", "node_type": "drug", "name": "celecoxib", "document": "Celecoxib is a selective COX-2 inhibitor used in arthritis."}
+{"node_id": "7", "node_type": "pathway", "name": "prostaglandin synthesis", "document": "The prostaglandin synthesis pathway converts arachidonic acid to prostaglandins."}
+{"node_id": "8", "node_type": "disease", "name": "arthritis", "document": "Arthritis is joint inflammation causing pain and stiffness."}
+{"node_id": "9", "node_type": "gene", "name": "TNF", "document": "TNF encodes tumour necrosis factor, a pro-inflammatory cytokine."}
+{"node_id": "10", "node_type": "drug", "name": "paracetamol", "document": "Paracetamol is an analgesic and antipyretic with weak anti-inflammatory action."}
+{"node_id": "11", "node_type": "pathway", "name": "cytokine signalling", "document": "Cytokine signalling coordinates immune cell communication."}
+{"node_id": "12", "node_type": "disease", "name": "fever", "document": "Fever is an elevated body temperature, often mediated by prostaglandins."}

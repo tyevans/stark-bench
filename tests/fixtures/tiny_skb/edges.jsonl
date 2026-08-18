@@ -1,0 +1,11 @@
+{"source": "1", "target": "2", "relation": "targets"}
+{"source": "1", "target": "3", "relation": "targets"}
+{"source": "5", "target": "2", "relation": "targets"}
+{"source": "5", "target": "3", "relation": "targets"}
+{"source": "6", "target": "2", "relation": "targets"}
+{"source": "2", "target": "7", "relation": "participates_in"}
+{"source": "3", "target": "7", "relation": "participates_in"}
+{"source": "4", "target": "8", "relation": "related_to"}
+{"source": "9", "target": "11", "relation": "participates_in"}
+{"source": "1", "target": "12", "relation": "treats"}
+{"source": "4", "target": "4", "relation": "related_to"}
