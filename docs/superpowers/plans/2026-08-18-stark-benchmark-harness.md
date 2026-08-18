@@ -14,7 +14,7 @@
 
 - Python **3.13** for the harness. `requires-python = ">=3.13"`.
 - **uv only.** Never hand-edit `[project.dependencies]`; use `uv add`, `uv add --dev`, `uv remove`. Re-sync with `--all-extras` after any dependency change.
-- **stark-qa is never a harness dependency.** It runs only in the sidecar via `uv run --python 3.11 --with stark-qa`.
+- **stark-qa is never a harness dependency.** It runs only in the sidecar via `uv run --no-project --python 3.11 --with stark-qa --with "numpy<2"`.
 - **We compute no retrieval metric ourselves.** All metrics come from `stark_qa.evaluator.Evaluator`.
 - **`RRF_K` is never tuned or exposed.** Redstring's constant (60) stands.
 - **`agents/` may import `stark_bench.ports` and nothing else from `stark_bench`.** Enforced by import-linter.
@@ -1095,7 +1095,7 @@ test measures determinism rather than correctness, and a reimplemented MRR is
 exactly that.
 
 Invoked as a subprocess:
-    uv run --python 3.11 --with stark-qa python -m stark_bench.sidecar.score \
+    uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" python -m stark_bench.sidecar.score \
         --predictions preds.json --answers answers.json --out metrics.json
 """
 
@@ -1110,6 +1110,7 @@ def main() -> None:
     parser.add_argument("--predictions", required=True)
     parser.add_argument("--answers", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--candidates", required=True)
     parser.add_argument("--metrics", default="mrr,hit@1,hit@5,recall@20")
     args = parser.parse_args()
 
@@ -1122,7 +1123,9 @@ def main() -> None:
         answers = json.load(handle)
 
     metrics = args.metrics.split(",")
-    evaluator = Evaluator(candidate_ids=None)
+    with open(args.candidates) as handle:
+        candidate_ids = [int(c) for c in json.load(handle)]
+    evaluator = Evaluator(candidate_ids)
 
     totals: dict[str, list[float]] = {m: [] for m in metrics}
     for query_id, pred in predictions.items():
@@ -1141,10 +1144,23 @@ if __name__ == "__main__":
     main()
 ```
 
-**Note for the implementer:** `Evaluator`'s constructor signature must be read from the installed `stark_qa` package before this is trusted — `candidate_ids=None` is the expected form but verify it, and verify whether `evaluate` takes a dict or tensors. Run:
+**The signature below is verified, not guessed** — read from the installed package:
+
+```
+Evaluator.__init__(self, candidate_ids: List[int], device: str = "cpu")
+Evaluator.evaluate(self, pred_dict: Dict[int, float], answer_ids: torch.LongTensor,
+                   metrics: List[str] = ["mrr", "hit@3", "recall@20"]) -> Dict[str, float]
+```
+
+`candidate_ids` is **required and load-bearing**: `evaluate` computes
+`max(self.candidate_ids)` and indexes by it, so passing `None` raises. It is the
+full list of candidate node ids for the dataset, as ints. Unscored candidates are
+filled with `min(pred) - 1`, so predictions need only carry what was retrieved.
+
+You may re-confirm with:
 
 ```bash
-uv run --python 3.11 --with stark-qa python -c "import inspect, stark_qa.evaluator as e; print(inspect.signature(e.Evaluator.__init__)); print(inspect.signature(e.Evaluator.evaluate))"
+uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" python -c "import inspect, stark_qa.evaluator as e; print(inspect.signature(e.Evaluator.__init__)); print(inspect.signature(e.Evaluator.evaluate))"
 ```
 
 Fix the call to match what it prints. Do not guess.
@@ -1165,7 +1181,7 @@ from stark_bench.ports import Ranked
 def test_a_perfect_agent_scores_one():
     predictions = {1: [Ranked("6", 1.0), Ranked("2", 0.1)]}
     answers = {1: ["6"]}
-    metrics = score_predictions(predictions, answers, metrics=["hit@1", "mrr"])
+    metrics = score_predictions(predictions, answers, candidate_ids=list(range(1, 1000)), metrics=["hit@1", "mrr"])
     assert metrics["hit@1"] == pytest.approx(1.0)
     assert metrics["mrr"] == pytest.approx(1.0)
 
@@ -1175,7 +1191,7 @@ def test_a_useless_agent_scores_zero():
     """Without this, a scoring path that returns 1.0 unconditionally passes."""
     predictions = {1: [Ranked("999", 1.0), Ranked("998", 0.5)]}
     answers = {1: ["6"]}
-    metrics = score_predictions(predictions, answers, metrics=["hit@1", "mrr"])
+    metrics = score_predictions(predictions, answers, candidate_ids=list(range(1, 1000)), metrics=["hit@1", "mrr"])
     assert metrics["hit@1"] == pytest.approx(0.0)
     assert metrics["mrr"] == pytest.approx(0.0)
 
@@ -1183,8 +1199,11 @@ def test_a_useless_agent_scores_zero():
 @pytest.mark.integration
 def test_rank_order_matters():
     """A right answer in second place must not score like first place."""
-    first = score_predictions({1: [Ranked("6", 1.0), Ranked("9", 0.5)]}, {1: ["6"]}, metrics=["mrr"])
-    second = score_predictions({1: [Ranked("9", 1.0), Ranked("6", 0.5)]}, {1: ["6"]}, metrics=["mrr"])
+    candidates = list(range(1, 1000))
+    first = score_predictions({1: [Ranked("6", 1.0), Ranked("9", 0.5)]}, {1: ["6"]},
+                              candidate_ids=candidates, metrics=["mrr"])
+    second = score_predictions({1: [Ranked("9", 1.0), Ranked("6", 0.5)]}, {1: ["6"]},
+                               candidate_ids=candidates, metrics=["mrr"])
     assert first["mrr"] > second["mrr"]
 ```
 
@@ -1221,11 +1240,15 @@ if TYPE_CHECKING:
 
 DEFAULT_METRICS = ("mrr", "hit@1", "hit@5", "recall@20")
 
+#: Invoked by path: `--no-project` means `stark_bench` is not importable there.
+SIDECAR = Path(__file__).resolve().parent.parent / "sidecar" / "score.py"
+
 
 def score_predictions(
     predictions: Mapping[int, Sequence[Ranked]],
     answers: Mapping[int, Sequence[str]],
     *,
+    candidate_ids: Sequence[int],
     metrics: Sequence[str] = DEFAULT_METRICS,
 ) -> dict[str, float]:
     """Run the official evaluator over `predictions`. Raises on any failure."""
@@ -1250,9 +1273,9 @@ def score_predictions(
 
         completed = subprocess.run(  # noqa: S603
             [
-                "uv", "run", "--python", "3.11", "--with", "stark-qa",
-                sys.executable.rsplit("/", 1)[-1] if False else "python",
-                "-m", "stark_bench.sidecar.score",
+                "uv", "run", "--no-project", "--python", "3.11",
+                "--with", "stark-qa", "--with", "numpy<2", "python",
+                str(SIDECAR),
                 "--predictions", str(preds_path),
                 "--answers", str(answers_path),
                 "--out", str(out_path),
@@ -1788,7 +1811,7 @@ async def test_the_whole_pipeline_produces_a_number():
     tools = RedstringToolset(chunks=chunks, graph=graph, embeddings=embeddings,
                             tenant_id=tenant, dataset="fixture")
     predictions = await run(HybridAgent(k=20), queries, tools)
-    metrics = score_predictions(predictions, answers)
+    metrics = score_predictions(predictions, answers, candidate_ids=list(range(1, 13)))
 
     assert set(metrics) >= {"mrr", "hit@1", "hit@5", "recall@20"}
     assert 0.0 <= metrics["mrr"] <= 1.0
@@ -1817,12 +1840,12 @@ git add -A && git commit -m "Baseline agents, the runner, and the pipeline prove
 
 **Interfaces:**
 - Consumes: nothing at runtime (isolated interpreter).
-- Produces: `nodes.jsonl`, `edges.jsonl`, `queries.<split>.jsonl`, `embeddings.ada002.npz` under `data/<dataset>/`.
+- Produces: `nodes.jsonl`, `edges.jsonl`, `queries.<split>.jsonl`, `candidates.json`, `embeddings.ada002.npz` under `data/<dataset>/`.
 
 - [ ] **Step 1: Inspect the real API before writing anything**
 
 ```bash
-uv run --python 3.11 --with stark-qa python - <<'EOF'
+uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" python - <<'EOF'
 from stark_qa import load_qa, load_skb
 import inspect
 print(inspect.signature(load_skb))
@@ -1848,7 +1871,7 @@ best guess from STaRK's documentation and **must be corrected to match**.
 """STaRK's SKB to neutral artifacts, under 3.11 with `stark-qa` installed.
 
 Run:
-    uv run --python 3.11 --with stark-qa --with numpy \
+    uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" --with numpy \
         python -m stark_bench.sidecar.export --dataset prime --out data/prime
 """
 
@@ -1920,6 +1943,10 @@ def main() -> None:
                     + "\n"
                 )
 
+    (out / "candidates.json").write_text(
+        json.dumps([int(n) for n in range(skb.num_nodes())])
+    )
+
     print(f"exported {args.dataset} to {out}")
 
 
@@ -1969,7 +1996,7 @@ def test_the_readers_accept_the_exporter_schema(exported):
 
 ```bash
 uv run pytest tests/sidecar/test_export_contract.py -v -p no:randomly
-uv run --python 3.11 --with stark-qa --with numpy python -m stark_bench.sidecar.export --dataset prime --out data/prime
+uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" --with numpy python -m stark_bench.sidecar.export --dataset prime --out data/prime
 wc -l data/prime/*.jsonl
 ```
 
