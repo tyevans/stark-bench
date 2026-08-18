@@ -463,7 +463,7 @@ git add -A && git commit -m "Deterministic STaRK node id mapping, keyed on both 
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `SkbNode`, `SkbEdge`, `SkbQuery`, `read_nodes(path) -> Iterator[SkbNode]`, `read_edges(path) -> Iterator[SkbEdge]`, `read_queries(path) -> Iterator[tuple[SkbQuery, list[str]]]`.
+- Produces: `SkbNode`, `SkbEdge`, `read_nodes(path) -> Iterator[SkbNode]`, `read_edges(path) -> Iterator[SkbEdge]`, `read_queries(path) -> Iterator[tuple[SkbQuery, list[str]]]`.
 
 The neutral format is what the sidecar writes and the harness reads. Defining it now means Task 10's sidecar has a target, and every earlier task can run on the fixture without downloading 129k nodes.
 
