@@ -877,7 +877,9 @@ async def ingest(
         known.add(node.node_id)
         node_count += 1
 
-        source_id = SourceId(entity_id_for(dataset, node.node_id))
+        # `SourceId` is a NewType over *str*, not UUID: `chunk_id` calls
+        # `.encode()` on it. A UUID here raises AttributeError at runtime.
+        source_id = SourceId(f"{dataset}:{node.node_id}")
         result = chunker.chunk(node.document)
         texts = [c.text for c in result.chunks]
         vectors = await embeddings.embed(texts)
