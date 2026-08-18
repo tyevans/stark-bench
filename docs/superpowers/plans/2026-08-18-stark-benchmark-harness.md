@@ -2356,6 +2356,19 @@ Wire config to stores: `precomputed-ada002` builds a lookup-table provider from 
 
 Stores come from the pinned dotted paths (`redstring.chunks.adapters.postgres`, `redstring.graph.adapters.neo4j`) against the compose services, one tenant and one store per config.
 
+- [ ] **Step 6b: Ingest nodes and chunks only — not relationships**
+
+`dense` and `hybrid` retrieve through `ChunkRetriever`, which holds a `ChunkStore`
+and nothing else. Neither baseline touches the graph, and `neighbors` /
+`get_relationships` are used only by a traversal agent. stark-prime has **8.1M
+edges**, which at 500 per batch is roughly 16,200 transactions standing between us
+and the first real number, for no benefit to that number.
+
+So the CLI takes `--ingest-edges` as a separate switch, defaulting off. Entities
+and chunks load here; relationships load before Task 14, which is the first task
+whose agent actually traverses. Record in the run report which of the two ran, so
+a later reader cannot mistake a graph-less run for a graph one.
+
 - [ ] **Step 7: Bring up the services and run the control**
 
 ```bash
