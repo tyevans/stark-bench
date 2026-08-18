@@ -1,0 +1,17 @@
+services:
+  neo4j:
+    image: neo4j:5.28
+    environment:
+      NEO4J_AUTH: neo4j/password
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: stark_bench
+      POSTGRES_PASSWORD: stark_bench
+      POSTGRES_DB: stark_bench
+    ports:
+      - "5432:5432"

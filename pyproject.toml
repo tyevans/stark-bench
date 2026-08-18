@@ -7,8 +7,44 @@ authors = [
     { name = "Ty Evans", email = "tyler@poorlythoughtout.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "redstring[neo4j,pgvector]",
+]
 
 [build-system]
 requires = ["uv_build>=0.8.8,<0.9.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+redstring = { path = "../redstring" }
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.165.10",
+    "import-linter>=2.13",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-randomly>=4.1.0",
+    "ruff>=0.16.3",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: needs the stark-qa sidecar or a database",
+]
+addopts = "-m 'not integration'"
+
+[tool.importlinter]
+root_packages = ["stark_bench"]
+
+[[tool.importlinter.contracts]]
+name = "agents may only import ports"
+type = "forbidden"
+source_modules = ["stark_bench.agents"]
+forbidden_modules = [
+    "stark_bench.harness",
+    "stark_bench.skb",
+    "stark_bench.sidecar",
+]
