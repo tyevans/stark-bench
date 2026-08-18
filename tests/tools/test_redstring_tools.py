@@ -1,0 +1,78 @@
+import pytest
+from redstring import (
+    FakeEmbeddingProvider,
+    InMemoryChunkStore,
+    InMemoryGraphStore,
+    TenantId,
+)
+from uuid import uuid4
+
+from stark_bench.ports import Toolset
+from stark_bench.skb.artifacts import SkbEdge, SkbNode
+from stark_bench.skb.chunkers import WholeDocumentChunker
+from stark_bench.skb.ingest import ingest
+from stark_bench.tools.redstring_tools import RedstringToolset
+
+
+@pytest.fixture
+async def toolset():
+    graph, chunks = InMemoryGraphStore(), InMemoryChunkStore(dimension=8)
+    tenant = TenantId(uuid4())
+    nodes = [
+        SkbNode("1", "drug", "aspirin", "aspirin inhibits cyclooxygenase"),
+        SkbNode("2", "gene", "PTGS2", "PTGS2 encodes cyclooxygenase-2"),
+    ]
+    await ingest(
+        nodes,
+        [SkbEdge("1", "2", "targets")],
+        dataset="prime",
+        tenant_id=tenant,
+        graph=graph,
+        chunks=chunks,
+        chunker=WholeDocumentChunker(),
+        embeddings=FakeEmbeddingProvider(dimension=8),
+    )
+    return RedstringToolset(
+        chunks=chunks,
+        graph=graph,
+        embeddings=FakeEmbeddingProvider(dimension=8),
+        tenant_id=tenant,
+        dataset="prime",
+    )
+
+
+@pytest.mark.asyncio
+async def test_it_satisfies_the_toolset_protocol(toolset):
+    assert isinstance(toolset, Toolset)
+
+
+@pytest.mark.asyncio
+async def test_search_returns_stark_node_ids_not_entity_ids(toolset):
+    tools = toolset
+    results = await tools.search_chunks("cyclooxygenase", k=5)
+    assert results
+    assert all(r.node_id in {"1", "2"} for r in results)
+
+
+@pytest.mark.asyncio
+async def test_every_call_is_recorded(toolset):
+    tools = toolset
+    await tools.search_chunks("cyclooxygenase", k=5)
+    await tools.neighbors("1")
+    assert [c.tool for c in tools.calls] == ["search_chunks", "neighbors"]
+    assert all(c.duration_s >= 0 for c in tools.calls)
+
+
+@pytest.mark.asyncio
+async def test_neighbors_returns_stark_ids(toolset):
+    tools = toolset
+    assert await tools.neighbors("1") == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_the_toolset_exposes_no_writer(toolset):
+    """Reader-only is the point: an agent that cannot write cannot poison
+    the KB mid-run."""
+    tools = toolset
+    for forbidden in ("upsert_entities", "upsert_many", "delete_by_tenant"):
+        assert not hasattr(tools, forbidden)
