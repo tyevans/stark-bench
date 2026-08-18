@@ -642,7 +642,7 @@ git add -A && git commit -m "Neutral SKB artifact format, plus a twelve-node fix
 ### Task 5: The loader
 
 **Files:**
-- Create: `src/stark_bench/skb/ingest.py`
+- Create: `src/stark_bench/skb/ingest.py`, `src/stark_bench/skb/chunkers.py`
 - Test: `tests/skb/test_ingest.py`
 
 **Interfaces:**
@@ -1081,7 +1081,7 @@ git add -A && git commit -m "Chunk-to-node aggregation, by a named strategy reco
 
 **Interfaces:**
 - Consumes: `Ranked`.
-- Produces: `write_predictions(path, predictions) -> None`, `score(predictions_path, answers_path, *, metrics) -> dict[str, float]`.
+- Produces: `score_predictions(predictions, answers, *, metrics) -> dict[str, float]` in `harness/scoring.py`, and the sidecar entry point `stark_bench.sidecar.score`.
 
 - [ ] **Step 1: Write the sidecar script**
 
@@ -1272,7 +1272,9 @@ def score_predictions(
 
 **Note for the implementer:** the subprocess must be able to import `stark_bench.sidecar.score`. Add `--with-editable .` to the `uv run` invocation, or set `PYTHONPATH` to `src`. Verify by running the command by hand before trusting the test.
 
-- [ ] **Step 5: Register the marker in `pyproject.toml`**
+- [ ] **Step 5: Confirm the pytest configuration is already present**
+
+Task 1 added it. Verify `pyproject.toml` contains exactly this and change nothing if so:
 
 ```toml
 [tool.pytest.ini_options]
@@ -1337,12 +1339,12 @@ async def toolset():
 
 @pytest.mark.asyncio
 async def test_it_satisfies_the_toolset_protocol(toolset):
-    assert isinstance(await toolset, Toolset)
+    assert isinstance(toolset, Toolset)
 
 
 @pytest.mark.asyncio
 async def test_search_returns_stark_node_ids_not_entity_ids(toolset):
-    tools = await toolset
+    tools = toolset
     results = await tools.search_chunks("cyclooxygenase", k=5)
     assert results
     assert all(r.node_id in {"1", "2"} for r in results)
@@ -1350,7 +1352,7 @@ async def test_search_returns_stark_node_ids_not_entity_ids(toolset):
 
 @pytest.mark.asyncio
 async def test_every_call_is_recorded(toolset):
-    tools = await toolset
+    tools = toolset
     await tools.search_chunks("cyclooxygenase", k=5)
     await tools.neighbors("1")
     assert [c.tool for c in tools.calls] == ["search_chunks", "neighbors"]
@@ -1359,7 +1361,7 @@ async def test_every_call_is_recorded(toolset):
 
 @pytest.mark.asyncio
 async def test_neighbors_returns_stark_ids(toolset):
-    tools = await toolset
+    tools = toolset
     assert await tools.neighbors("1") == ["2"]
 
 
@@ -1367,7 +1369,7 @@ async def test_neighbors_returns_stark_ids(toolset):
 async def test_the_toolset_exposes_no_writer(toolset):
     """Reader-only is the point: an agent that cannot write cannot poison
     the KB mid-run."""
-    tools = await toolset
+    tools = toolset
     for forbidden in ("upsert_entities", "upsert_many", "delete_by_tenant"):
         assert not hasattr(tools, forbidden)
 ```
@@ -1986,12 +1988,12 @@ git add -A && git commit -m "Export STaRK's SKB to neutral artifacts from a 3.11
 ### Task 11: Real backing, real ingest, and the first STaRK number
 
 **Files:**
-- Create: `docker-compose.yml`, `src/stark_bench/harness/config.py`, `src/stark_bench/harness/report.py`, `config/vss-control.yaml`, `config/redstring-native.yaml`, `src/stark_bench/harness/cli.py`
+- Create: `docker-compose.yml`, `src/stark_bench/harness/providers.py`, `src/stark_bench/harness/config.py`, `src/stark_bench/harness/report.py`, `config/vss-control.yaml`, `config/redstring-native.yaml`, `src/stark_bench/harness/cli.py`
 - Test: `tests/harness/test_config.py`, `tests/harness/test_report.py`
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `RunConfig`, `load_config(path) -> RunConfig`, `write_report(path, *, config, metrics, cost, ingest) -> None`, and a CLI entry point.
+- Produces: `RunConfig`, `load_config(path) -> RunConfig`, `write_report(...) -> None`, `PrecomputedEmbeddingProvider` (in `harness/providers.py`; Task 12 supplies its tests), and a CLI entry point.
 
 - [ ] **Step 1: Write `docker-compose.yml`**
 
@@ -2245,7 +2247,7 @@ git add -A && git commit -m "Real backing, real ingest, and the vss-control numb
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: `PrecomputedEmbeddingProvider`, and a `redstring-native` results file.
+- Produces: tests for `PrecomputedEmbeddingProvider` (created in Task 11), and a `redstring-native` results file.
 
 - [ ] **Step 1: Write the failing provider test**
 
@@ -2277,7 +2279,7 @@ def test_a_miss_raises_and_never_falls_back(provider):
         provider.embed(["a text nobody embedded"])
 ```
 
-- [ ] **Step 2: Run and watch fail**, then implement `PrecomputedEmbeddingProvider` in `src/stark_bench/harness/providers.py` satisfying redstring's `EmbeddingProvider` protocol: `model`, `dimension`, and a batch `embed` that preserves input order and raises `KeyError` on a miss.
+- [ ] **Step 2: Run and watch fail**, then correct `PrecomputedEmbeddingProvider` in `src/stark_bench/harness/providers.py` (Task 11 created it) so that it satisfies redstring's `EmbeddingProvider` protocol: `model`, `dimension`, and a batch `embed` that preserves input order and raises `KeyError` on a miss.
 
 - [ ] **Step 3: Run the native config**
 
