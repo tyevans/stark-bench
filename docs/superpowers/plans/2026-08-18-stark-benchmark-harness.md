@@ -1464,7 +1464,9 @@ class RedstringToolset:
         self._retriever = ChunkRetriever(embeddings=embeddings, chunks=chunks)
         self.calls: list[ToolCall] = []
 
-    def _record(self, tool: str, started: float, count: int, tokens: int = 0) -> None:
+    def _record(
+        self, tool: str, started: float, count: int, tokens: int | None = None
+    ) -> None:
         self.calls.append(
             ToolCall(
                 tool=tool,
@@ -1538,14 +1540,24 @@ class RedstringToolset:
         self._record("get_relationships", started, len(edges))
         return edges
 
-    async def complete(self, prompt: str) -> str:
+    async def extract[S: BaseModel](self, prompt: str, schema: type[S]) -> S:
+        """The LLM seam.
+
+        `extract`, not `complete`: redstring's `LlmProvider` offers only
+        structured extraction against a caller-supplied schema. That is also
+        the better seam -- a planner returning a typed object beats one
+        returning prose an agent has to parse.
+
+        Tokens come from a counting wrapper around the LangChain chat model,
+        one layer below redstring's provider, so the real provider stays in
+        the path. When the endpoint reports no usage, `tokens` stays `None`.
+        """
         if self._llm is None:
             raise RuntimeError("this toolset was built without an LLM provider")
         started = perf_counter()
-        response = await self._llm.complete(prompt)
-        text = getattr(response, "text", response)
-        self._record("complete", started, 1, tokens=getattr(response, "total_tokens", 0))
-        return text
+        result = await self._llm.extract(prompt, schema)
+        self._record("extract", started, 1, tokens=self._usage.take())
+        return result
 ```
 
 - [ ] **Step 4: Run the tests**
@@ -2177,12 +2189,19 @@ def summarise_cost(calls: Sequence[ToolCall], queries: int) -> dict[str, float]:
         return {
             "tool_calls_per_query": 0.0,
             "llm_calls_per_query": 0.0,
+            "tokens_per_query": None,
             "seconds_total": 0.0,
         }
     llm_calls = [c for c in calls if c.tool == "extract"]
+    measured = [c for c in llm_calls if c.tokens is not None]
     return {
         "tool_calls_per_query": len(calls) / queries,
         "llm_calls_per_query": len(llm_calls) / queries,
+        # `None`, not 0.0, when nothing reported usage: a missing measurement
+        # and a measurement of nothing are different facts.
+        "tokens_per_query": (
+            sum(c.tokens for c in measured) / queries if measured else None
+        ),
         "seconds_total": sum(c.duration_s for c in calls),
     }
 
