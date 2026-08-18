@@ -17,10 +17,15 @@ against a caller-supplied pydantic schema, and there is no free-text
 wants -- parsing prose out of a completion is where that kind of thing breaks
 first.
 
-Token counts are not recorded on any `ToolCall`: `LlmProvider.extract`
-reports no usage data, so a `tokens` field could only ever be a fabricated
-zero. LLM cost is counted in *calls* instead -- reporting distinguishes tool
-calls from LLM calls by `tool == "extract"`.
+`ToolCall.tokens` is `int | None`, not defaulted to zero. `LlmProvider`
+itself reports no usage, so today's `extract` always records `None` here --
+but usage *is* measurable one layer below the port: `LangChainLlmProvider`
+holds a LangChain `BaseChatModel`, and `ainvoke` on that populates
+`AIMessage.usage_metadata` for OpenAI-compatible endpoints. A counting
+wrapper around that chat model belongs with the CLI wiring, where a real
+endpoint is configured -- not here, and not invented. Leaving `tokens` as
+`None` rather than `0` keeps "the endpoint reported no usage" distinguishable
+from "this call used no tokens", which a default of zero could not express.
 """
 
 from __future__ import annotations
@@ -69,12 +74,15 @@ class RedstringToolset:
         self._retriever = ChunkRetriever(embeddings=embeddings, chunks=chunks)
         self.calls: list[ToolCall] = []
 
-    def _record(self, tool: str, started: float, count: int) -> None:
+    def _record(
+        self, tool: str, started: float, count: int, tokens: int | None = None
+    ) -> None:
         self.calls.append(
             ToolCall(
                 tool=tool,
                 duration_s=perf_counter() - started,
                 result_count=count,
+                tokens=tokens,
             )
         )
 
@@ -151,5 +159,8 @@ class RedstringToolset:
             raise RuntimeError("this toolset was built without an LLM provider")
         started = perf_counter()
         result = await self._llm.extract(prompt, schema)
-        self._record("extract", started, 1)
+        # `LlmProvider.extract` reports no usage; a counting wrapper one
+        # layer below the port (a real chat model) is what would fill this
+        # in. `None` here is honest -- not a synthesised 0.
+        self._record("extract", started, 1, tokens=None)
         return result

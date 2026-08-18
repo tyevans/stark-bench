@@ -102,6 +102,9 @@ async def test_extract_delegates_to_the_llm_provider_and_is_recorded():
 
     assert result == _Answer(text="cyclooxygenase")
     assert [c.tool for c in tools.calls] == ["extract"]
+    # A missing measurement and a measurement of nothing are different facts:
+    # `LlmProvider` reports no usage, so this must be `None`, never `0`.
+    assert tools.calls[0].tokens is None
 
 
 @pytest.mark.asyncio

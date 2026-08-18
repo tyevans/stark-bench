@@ -46,6 +46,9 @@ class ToolCall:
     tool: str
     duration_s: float
     result_count: int
+    #: `None` means the endpoint reported no usage. Distinct from 0, which
+    #: would claim a call consumed nothing.
+    tokens: int | None = None
 
 
 @runtime_checkable
