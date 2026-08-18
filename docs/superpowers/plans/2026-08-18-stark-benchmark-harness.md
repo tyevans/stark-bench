@@ -1844,7 +1844,32 @@ git add -A && git commit -m "Baseline agents, the runner, and the pipeline prove
 - Consumes: nothing at runtime (isolated interpreter).
 - Produces: `nodes.jsonl`, `edges.jsonl`, `queries.<split>.jsonl`, `candidates.json`, `embeddings.ada002.npz` under `data/<dataset>/`.
 
-- [ ] **Step 1: Inspect the real API before writing anything**
+- [ ] **Step 1: The API below is measured, not guessed**
+
+Run against `stark-prime`, 2026-08-18:
+
+```
+skb = load_skb("prime", download_processed=True)   -> stark_qa.skb.prime.PrimeSKB
+skb.num_nodes()            = 129375
+skb.candidate_ids          = list[int]  <- the answerable subset; NOT range(num_nodes)
+skb.node_type_dict         = {0: 'disease', 1: 'gene/protein', 3: 'drug', ...}
+skb.edge_type_dict         = {0: 'ppi', 3: 'target', 6: 'indication', ...}
+skb.get_node_type_by_id(i) -> 'gene/protein'        (already a string)
+skb.get_doc_info(i, add_rel=False, compact=False, n_rel=-1) -> str
+skb[i].name                -> 'PHYHIP'
+skb.edge_index             = torch.Tensor of shape [2, E]
+skb.edge_types             = torch.Tensor of length E
+skb.get_edge_type_by_id(t) -> 'ppi'
+qa = load_qa("prime"); len(qa) = 11204
+qa[i]                      -> (query_text, query_id, [answer_ids], meta)
+qa.get_idx_split()         = {'train': 6162, 'val': 2241, 'test': 2801, 'test-0.1': 280}
+```
+
+**`candidate_ids` is the one to get right.** STaRK scores against the answerable
+candidate set, not every node, and `Evaluator` indexes by `max(candidate_ids)`.
+Exporting `range(num_nodes)` instead would silently change every metric.
+
+You may re-confirm any of it with:
 
 ```bash
 uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" python - <<'EOF'
@@ -1863,8 +1888,8 @@ print("splits", qa.get_idx_split().keys())
 EOF
 ```
 
-Write the exporter against what this prints. Every attribute name below is a
-best guess from STaRK's documentation and **must be corrected to match**.
+The exporter below is written against exactly that. If anything disagrees at
+runtime, trust the package and fix the exporter.
 
 - [ ] **Step 2: Write the exporter**
 
@@ -1905,7 +1930,7 @@ def main() -> None:
                     {
                         "node_id": str(node_id),
                         "node_type": str(skb.get_node_type_by_id(node_id)),
-                        "name": str(skb[node_id].name if hasattr(skb[node_id], "name") else node_id),
+                        "name": str(getattr(skb[node_id], "name", node_id)),
                         "document": skb.get_doc_info(node_id, add_rel=False),
                     }
                 )
@@ -1945,8 +1970,11 @@ def main() -> None:
                     + "\n"
                 )
 
+    # The answerable subset, not every node. `Evaluator` indexes by
+    # `max(candidate_ids)`, and scoring against all 129k nodes would silently
+    # change every metric.
     (out / "candidates.json").write_text(
-        json.dumps([int(n) for n in range(skb.num_nodes())])
+        json.dumps([int(c) for c in skb.candidate_ids])
     )
 
     print(f"exported {args.dataset} to {out}")
@@ -2002,7 +2030,7 @@ uv run --no-project --python 3.11 --with stark-qa --with "numpy<2" --with numpy 
 wc -l data/prime/*.jsonl
 ```
 
-Expected: roughly 129k node lines. If the numbers are wildly off, stop and read the SKB API rather than proceeding — an ingest built on a misread schema wastes hours.
+Expected: exactly 129375 node lines, and 280 lines in `queries.test-0.1.jsonl`. If the numbers are wildly off, stop and read the SKB API rather than proceeding — an ingest built on a misread schema wastes hours.
 
 - [ ] **Step 5: Add `data/` to `.gitignore` and commit**
 
