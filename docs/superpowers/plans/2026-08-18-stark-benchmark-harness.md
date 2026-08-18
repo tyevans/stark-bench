@@ -302,7 +302,7 @@ class Toolset(Protocol):
     async def get_node(self, node_id: str) -> dict[str, object] | None: ...
     async def neighbors(self, node_id: str, *, depth: int = 1) -> list[str]: ...
     async def get_relationships(self, node_id: str) -> list[tuple[str, str, str]]: ...
-    async def complete(self, prompt: str) -> str: ...
+    async def extract[S: BaseModel](self, prompt: str, schema: type[S]) -> S: ...
 
 
 @runtime_checkable
@@ -2174,10 +2174,15 @@ if TYPE_CHECKING:
 
 def summarise_cost(calls: Sequence[ToolCall], queries: int) -> dict[str, float]:
     if queries == 0:
-        return {"calls_per_query": 0.0, "tokens_per_query": 0.0, "seconds_total": 0.0}
+        return {
+            "tool_calls_per_query": 0.0,
+            "llm_calls_per_query": 0.0,
+            "seconds_total": 0.0,
+        }
+    llm_calls = [c for c in calls if c.tool == "extract"]
     return {
-        "calls_per_query": len(calls) / queries,
-        "tokens_per_query": sum(c.tokens for c in calls) / queries,
+        "tool_calls_per_query": len(calls) / queries,
+        "llm_calls_per_query": len(llm_calls) / queries,
         "seconds_total": sum(c.duration_s for c in calls),
     }
 
@@ -2219,21 +2224,22 @@ from stark_bench.ports import ToolCall
 
 
 def test_cost_is_per_query_not_total_calls():
-    calls = [ToolCall("search_chunks", 0.1, 5, tokens=100) for _ in range(10)]
+    calls = [ToolCall("search_chunks", 0.1, 5) for _ in range(10)]
+    calls += [ToolCall("extract", 0.2, 1) for _ in range(5)]
     cost = summarise_cost(calls, queries=5)
-    assert cost["calls_per_query"] == 2.0
-    assert cost["tokens_per_query"] == 200.0
+    assert cost["tool_calls_per_query"] == 3.0
+    assert cost["llm_calls_per_query"] == 1.0
 
 
 def test_zero_queries_does_not_divide_by_zero():
-    assert summarise_cost([], queries=0)["calls_per_query"] == 0.0
+    assert summarise_cost([], queries=0)["tool_calls_per_query"] == 0.0
 
 
 def test_the_report_embeds_the_config_verbatim(tmp_path):
     config = RunConfig("vss-control", "prime", "test-0.1", "whole-document",
                        "precomputed-ada002", 1536, "max", "dense", 20, raw="name: vss-control\n")
     out = tmp_path / "r.json"
-    write_report(out, config=config, metrics={"mrr": 0.4}, cost={"calls_per_query": 1.0},
+    write_report(out, config=config, metrics={"mrr": 0.4}, cost={"tool_calls_per_query": 1.0},
                  ingest={"nodes": 12}, queries=3)
     written = json.loads(out.read_text())
     assert written["config_verbatim"] == "name: vss-control\n"
@@ -2547,7 +2553,7 @@ done
 uv run python -m stark_bench.harness.cli --summarise results/ > RESULTS.md
 ```
 
-`RESULTS.md` reports accuracy **and** cost per architecture. A number without its cost beside it is not actionable.
+`RESULTS.md` reports accuracy **and** cost (tool calls and LLM calls per query) per architecture. A number without its cost beside it is not actionable.
 
 - [ ] **Step 5: Commit**
 
