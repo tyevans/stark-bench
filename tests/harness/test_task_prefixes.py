@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from stark_bench.harness.cli import _table_for
-from stark_bench.harness.config import RunConfig
+from stark_bench.domain.run_config import RunConfig
 
 
 def _config(**overrides: object) -> RunConfig:
@@ -111,7 +111,7 @@ def test_the_native_configs_actually_state_the_models_prefixes():
     """
     from pathlib import Path
 
-    from stark_bench.harness.config import load_config
+    from stark_bench.adapters.config_file import load_config
 
     root = Path(__file__).resolve().parents[2] / "config"
     native = [
@@ -174,7 +174,7 @@ def test_every_shipped_config_yields_a_legal_postgres_identifier():
     import re
     from pathlib import Path
 
-    from stark_bench.harness.config import load_config
+    from stark_bench.adapters.config_file import load_config
 
     root = Path(__file__).resolve().parents[2] / "config"
     paths = sorted(root.glob("*.yaml"))

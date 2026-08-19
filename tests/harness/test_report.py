@@ -1,6 +1,6 @@
 import json
 
-from stark_bench.harness.config import RunConfig
+from stark_bench.domain.run_config import RunConfig
 from stark_bench.harness.report import summarise_cost, write_report
 from stark_bench.domain import ToolCall
 

@@ -1,19 +1,16 @@
-"""Every knob that changes a number, in one file per run.
+"""Every knob that changes a number, as a value.
 
-The resolved contents are embedded verbatim in the results file. Re-running a
-variant is an edit here, and a number whose config is not recorded is not
-re-runnable.
+The resolved contents travel in `raw` and are embedded verbatim in the
+results file. A number whose config is not recorded is not re-runnable.
+
+The *loader* lives in `adapters.config_file`. Splitting them is not
+bookkeeping: reading a file and parsing YAML are I/O, and a domain that
+imports `yaml` cannot be constructed in a test without one.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-import yaml
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,9 +42,3 @@ class RunConfig:
     #: lands in a different table rather than mixing two vector spaces.
     document_prefix: str = ""
     query_prefix: str = ""
-
-
-def load_config(path: Path) -> RunConfig:
-    raw = path.read_text(encoding="utf-8")
-    data = yaml.safe_load(raw)
-    return RunConfig(raw=raw, **data)

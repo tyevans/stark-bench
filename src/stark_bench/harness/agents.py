@@ -29,12 +29,12 @@ from stark_bench.agents.dense import DenseAgent
 from stark_bench.agents.deep import DeepAgent
 from stark_bench.agents.hybrid import HybridAgent
 from stark_bench.agents.zero_shot import ZeroShotAgent
-from stark_bench.harness.budget import Budget
+from stark_bench.domain.budget import Budget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from stark_bench.harness.config import RunConfig
+    from stark_bench.domain.run_config import RunConfig
     from stark_bench.domain import Query, Ranked
     from stark_bench.ports import Agent, Toolset
 

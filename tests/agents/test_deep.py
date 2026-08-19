@@ -1,7 +1,7 @@
 import pytest
 
 from stark_bench.agents.deep import _MAX_PROMPT_CHARS, DeepAgent
-from stark_bench.harness.budget import Budget
+from stark_bench.domain.budget import Budget
 from stark_bench.domain import Query, Ranked, ToolCall
 
 
