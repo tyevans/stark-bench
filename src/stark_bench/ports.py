@@ -76,3 +76,21 @@ class Agent(Protocol):
     """Given a query and tools, return ranked STaRK node ids."""
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]: ...
+
+
+@runtime_checkable
+class BudgetTracker(Protocol):
+    """What a looping agent needs from a budget, without importing one.
+
+    `agents` may import only this module -- import-linter forbids it reaching
+    `stark_bench.harness`, where the concrete `Budget` lives. Declaring the
+    shape here rather than weakening the contract keeps "spend-or-raise, with
+    exhaustion left observable afterwards" a promise the harness's `Budget`
+    keeps, not a coincidence of two modules agreeing.
+    """
+
+    exhausted: bool
+
+    def spend_tool(self) -> None: ...
+    def spend_llm(self) -> None: ...
+    def seconds_remaining(self) -> float: ...
