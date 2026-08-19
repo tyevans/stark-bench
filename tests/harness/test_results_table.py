@@ -45,7 +45,12 @@ def _good(**overrides) -> dict:
         "queries": 280,
         "metrics": {"mrr": 0.23, "hit@1": 0.15, "hit@5": 0.31, "recall@20": 0.38},
         "cost": {"tool_calls_per_query": 1.0, "llm_calls_per_query": 0.0},
-        "ingest": {"nodes": 100, "chunks": 106, "edges_ingested": True},
+        # A *realistic* corpus size, not 100. The staleness check compares
+        # against the real node count of prime/test-0.1, so a toy fixture
+        # would make every clean report look stale -- and, before that check
+        # existed, a toy fixture is what let a 3000-node probe's report
+        # render as the full arm's ingest stats without any test noticing.
+        "ingest": {"nodes": 129375, "chunks": 136803, "edges_ingested": True},
     }
     base.update(overrides)
     return base
@@ -74,13 +79,21 @@ def test_an_empty_ingest_block_is_caught(table):
 
 def test_a_deep_run_on_an_edgeless_corpus_is_caught(table):
     """B-DEEP-EDGES-1: traversal returns empty and it reads as an architecture result."""
-    _write(table, "arm.deep", _good(ingest={"nodes": 1, "chunks": 1, "edges_ingested": False}))
+    _write(
+        table,
+        "arm.deep",
+        _good(ingest={"nodes": 1, "chunks": 1, "edges_ingested": False}),
+    )
     assert any("edgeless" in p for p in table.check(table.load()))
 
 
 def test_the_same_report_under_dense_is_not_flagged_edgeless(table):
     """Only `deep` traverses -- flagging `dense` would train people to ignore it."""
-    _write(table, "arm.dense", _good(ingest={"nodes": 1, "chunks": 1, "edges_ingested": False}))
+    _write(
+        table,
+        "arm.dense",
+        _good(ingest={"nodes": 1, "chunks": 1, "edges_ingested": False}),
+    )
     assert not any("edgeless" in p for p in table.check(table.load()))
 
 
@@ -95,3 +108,33 @@ def test_a_missing_metric_renders_as_a_dash_not_a_zero(table):
     rendered = table.render(table.load())
     assert "| -- | -- |" in rendered
     assert "0.00 | 0.00" not in rendered
+
+
+def test_an_ingest_report_from_a_smaller_run_is_caught(table):
+    """A report describing a different, smaller corpus than the one scored.
+
+    `resume_is_safe.py` cannot see this: it compares the recorded config
+    text, and a `--limit 3000` probe writes the *same* config bytes as the
+    full run, so the comparison passes.
+
+    Observed 2026-08-19: RESULTS.md published `chunks/node 1.000` and
+    `ingest s 207.7` for native-wholedoc, both taken from a 3000-node
+    probe, while the real corpus held 136,803 chunks over 129,375 nodes.
+    """
+    _write(
+        table,
+        "arm.dense",
+        _good(ingest={"nodes": 3000, "chunks": 3000, "edges_ingested": False}),
+    )
+    problems = table.check(table.load())
+    assert any("3000 nodes" in p and "129375" in p for p in problems), problems
+
+
+def test_a_full_corpus_report_is_not_flagged_as_stale(table):
+    """The check must discriminate, not fire on everything.
+
+    Without this, raising EXPECTED_NODES above every real corpus would
+    'pass' the test above while flagging every honest run.
+    """
+    _write(table, "arm.dense", _good())
+    assert not [p for p in table.check(table.load()) if "stale report" in p]
