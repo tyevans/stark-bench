@@ -50,20 +50,26 @@ if TYPE_CHECKING:
 #: the dependency here). The backing window covers the prompt *and* the
 #: generated output together, so this stays under half of it.
 #:
-#: Raised from 24,000 to 48,000 when the endpoint moved to a 32k window on
-#: 2026-08-19. The old value was never the server's limit -- 24,000 chars is
-#: ~6k tokens against a 16k window -- it was this agent's own, and it bound
-#: first and bound hard. The measured peak against an adversarial fake was
-#: 24,774 chars, so the cap was being hit in real runs, and what it drops is
-#: the *oldest* observations: on a hub node like PRIME's ABLIM1 (degree 426)
-#: a single `neighbors` result runs to thousands of characters, so the agent
-#: reached its eighth decision having forgotten what its second and third
-#: calls returned. That is a handicap on precisely the multi-hop queries
-#: traversal is supposed to win.
+#: Raised from 24,000 to 120,000 as the endpoint went from a 16k window to
+#: 64k. The old value was never the server's limit -- 24,000 chars is ~6k
+#: tokens against a 16k window -- it was this agent's own, and it bound first
+#: and bound hard: the measured adversarial peak was 24,774 chars, so the cap
+#: fired essentially every round. What it drops is the *oldest* observations,
+#: so on a hub like PRIME's ABLIM1 (degree 426), where one `neighbors` result
+#: runs to thousands of characters, the agent reached its eighth decision
+#: having forgotten its second and third. That is a handicap on exactly the
+#: multi-hop queries traversal is supposed to win.
 #:
-#: Deep numbers measured under the old cap are not comparable with numbers
-#: measured under this one. Re-run every arm rather than mixing them.
-_MAX_PROMPT_CHARS = 48_000
+#: 120,000 chars is ~30k tokens, under half the 64k window, and comfortably
+#: above any history this agent has been observed to accumulate -- the intent
+#: is that truncation stops being a routine event and becomes the backstop it
+#: was always described as. The cost is bounded and falls where it should:
+#: prefill grows only for the queries whose history would otherwise have been
+#: thrown away, and the LLM-call budget still caps the number of rounds.
+#:
+#: Deep numbers measured under a different cap are not comparable. Re-run
+#: every arm rather than mixing them.
+_MAX_PROMPT_CHARS = 120_000
 
 _PROMPT_TEMPLATE = (
     "You are answering a search query by choosing one tool call at a time.\n"

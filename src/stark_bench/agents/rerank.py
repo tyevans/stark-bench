@@ -45,22 +45,23 @@ from stark_bench.domain import Ranked as _Ranked
 logger = logging.getLogger(__name__)
 
 #: How much of a candidate's text the model is shown. Sized against the
-#: *context*, not against what would be nice to show: 40 candidates at 1500
-#: characters is ~60k characters, ~15k tokens, which leaves room in a 32k
-#: window for the instructions and for 40 scored objects coming back.
+#: *context*, not against what would be nice to show: 40 candidates at 3000
+#: characters is ~120k characters, ~30k tokens, under half the 64k window,
+#: leaving room for the instructions and 40 scored objects coming back.
 #:
-#: 1500 rather than 600 because of where the useful text sits. STaRK puts a
-#: node's `- relations:` block at the *end* of its document, so 600 characters
-#: truncates the relations corpus exactly before the neighbour names -- the
-#: reranker would read name, type and details and never reach the thing the
-#: arm was built to test.
+#: The number is set by where the useful text sits, not by what fits. STaRK
+#: puts a node's `- relations:` block at the *end* of its document, so a
+#: small budget truncates the relations corpus exactly before the neighbour
+#: names -- the reranker would read name, type and details and never reach
+#: the thing that arm was built to test. At 3000 characters it clears the
+#: relations corpus's 1,761-char mean with room for the long tail.
 #:
-#: Overflowing the window is the worst failure available to this agent. The
+#: Overflowing the window is the worst failure available to this agent: the
 #: extract call raises, the agent degrades to retrieval order, and the run
-#: scores *exactly* `hybrid` -- a plausible-looking null that says reranking
-#: does not help when what happened is that the model never saw the prompt.
-#: Probe against the live endpoint after changing either number.
-_MAX_PASSAGE_CHARS = 1_500
+#: scores *exactly* `hybrid` -- a plausible-looking null saying reranking
+#: does not help, when the model never saw the prompt. Probe against the live
+#: endpoint after changing this or `fetch`.
+_MAX_PASSAGE_CHARS = 3_000
 
 
 class Relevance(BaseModel):

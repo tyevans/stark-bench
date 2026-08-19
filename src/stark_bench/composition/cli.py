@@ -44,6 +44,7 @@ from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
 )
+from stark_bench.adapters.model_preflight import require_chat_model
 from stark_bench.adapters.report_file import (
     summarise_cost,
     write_predictions,
@@ -110,7 +111,7 @@ INFERENCE_BASE_URL = "http://192.168.1.14:8080/v1/"
 #: configuration actually gave (65536 / 4), so `deep.py`'s context
 #: assumptions are unchanged.
 #:
-#: Raised to a 32k window on 2026-08-19, for the reranker: it puts 40
+#: Raised to a 64k window on 2026-08-19, for the reranker: it puts 40
 #: candidate documents in one prompt, and at 16k each had to be cut to 600
 #: characters -- which on the relations corpus truncates every document
 #: *before* the `- relations:` block, the exact text that arm exists to test.
@@ -123,7 +124,7 @@ INFERENCE_BASE_URL = "http://192.168.1.14:8080/v1/"
 #: died mid-run at the changeover with 143 of 280 queries empty, which is
 #: the loud version of the same event -- the quiet version scores like
 #: `hybrid` and says nothing.
-DEFAULT_CHAT_MODEL = "qwen3.8-27b-32k-txt"
+DEFAULT_CHAT_MODEL = "qwen3.8-27b-64k-txt"
 
 #: Chunking strategies, as zero-argument builders.
 #:
@@ -257,9 +258,11 @@ def _llm_for(config: RunConfig) -> LlmProvider:
     and the alternative -- deciding per agent whether the toolset gets an
     LLM -- is a second place for the agent name to be interpreted.
     """
+    model = config.chat_model or DEFAULT_CHAT_MODEL
+    require_chat_model(INFERENCE_BASE_URL, model)
     return LangChainLlmProvider.openai_compatible(
         base_url=INFERENCE_BASE_URL,
-        model=config.chat_model or DEFAULT_CHAT_MODEL,
+        model=model,
     )
 
 
