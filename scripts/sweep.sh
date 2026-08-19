@@ -33,13 +33,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ARMS="native-wholedoc redstring-native native-sliding1k"
 EXPECTED_NODES=129375
-# 16, not 64, and the 48 difference is worth 2.7%. Measured at -np 1:
-# concurrency 16 gives 1745 nodes/min and 64 gives 1792. The embedding peer
-# crashed twice under sustained concurrency-64 load -- `connection refused`,
-# then back up seconds later via systemd `Restart=always` -- with 373 MiB of
-# VRAM headroom while the 27B chat model shares the card. A 2.7% throughput
-# gain is not worth a five-hour run dying on it.
-CONCURRENCY="${CONCURRENCY:-16}"
+# The embedding peer died of `CUDA error: out of memory` four times: twice
+# at client concurrency 64, then twice more at 16. **Concurrency was not the
+# variable** -- backing off looked like it helped and did not. The card had
+# 373 MiB free with a multimodal 27B at `--ctx-size 65536 -np 4` beside the
+# embedder, and `alloc` failed on a transient buffer.
+#
+# Fixed on the server: a text-only 16k `-np 1` chat build freed 4.2 GB, so
+# there is now 4577 MiB of headroom rather than 373. 32 rather than 64
+# because the measured gain from 16 to 64 was 2.7% at -np 1 (1745 -> 1792
+# nodes/min), which is not worth re-approaching an edge that has already
+# cost four crashes.
+CONCURRENCY="${CONCURRENCY:-32}"
 # The peer is restarted by hand and has crashed on its own. Over a run this
 # long, three attempts is optimistic.
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"

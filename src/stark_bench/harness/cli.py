@@ -79,7 +79,20 @@ EMBED_BASE_URL = "http://192.168.1.14:8080/v1/"
 #: The chat model behind `zero_shot` and `deep`, on the same endpoint as
 #: `EMBED_BASE_URL` (llama-swap serves both, embeddings on a separate peer).
 #: Overridable per config via `chat_model:`; a config that omits it gets this.
-DEFAULT_CHAT_MODEL = "qwen3.8-27b-mtp"
+#: Text-only, 16k context, `-np 1`. The variant matters for a reason that
+#: has nothing to do with quality: the multimodal `qwen3.8-27b-mtp` at
+#: `--ctx-size 65536 -np 4` left 373 MiB free on the card beside the
+#: embedder, and the embedding peer died of `CUDA error: out of memory` four
+#: times -- twice at client concurrency 64 and twice at 16, which is how we
+#: learned the variable was headroom rather than request rate.
+#:
+#: Nothing is given up. `runner.run` is a bare `for query in queries` loop,
+#: so exactly one chat request is ever in flight and three of those four
+#: slots could never be used; STaRK is text, so the F16 projector was
+#: resident for nothing; and 16384 is the per-slot window the previous
+#: configuration actually gave (65536 / 4), so `deep.py`'s context
+#: assumptions are unchanged.
+DEFAULT_CHAT_MODEL = "qwen3.8-27b-16k-txt"
 
 #: Chunking strategies, as zero-argument builders.
 #:
