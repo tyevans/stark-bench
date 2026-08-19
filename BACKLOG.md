@@ -394,7 +394,7 @@ Keep expensive-to-recompute artifacts out of the containers.
 `nomic-wholedoc` was built to isolate the embedding model against
 `native-wholedoc`, and it does not. nomic's context ceiling is 2048 tokens
 against Nemotron's 4096, so it cannot run `capped-whole-5000` -- the server
-rejects chunks over the limit -- and runs `capped-whole-4000` instead.
+rejects chunks over the limit -- and runs `capped-whole-2400` instead.
 
 The chunker is the second-largest retrieval effect in RESULTS.md (finding 4:
 a 25% spread in dense mrr across four corpora), so the comparison now varies
@@ -408,12 +408,46 @@ change is unknown. That is a weaker claim and still sufficient: an unknown
 effect of unknown sign sitting on top of the model swap is exactly what makes
 the comparison unattributable.
 
-To make it clean, re-run Nemotron at `capped-whole-4000` and compare that to
+To make it clean, re-run Nemotron at `capped-whole-2400` and compare that to
 `nomic-wholedoc`. Not done here because Nemotron embeds at 18 texts/s against
 nomic's 60, so the PRIME corpus is ~2.3h against ~40min, and the swap to
 nomic was already justified on the ada-002 comparison
 (0.2163 vs 0.2306 mrr) which is unaffected by this.
 
 What is NOT confounded, and is the reason the MAG run exists: PRIME against
-MAG, both on nomic at `capped-whole-4000`. That comparison holds the model
+MAG, both on nomic at `capped-whole-2400`. That comparison holds the model
 and the chunker fixed and varies only the corpus.
+
+## B-TOKEN-CAP-1 — the chunk cap is guessed in characters against a token limit
+
+`CHUNKERS["capped-whole-2400"]` exists because nomic-embed-text rejects
+anything over 2048 tokens and the chunker measures characters. The conversion
+is an estimate, and it was wrong three times running: 5000 chars (from 4.0
+chars/token, measured on chat prompts through a different tokenizer), then
+4000 (from 2.4, the ratio the first failure implied), then 2400 (from 1.754,
+measured over the 250 densest of 607,292 documents).
+
+Each estimate was defensible and each was too high, because the worst case
+lives in a tail that sampling keeps missing. 2400 has a large enough margin
+to survive ratios down to 1.17 chars/token, which is why it is expected to
+hold -- but it is still a guess with a bigger cushion, not a fix.
+
+Two real fixes, either of which ends it:
+
+1. **Cap by tokens.** Load nomic's WordPiece vocabulary with `tokenizers`
+   and split on token count. Exact, and it lets the cap sit near 2048 rather
+   than at 67% of it, which recovers the chunks/node the margin costs.
+2. **Catch and split.** The server returns a specific, machine-readable 400
+   (`exceed_context_size_error`, with `n_prompt_tokens`). Catching it and
+   re-splitting just that chunk makes any cap safe.
+
+(1) is better: it keeps failures out of the hot path and makes chunks/node
+predictable. (2) is a smaller change and would also have saved the three
+ingests lost to this.
+
+Cost of not doing it: each wrong cap costs a full re-ingest, ~30 min for
+PRIME at 218 chunks/s and ~1h for MAG.
+
+Note the cap also widens B-NOMIC-CONFOUND-1: nomic now runs at 2400
+characters against Nemotron's 5000, so the two arms differ more in chunking
+than the original swap intended.

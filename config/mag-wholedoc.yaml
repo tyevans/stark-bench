@@ -12,7 +12,7 @@
 # weaker result must be attributable to the corpus, and retuning anything
 # for MAG would forfeit that.
 #
-# The chunker is nominally `capped-whole-4000` but degenerates to
+# The chunker is nominally `capped-whole-2400` but degenerates to
 # whole-document here: MAG candidate documents average 1,212 characters
 # (p99 2,692), so essentially every one is a single chunk. The cap is set by
 # nomic's 2048-token ceiling rather than by anything about MAG -- see the
@@ -41,7 +41,7 @@
 name: mag-wholedoc
 dataset: mag-cand
 split: test-0.1
-chunker: capped-whole-4000
+chunker: capped-whole-2400
 embeddings: nomic-embed-text
 dimension: 768
 aggregation: max
