@@ -105,14 +105,27 @@ CHUNKERS = {
     #: min(ctx-per-slot, ubatch-size), which is why the flag that mattered
     #: turned out to be --ubatch-size and not --ctx-size.
     #:
-    #: 10000 characters is measured, not guessed. Sampling the longest and
+    #: 5000 characters is measured, not guessed. Sampling the longest and
     #: the least-whitespace documents in this corpus against the live
     #: tokenizer gives a worst case of 2.55 characters per token -- against a
     #: 4.31 median, because PRIME carries SMILES strings and other dense
-    #: identifiers that tokenise nothing like prose. 10000 / 2.55 = 3922
-    #: tokens, inside 4096 with the `passage: ` prefix and a BOS on top.
-    #: Sizing this off the median would have put the densest documents at
-    #: 2300 tokens over the limit.
+    #: identifiers that tokenise nothing like prose. 5000 / 2.55 = 1961
+    #: tokens, inside the 2048-token ubatch with the `passage: ` prefix and a
+    #: BOS on top. Sizing this off the median would have put the densest
+    #: documents 1100 tokens over the limit.
+    #:
+    #: The binding constraint is `--ubatch-size`, not `--ctx-size`, and the
+    #: server is deliberately configured small: `-np 1 --ctx-size 4096
+    #: --ubatch-size 2048` is what leaves room for the 27B chat model to stay
+    #: resident beside the embedder. Measured, that configuration also
+    #: ingests FASTER than `-np 32` with the chat model unloaded -- 1792
+    #: against 1449 nodes/min over the same 1500 nodes -- so the small
+    #: setting costs throughput nothing and the only price is this cap.
+    #:
+    #: A 10000-character cap would give 1.016 chunks/node against this
+    #: 1.057. Both are unambiguously the low end of a sweep whose other
+    #: points are 1.14 and 1.94, and the larger cap is not worth a second
+    #: server configuration and a phase split to reach.
     #:
     #: Zero overlap, so this splits rather than truncates. Truncating would
     #: have matched what ada-002 does to its own overlong inputs, but ada-002
@@ -128,8 +141,8 @@ CHUNKERS = {
     #:
     #: Zero overlap also sidesteps B-SLIDING-REDUNDANT-1: the redundant tail
     #: chunk appears only when the window advances by less than its width.
-    "capped-whole-10000": partial(
-        SlidingWindowChunker, default_chunk_size=10000, default_overlap=0
+    "capped-whole-5000": partial(
+        SlidingWindowChunker, default_chunk_size=5000, default_overlap=0
     ),
 }
 LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B"}

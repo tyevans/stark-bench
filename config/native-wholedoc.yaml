@@ -1,11 +1,11 @@
 # The confound-separating cell.
 #
-# NOTE: the chunker is `capped-whole-10000`, not `whole-document`. The
+# NOTE: the chunker is `capped-whole-5000`, not `whole-document`. The
 # embedding server serves Nemotron-3-Embed-1B with a 4096-token per-slot
-# context, so 1,826 of 129,375 documents (1.41%) cannot be embedded whole.
-# They are SPLIT (zero overlap), not truncated, so this arm holds exactly the
-# same text as the chunked arms -- see the CHUNKERS entry in harness/cli.py
-# for why that choice and not truncation. Costs ~1.02 chunks/node vs 1.00.
+# context and a 2048-token ubatch, so 4,748 of 129,375 documents (3.67%)
+# cannot be embedded whole. They are SPLIT (zero overlap), not truncated, so
+# this arm holds exactly the same text as the chunked arms -- see the
+# CHUNKERS entry in harness/cli.py. Costs 1.057 chunks/node against 1.000.
 #
 # `redstring-native` differs from `vss-control` in TWO ways at once: the
 # embedding model (ada-002 1536d -> Nemotron 2048d) and the chunking
@@ -22,7 +22,7 @@
 name: native-wholedoc
 dataset: prime
 split: test-0.1
-chunker: capped-whole-10000
+chunker: capped-whole-5000
 embeddings: Nemotron-3-Embed-1B
 dimension: 2048
 aggregation: max

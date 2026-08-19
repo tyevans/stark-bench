@@ -3,7 +3,7 @@
 # Three configs share the nomic-embed-text model and vary only the chunker,
 # so the difference between them is chunking and nothing else:
 #
-#   native-wholedoc      capped-whole-10000  ~1.02 chunks/node
+#   native-wholedoc      capped-whole-5000   1.06 chunks/node
 #   redstring-native     boundary-preference 1.14 chunks/node
 #   native-sliding1k     sliding-1000-500    ~1.94 chunks/node (estimated)
 #
