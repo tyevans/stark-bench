@@ -1,6 +1,6 @@
 import pytest
 
-from stark_bench.agents.deep import DeepAgent
+from stark_bench.agents.deep import _MAX_PROMPT_CHARS, DeepAgent
 from stark_bench.harness.budget import Budget
 from stark_bench.ports import Query, Ranked, ToolCall
 
@@ -53,3 +53,22 @@ async def test_it_terminates_even_when_the_llm_always_asks_for_more():
     )
     result = await agent.retrieve(Query(1, "x"), tools)
     assert isinstance(result, list)
+
+
+def test_a_single_observation_larger_than_the_budget_is_hard_truncated():
+    """The 'keep at least the most recent observation' fallback must not let
+    one oversized observation ride through the bound uncapped -- that would
+    defeat the context cap in exactly the case where it matters most."""
+    oversized = "x" * (_MAX_PROMPT_CHARS * 3)
+    kept = DeepAgent._truncate([oversized])
+    assert len(kept) == 1
+    assert len(kept[0]) <= _MAX_PROMPT_CHARS
+
+
+def test_the_most_recent_observation_is_still_kept_when_earlier_ones_are_dropped():
+    small = "a" * 100
+    huge = "b" * (_MAX_PROMPT_CHARS * 2)
+    kept = DeepAgent._truncate([small, small, huge])
+    assert len(kept) == 1
+    assert kept[0].startswith("b")
+    assert len(kept[0]) <= _MAX_PROMPT_CHARS
