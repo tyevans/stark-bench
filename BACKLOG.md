@@ -284,28 +284,3 @@ started".
 Also worth a count assertion: the report records `nodes`, so a resumed run
 can compare the chunk rows actually present for its tenant against what the
 report claims and refuse on a mismatch.
-
-## B-MONITOR-TENANT-1 — chunk counts are meaningless without a tenant filter
-
-Not a code defect; a trap that has already cost an hour of wrong reasoning.
-
-`native-wholedoc`, `redstring-native` and `native-sliding1k` share one
-chunk table and are separated only by `tenant_id` (ADR 0002 and 0043 are
-satisfied because they share a model, dimension and prefixes). So
-
-```sql
-select count(*) from kg_chunks_nemotron_3_embed_1b_d38d8f8b;
-```
-
-sums three arms. On 2026-08-19 that made an arm at 133,919 chunks look like
-141,673 against a target of ~136,700, i.e. finished and overshooting when
-it was neither.
-
-Always scope to the tenant:
-
-```sql
-select count(*) from kg_chunks_... where tenant_id = '<uuid5(NAMESPACE_STARK, "tenant:" || name)>';
-```
-
-Worth a `scripts/progress.py` that takes a config name and does this
-correctly, so the right query is the easy one.
