@@ -130,6 +130,35 @@ Two hazards, both hit for real:
   unusually short — 1801 nodes/min there against 1449 on the first 1500,
   same server. That looked like a regression from a server change and was
   entirely the sample. Fix the slice before varying anything else.
+- **A resumed ingest measures nothing.** Re-chunking to compute ids and
+  skipping what is already stored is CPU work that writes no rows, so the
+  row count is flat while the process is busy and then jumps. On
+  2026-08-19 a rate taken across that phase read **611 chunks/min** and was
+  reported with a 1h45m ETA; the same run's real rate was ~3,600/min and it
+  finished in minutes. **Only measure an arm ingesting into an empty
+  tenant**, and if you must watch a resumed one, wait for the skip phase to
+  end before starting the clock.
+- **Scope every progress query to the tenant.** `native-wholedoc`,
+  `redstring-native` and `native-sliding1k` share one chunk table and are
+  separated only by `tenant_id`, so a bare `count(*)` sums three arms. This
+  made an arm at 133,919 read as 141,673 against a target of ~136,700 —
+  finished and overshooting when it was neither. See B-MONITOR-TENANT-1.
+
+### The only clean number we have
+
+**1,666 chunks/min**, measured 2026-08-19 on `redstring-native` ingesting
+into an **empty** tenant: `--embed-concurrency 4 --embed-batch 64` against
+Nemotron-3-Embed-1B at `--ctx-size 16384 --batch-size 8192 --ubatch-size
+8192 -np 4`. Three consecutive 3-minute intervals gave 1667, 1666 and 1606.
+
+**Whether `--ubatch-size 8192` beat 4096 is unresolved, and no number in
+this file answers it.** Every 4096 measurement was taken across a resume
+skip phase, and the one prior clean figure (1792 nodes/min at
+`--ubatch-size 2048`) used a *different chunker*, so its chunks differ in
+both size and count. Settling it needs the same arm re-ingested at both
+settings — about 40 minutes of GPU time for a throughput knob. It was
+judged not worth it against ten uncollected result numbers. Do not quote a
+comparison; there isn't one.
 
 Background a long ingest with the harness's own backgrounding, **not `nohup`
 or `setsid`** — those did not survive here, twice, and the second time the
