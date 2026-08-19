@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "numpy>=2.5.2",
-    "redstring[neo4j,pgvector]",
+    "redstring[neo4j,pgvector,llm]",
 ]
 
 [build-system]
