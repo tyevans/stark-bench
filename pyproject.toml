@@ -55,12 +55,23 @@ root_packages = ["stark_bench"]
 name = "hexagon"
 type = "layers"
 containers = ["stark_bench"]
-# Parenthesised layers are optional -- they do not exist yet. Each loses
-# its parentheses as its slice lands, so the diff that creates a layer is
-# also the diff that starts enforcing its position.
+# Every layer here now exists, so none is parenthesised. The convention
+# while the refactor ran was that an optional (parenthesised) layer loses
+# its parentheses in the diff that creates it; this is the diff where the
+# last two lose theirs.
+#
+# `sidecar` sits at the top for one reason: nothing may import it. It runs
+# under a different Python (3.11, for `stark-qa`) as a subprocess invoked
+# by *path*, so a first-party import of it would be a module that cannot
+# load in the interpreter that needs it. Top-of-layers says "nothing above
+# to import this from", which is precisely the invariant. The companion
+# `forbidden` contract below states the other direction -- that the sidecar
+# imports nothing first-party -- because a layers contract can express one
+# direction or the other and this package needs both.
 layers = [
-    "(composition)",
-    "(adapters)",
+    "sidecar",
+    "composition",
+    "adapters",
     "agents",
     "application",
     "ports",
@@ -71,7 +82,7 @@ exhaustive = true
 # is a slice of the refactor; the list reaching empty is the refactor being
 # done, and it cannot be quietly abandoned because `exhaustive` fails on
 # anything not named here or in `layers`.
-exhaustive_ignores = ["harness", "sidecar"]
+exhaustive_ignores = ["harness"]
 
 # The contract that actually protects a result. `agents/` holds the subject
 # of the benchmark; everything it can reach, it can be accidentally helped
