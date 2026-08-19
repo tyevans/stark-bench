@@ -28,8 +28,8 @@ def _config(**overrides: object) -> RunConfig:
         dataset="prime",
         split="test-0.1",
         chunker="whole-document",
-        embeddings="nomic-embed-text",
-        dimension=768,
+        embeddings="Nemotron-3-Embed-1B",
+        dimension=2048,
         aggregation="max",
         agent="dense",
         k=20,
@@ -71,9 +71,7 @@ def test_an_unprefixed_table_name_is_unchanged():
 
 def test_a_prefix_moves_the_corpus_to_a_different_table():
     bare = _table_for(_config())
-    prefixed = _table_for(
-        _config(document_prefix="search_document: ", query_prefix="search_query: ")
-    )
+    prefixed = _table_for(_config(document_prefix="passage: ", query_prefix="query: "))
     assert bare != prefixed
 
 
@@ -86,10 +84,11 @@ def test_a_prefix_moves_the_corpus_to_a_different_table():
         # NUL-joined, and it is the only input that can see the difference.
         (("ab", ""), ("a", "b")),
         # Which side the prefix sits on is a real distinction: document-only
-        # and query-only are different models' conventions (nomic vs BGE).
-        (("search_document: ", ""), ("", "search_document: ")),
+        # and query-only are different models' conventions (Nemotron puts a
+        # prefix on both sides; BGE puts one only on the query).
+        (("passage: ", ""), ("", "passage: ")),
         # And the prefix text itself has to matter, not merely its presence.
-        (("search_document: ", "search_query: "), ("passage: ", "query: ")),
+        (("passage: ", "query: "), ("search_document: ", "search_query: ")),
     ],
 )
 def test_distinct_prefix_pairs_never_collide(left, right):
@@ -100,11 +99,11 @@ def test_distinct_prefix_pairs_never_collide(left, right):
 
 def test_the_same_prefix_pair_is_stable_across_calls():
     """A digest that moved between runs would orphan the previous ingest."""
-    args = {"document_prefix": "search_document: ", "query_prefix": "search_query: "}
+    args = {"document_prefix": "passage: ", "query_prefix": "query: "}
     assert _table_for(_config(**args)) == _table_for(_config(**args))
 
 
-def test_the_native_configs_actually_state_the_nomic_prefixes():
+def test_the_native_configs_actually_state_the_models_prefixes():
     """The wiring is worthless if no config seats it -- this is the gate on that.
 
     Reads the shipped YAML rather than a fixture: the defect being prevented
@@ -118,13 +117,13 @@ def test_the_native_configs_actually_state_the_nomic_prefixes():
     native = [
         p
         for p in sorted(root.glob("*.yaml"))
-        if load_config(p).embeddings == "nomic-embed-text"
+        if load_config(p).embeddings == "Nemotron-3-Embed-1B"
     ]
-    assert native, "no nomic config found -- this test would pass vacuously"
+    assert native, "no live-embedding config found -- this test would pass vacuously"
     for path in native:
         config = load_config(path)
-        assert config.document_prefix == "search_document: ", path.name
-        assert config.query_prefix == "search_query: ", path.name
+        assert config.document_prefix == "passage: ", path.name
+        assert config.query_prefix == "query: ", path.name
 
 
 def test_the_live_provider_is_built_with_the_configured_prefixes(monkeypatch):
@@ -151,12 +150,12 @@ def test_the_live_provider_is_built_with_the_configured_prefixes(monkeypatch):
 
     monkeypatch.setattr(cli.LangChainEmbeddingProvider, "openai_compatible", _capture)
     cli._live_embeddings_for(
-        _config(document_prefix="search_document: ", query_prefix="search_query: ")
+        _config(document_prefix="passage: ", query_prefix="query: ")
     )
 
     # Asserted separately and with *different* values, because a single
     # `prefix` threaded to both sides -- or the two arguments swapped -- is a
     # real way to get this wrong, and equal prefixes could not tell either
     # from correct.
-    assert seen["document_prefix"] == "search_document: "
-    assert seen["query_prefix"] == "search_query: "
+    assert seen["document_prefix"] == "passage: "
+    assert seen["query_prefix"] == "query: "

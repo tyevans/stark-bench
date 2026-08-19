@@ -3,7 +3,7 @@
 # Three configs share the nomic-embed-text model and vary only the chunker,
 # so the difference between them is chunking and nothing else:
 #
-#   native-wholedoc      whole-document      1.00 chunks/node
+#   native-wholedoc      capped-whole-10000  ~1.02 chunks/node
 #   redstring-native     boundary-preference 1.14 chunks/node
 #   native-sliding1k     sliding-1000-500    ~1.94 chunks/node (estimated)
 #
@@ -23,14 +23,15 @@
 #    not corruption -- the text is real -- but it means chunk COUNT for this
 #    config overstates distinct coverage by about 7%.
 #
-# Shares kg_chunks_nomic_embed_text with the other two nomic configs -- same
-# model, same dimension, ADR 0002 satisfied -- isolated by tenant_id.
+# Shares one chunk table with the other two native configs -- same
+# model, same dimension, same prefixes, ADR 0002 and 0043 satisfied --
+# isolated from each other by tenant_id.
 name: native-sliding1k
 dataset: prime
 split: test-0.1
 chunker: sliding-1000-500
-embeddings: nomic-embed-text
-dimension: 768
+embeddings: Nemotron-3-Embed-1B
+dimension: 2048
 aggregation: max
 agent: dense
 k: 20
@@ -40,5 +41,5 @@ k: 20
 # vectors are well-formed and score plausibly, just worse than the model can
 # do -- which is why every nomic config states them rather than relying on a
 # default.
-document_prefix: "search_document: "
-query_prefix: "search_query: "
+document_prefix: "passage: "
+query_prefix: "query: "

@@ -2,8 +2,8 @@ name: redstring-native
 dataset: prime
 split: test-0.1
 chunker: boundary-preference
-embeddings: nomic-embed-text
-dimension: 768
+embeddings: Nemotron-3-Embed-1B
+dimension: 2048
 aggregation: max
 agent: hybrid
 k: 20
@@ -13,5 +13,5 @@ k: 20
 # vectors are well-formed and score plausibly, just worse than the model can
 # do -- which is why every nomic config states them rather than relying on a
 # default.
-document_prefix: "search_document: "
-query_prefix: "search_query: "
+document_prefix: "passage: "
+query_prefix: "query: "

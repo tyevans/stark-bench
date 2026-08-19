@@ -74,10 +74,10 @@ NEO4J_AUTH = ("neo4j", "starkbench")
 
 #: The endpoint backing `nomic-embed-text`. Shared infrastructure -- see
 #: `--embed-concurrency` on the CLI.
-NOMIC_BASE_URL = "http://192.168.1.14:8080/v1/"
+EMBED_BASE_URL = "http://192.168.1.14:8080/v1/"
 
 #: The chat model behind `zero_shot` and `deep`, on the same endpoint as
-#: `NOMIC_BASE_URL` (llama-swap serves both, embeddings on a separate peer).
+#: `EMBED_BASE_URL` (llama-swap serves both, embeddings on a separate peer).
 #: Overridable per config via `chat_model:`; a config that omits it gets this.
 DEFAULT_CHAT_MODEL = "qwen3.8-27b-mtp"
 
@@ -99,30 +99,40 @@ CHUNKERS = {
         SlidingWindowChunker, default_chunk_size=1000, default_overlap=500
     ),
     #: Whole documents, split only where the embedding server cannot take
-    #: them. nomic-embed-text is served with a 2048-token per-slot context
-    #: (--ctx-size / -np), so a document over ~7000 characters is rejected
-    #: outright: `input (4002 tokens) is larger than the max context size
-    #: (2048 tokens)`.
+    #: them. Nemotron-3-Embed-1B is served with a 4096-token per-slot context
+    #: (--ctx-size / -np), and embeddings are non-causal so a sequence cannot
+    #: span two physical batches -- the real ceiling is
+    #: min(ctx-per-slot, ubatch-size), which is why the flag that mattered
+    #: turned out to be --ubatch-size and not --ctx-size.
+    #:
+    #: 10000 characters is measured, not guessed. Sampling the longest and
+    #: the least-whitespace documents in this corpus against the live
+    #: tokenizer gives a worst case of 2.55 characters per token -- against a
+    #: 4.31 median, because PRIME carries SMILES strings and other dense
+    #: identifiers that tokenise nothing like prose. 10000 / 2.55 = 3922
+    #: tokens, inside 4096 with the `passage: ` prefix and a BOS on top.
+    #: Sizing this off the median would have put the densest documents at
+    #: 2300 tokens over the limit.
     #:
     #: Zero overlap, so this splits rather than truncates. Truncating would
     #: have matched what ada-002 does to its own overlong inputs, but ada-002
     #: truncates 26 documents at its 8191-token ceiling where we would
-    #: truncate 2,677 at 2048 -- so the whole-doc arm would silently hold
-    #: less text than the chunked arms, and the sweep would be measuring
-    #: content loss as well as granularity. Splitting keeps the text
-    #: identical across all three configs and leaves granularity the only
-    #: variable, which is the entire point of the cell.
+    #: truncate 1,826 at 10000 characters -- so the whole-doc arm would
+    #: silently hold less text than the chunked arms, and the sweep would be
+    #: measuring content loss as well as granularity. Splitting keeps the
+    #: text identical across all three configs and leaves granularity the
+    #: only variable, which is the entire point of the cell.
     #:
-    #: Costs ~1.03 chunks/node against a true whole-document 1.00 -- still
-    #: unambiguously the low end of the sweep.
+    #: 1,826 of 129,375 documents (1.41%) exceed it, against 2.57% at the old
+    #: 7000-character cap -- so this arm is now ~1.02 chunks/node.
     #:
     #: Zero overlap also sidesteps B-SLIDING-REDUNDANT-1: the redundant tail
     #: chunk appears only when the window advances by less than its width.
-    "capped-whole-7000": partial(
-        SlidingWindowChunker, default_chunk_size=7000, default_overlap=0
+    "capped-whole-10000": partial(
+        SlidingWindowChunker, default_chunk_size=10000, default_overlap=0
     ),
 }
-LIVE_EMBEDDINGS = {"nomic-embed-text"}
+LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B"}
 
 
 def _tenant_for(config: RunConfig) -> TenantId:
@@ -166,10 +176,10 @@ def _table_for(config: RunConfig) -> str:
 
 
 def _live_embeddings_for(config: RunConfig) -> EmbeddingProvider:
-    if config.embeddings == "nomic-embed-text":
+    if config.embeddings in LIVE_EMBEDDINGS:
         return LangChainEmbeddingProvider.openai_compatible(
-            base_url=NOMIC_BASE_URL,
-            model="nomic-embed-text",
+            base_url=EMBED_BASE_URL,
+            model=config.embeddings,
             dimension=config.dimension,
             document_prefix=config.document_prefix,
             query_prefix=config.query_prefix,
@@ -186,7 +196,7 @@ def _llm_for(config: RunConfig) -> LlmProvider:
     LLM -- is a second place for the agent name to be interpreted.
     """
     return LangChainLlmProvider.openai_compatible(
-        base_url=NOMIC_BASE_URL,
+        base_url=EMBED_BASE_URL,
         model=config.chat_model or DEFAULT_CHAT_MODEL,
     )
 

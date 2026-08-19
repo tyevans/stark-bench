@@ -1,14 +1,14 @@
 # The confound-separating cell.
 #
-# NOTE: the chunker is `capped-whole-7000`, not `whole-document`. The
-# embedding server serves nomic-embed-text with a 2048-token per-slot context,
-# so 2,677 of 129,575 documents (2.07%) cannot be embedded whole. They are
-# SPLIT (zero overlap), not truncated, so this arm holds exactly the same text
-# as the chunked arms -- see the CHUNKERS entry in harness/cli.py for why that
-# choice and not truncation. Costs ~1.03 chunks/node instead of 1.00.
+# NOTE: the chunker is `capped-whole-10000`, not `whole-document`. The
+# embedding server serves Nemotron-3-Embed-1B with a 4096-token per-slot
+# context, so 1,826 of 129,375 documents (1.41%) cannot be embedded whole.
+# They are SPLIT (zero overlap), not truncated, so this arm holds exactly the
+# same text as the chunked arms -- see the CHUNKERS entry in harness/cli.py
+# for why that choice and not truncation. Costs ~1.02 chunks/node vs 1.00.
 #
 # `redstring-native` differs from `vss-control` in TWO ways at once: the
-# embedding model (ada-002 1536d -> nomic 768d) and the chunking
+# embedding model (ada-002 1536d -> Nemotron 2048d) and the chunking
 # (whole-document -> boundary-preference). A gap between them cannot be
 # attributed to either.
 #
@@ -16,15 +16,15 @@
 # vss-control, and varies only the embedding model. vss-control minus this
 # is the model's contribution; this minus redstring-native is chunking's.
 #
-# Shares kg_chunks_nomic_embed_text with redstring-native -- same model, same
-# dimension, so ADR 0002 is satisfied -- and is isolated from it by tenant_id,
-# which is derived from `name`.
+# Shares one chunk table with redstring-native -- same model, same
+# dimension and prefixes, so ADR 0002 and 0043 are satisfied -- and is
+# isolated from it by tenant_id, which is derived from `name`.
 name: native-wholedoc
 dataset: prime
 split: test-0.1
-chunker: capped-whole-7000
-embeddings: nomic-embed-text
-dimension: 768
+chunker: capped-whole-10000
+embeddings: Nemotron-3-Embed-1B
+dimension: 2048
 aggregation: max
 agent: dense
 k: 20
@@ -34,5 +34,5 @@ k: 20
 # vectors are well-formed and score plausibly, just worse than the model can
 # do -- which is why every nomic config states them rather than relying on a
 # default.
-document_prefix: "search_document: "
-query_prefix: "search_query: "
+document_prefix: "passage: "
+query_prefix: "query: "
