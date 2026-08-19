@@ -311,3 +311,32 @@ What to do: build the 3.11 environment once, into a checked-in path
 interpreter directly instead of `uv run --with`. Then a scoring run touches no
 network at all. Do not simply add `--offline`: it makes the *first* run on any
 machine fail instead, which trades a rare failure for a certain one.
+
+## B-EMBED-COLDSTART-1 — one embedding timeout kills a two-hour ingest
+
+`src/stark_bench/adapters/stark_ingest_engine.py:251` gathers a wave of embed
+calls and lets any `EmbeddingProviderError` propagate straight out of
+`ingest_corpus`. There is no retry anywhere on the path, so a single failed
+request discards the run.
+
+The failure is not hypothetical and it is not the endpoint being down, which is
+what it was misdiagnosed as twice. The inference host is llama-swap, which
+unloads the embedding model when a chat model is used. The first request after
+a swap pays the model load: measured **36.2s cold, then 0.74s and 0.14s**.
+At `--embed-concurrency 32` the whole wave queues behind that cold load and
+exceeds the proxy's 60s header timeout — which is why it died ~3 minutes in
+rather than at request one, and why isolated batch-size probes (`batch=32` in
+6.8s) all looked healthy and sent the diagnosis to the wrong place.
+
+Worked around by warming the model with a single embed before launching and
+dropping to `--embed-concurrency 12`. That is a smaller queue, not a fix: any
+mid-run swap re-arms the same failure.
+
+Fix is retry with backoff around the wave, treating a timeout as retryable.
+Note it belongs in `redstring`'s `llm/adapters/langchain_embedding.py` rather
+than here if the retry should benefit every caller — decide which before
+writing it.
+
+Ingest is resumable (`loaded N existing chunk ids for tenant`), so the cost of
+a crash is the wave in flight, not the run. That is what makes this a backlog
+item and not a blocker.
