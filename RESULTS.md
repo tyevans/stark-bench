@@ -99,6 +99,55 @@ come from `stark_qa.evaluator.Evaluator` in a Python 3.11 sidecar — we compute
 none of them ourselves, deliberately, so the numbers are comparable to
 published STaRK results rather than to our own arithmetic.
 
+## Where these numbers sit against the published board
+
+STaRK's own leaderboard for **PRIME, Synthesized (10%)** — the same
+`test-0.1` split every number on this page uses. Reported as percentages
+there; converted here to match our scale.
+
+| method | hit@1 | hit@5 | recall@20 | mrr |
+|---|---|---|---|---|
+| GPT-4 reranker | 0.1828 | 0.3728 | 0.3405 | **0.2655** |
+| Claude-3 reranker | 0.1779 | 0.3690 | 0.3557 | 0.2627 |
+| GritLM-7b | 0.1679 | 0.3429 | 0.4111 | 0.2499 |
+| multi-ada-002 | 0.1536 | 0.3286 | 0.4099 | 0.2370 |
+| **ada-002** | **0.1536** | **0.3107** | **0.3788** | **0.2350** |
+| BM25 | 0.1393 | 0.3107 | 0.3284 | 0.2168 |
+| voyage-l2-instruct | 0.1214 | 0.3142 | 0.3734 | 0.2123 |
+| ColBERTv2 | 0.1500 | 0.2607 | 0.2778 | 0.1998 |
+| QAGNN (roberta) | 0.0714 | 0.1714 | 0.3295 | 0.1627 |
+| LLM2Vec | 0.0929 | 0.2070 | 0.2554 | 0.1500 |
+| DPR (roberta) | 0.0500 | 0.2357 | 0.3050 | 0.1350 |
+| ANCE (roberta) | 0.0678 | 0.1615 | 0.1707 | 0.1142 |
+
+**Our `vss-control` reproduces the ada-002 row.** Hit@1 0.1536, hit@5
+0.3107 and recall@20 0.37878 are identical to two decimal places in the
+published units. That is the control doing its job: it exercises ingest,
+tenant isolation, the STaRK-id mapping, the chunk store and the scoring
+sidecar end to end, and a harness defect anywhere in that chain would show
+up here rather than being attributed to a model.
+
+The one gap is mrr, 0.23057 against 0.2350, and it is explained by the
+single difference between the metrics: hit@1, hit@5 and recall@20 are all
+decided inside rank 20, while mrr counts ranks beyond it. We return `k=20`,
+so a gold answer at rank 40 earns the published run 0.025 and earns us 0.
+Worth ~0.4 points here. **Every mrr on this page is therefore an mrr@20**
+and reads very slightly low against the board; the other three metrics are
+directly comparable.
+
+Two things to read off the board before reading our numbers:
+
+- **The whole field spans about 5 mrr points**, 0.2123 to 0.2655 among the
+  serious retrievers. Differences of 0.01 between our arms are a fifth of
+  the entire published spread, not noise.
+- **The two reranker rows are the top of the board, and both have *lower*
+  recall@20 than the ada-002 they rerank** (0.3405 and 0.3557 against
+  0.3788). Reranking on this benchmark buys hit@1 and mrr by promoting
+  right answers, and pays for it by demoting marginal ones off the end of
+  the list. That is a property of the architecture rather than a defect in
+  any implementation of it, and it is why recall@20 sits beside mrr in
+  every table here.
+
 ## What each arm is
 
 | config | embeddings | dim | chunker | chunks/node |
