@@ -7,10 +7,11 @@ prompt size grow with the query, and neither is allowed to grow unboundedly.
 
 Two hard bounds keep that honest:
 
-- `budget: BudgetTracker` (declared in `stark_bench.ports`, not imported from
-  `stark_bench.harness` -- `agents/` may only import `ports`, per the
-  import-linter contract in `pyproject.toml`) caps tool calls and LLM calls
-  *separately*, so a cheap tool loop can never starve the LLM's own budget.
+- `budget: BudgetTracker` (declared in `stark_bench.ports`, not the concrete
+  `stark_bench.domain.budget.Budget`, which `agents/` is forbidden from
+  importing by name in the `pyproject.toml` contract) caps tool calls and
+  LLM calls *separately*, so a cheap tool loop can never starve the LLM's
+  own budget.
   Running out is a recorded outcome (`budget.exhausted`), not an exception
   that discards the run: the loop catches `BudgetExhausted` and returns
   whatever candidates it already has.
@@ -74,9 +75,11 @@ class Step(BaseModel):
 @dataclass(slots=True)
 class DeepAgent:
     #: No default -- a `BudgetTracker` (see `stark_bench.ports`) must be
-    #: supplied by the caller. `agents/` may not import the concrete
-    #: `Budget` from `stark_bench.harness`, even to build a default one, per
-    #: the import-linter contract in `pyproject.toml`.
+    #: supplied by the caller. `agents/` may not import
+    #: `stark_bench.domain.budget`, even to build a default one: holding a
+    #: `Budget` would let an agent read the caps it is being judged against,
+    #: or construct its own. Named in the forbidden contract, not merely
+    #: asked for here.
     budget: BudgetTracker
     k: int = 20
     name: str = "deep"

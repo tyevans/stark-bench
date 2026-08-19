@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from stark_bench.harness.cli import _table_for
+from stark_bench.composition.cli import _table_for
 from stark_bench.domain.run_config import RunConfig
 
 
@@ -140,7 +140,7 @@ def test_the_live_provider_is_built_with_the_configured_prefixes(monkeypatch):
     Whether the provider then applies them to the right side is redstring's
     own compliance suite, which runs against a live endpoint.
     """
-    from stark_bench.harness import cli
+    from stark_bench.composition import cli
 
     seen: dict[str, object] = {}
 

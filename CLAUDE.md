@@ -64,11 +64,11 @@ Never edit dependency tables by hand — `uv add` / `uv remove`.
 
 ```
 # ingest a config's corpus (idempotent; resumes by skipping existing chunks)
-uv run python -m stark_bench.harness.cli --config config/<name>.yaml --ingest \
+uv run python -m stark_bench.composition.cli --config config/<name>.yaml --ingest \
     --embed-concurrency 16
 
 # score one architecture against it
-uv run python -m stark_bench.harness.cli --config config/<name>.yaml --run \
+uv run python -m stark_bench.composition.cli --config config/<name>.yaml --run \
     --agent {dense,hybrid,zero_shot,deep}
 ```
 
@@ -372,7 +372,7 @@ site uses it. No test of a helper can see this, because the helper is
 correct. **When you add a helper that one place is supposed to call, add
 the test that the place calls it** — an AST check on the call site is
 legitimate and cheap when running the caller needs Postgres, Neo4j and an
-endpoint. See `tests/harness/test_ingest_stats_reach_the_report.py` for the
+endpoint. See `tests/composition/test_ingest_stats_reach_the_report.py` for the
 pattern.
 
 The general habit this project keeps relearning: **break the implementation

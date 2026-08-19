@@ -11,13 +11,14 @@ the embedding model versus the chunking.
 ## Layout
 
 ```
-domain/       values -- corpus identity, ingest outcome, cost
+domain/       values -- run config, corpus identity, budget, ingest outcome
 ports/        what the use cases need: chunk index, ingest engine, agent
-application/  use cases
-agents/       the subjects of the benchmark
-adapters/     Postgres, and anything else with a driver in it
-harness/      CLI, config, scoring, reporting (being dissolved into the above)
-skb/          STaRK's knowledge base -> redstring's stores
+application/  use cases -- ingest a corpus, run queries
+agents/       the subjects of the benchmark: dense, lexical, hybrid,
+              zero_shot, deep
+adapters/     anything with a driver, a file or a subprocess behind it
+composition/  the CLI and the agent registry -- the only layer that may
+              know every other one
 sidecar/      runs under Python 3.11 for stark-qa; shares no code
 ```
 
@@ -38,13 +39,13 @@ docker compose up -d
 ```
 
 Needs an OpenAI-compatible embedding endpoint, and a chat endpoint for the LLM
-agents. Both are configured in `harness/cli.py`.
+agents. Both are configured in `composition/cli.py`.
 
 ## Running
 
 ```
-uv run python -m stark_bench.harness.cli --config config/native-wholedoc.yaml --ingest --ingest-edges
-uv run python -m stark_bench.harness.cli --config config/native-wholedoc.yaml --run
+uv run python -m stark_bench.composition.cli --config config/native-wholedoc.yaml --ingest --ingest-edges
+uv run python -m stark_bench.composition.cli --config config/native-wholedoc.yaml --run
 ```
 
 Ingest is resumable and safe to interrupt: chunk ids are content-addressed

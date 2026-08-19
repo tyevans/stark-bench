@@ -32,7 +32,7 @@ import asyncpg
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from stark_bench.adapters.config_file import load_config  # noqa: E402
-from stark_bench.harness.cli import POSTGRES_DSN, _table_for, _tenant_for  # noqa: E402
+from stark_bench.composition.cli import POSTGRES_DSN, _table_for, _tenant_for  # noqa: E402
 
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 EXPECTED_NODES = 129375

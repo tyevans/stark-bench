@@ -75,7 +75,7 @@ mkdir -p "$LOG_DIR"
 
 run_cli() {  # run_cli <logfile> <args...>
   local log="$1"; shift
-  if ! uv run python -m stark_bench.harness.cli "$@" >"$log" 2>&1; then
+  if ! uv run python -m stark_bench.composition.cli "$@" >"$log" 2>&1; then
     echo "!!! FAILED: cli $*"
     grep -v "HTTP Request" "$log" | tail -15
     return 1

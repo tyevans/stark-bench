@@ -83,9 +83,16 @@ def test_every_module_named_in_a_contract_exists(contract: str, module: str) -> 
 def test_every_exhaustive_ignore_exists() -> None:
     """An ignore for a package that is gone is a finished slice nobody closed.
 
-    This list is the definition of done for the hexagonal refactor, so an
-    entry that no longer names anything makes the remaining work look
-    larger than it is.
+    **This assertion is vacuous today**, and that is worth saying rather
+    than leaving a reader to discover it: the refactor finished, so
+    `exhaustive_ignores` was deleted rather than kept empty, and there is
+    nothing to iterate. A guard over an empty set passes for free.
+
+    It is kept because the list can come back -- placing a new package is a
+    decision someone may defer -- and the day it does, this bites without
+    anyone remembering to re-add a check. A vacuous guard that costs a
+    millisecond is a reasonable trade; a vacuous guard nobody knows is
+    vacuous is not, which is what the first paragraph is for.
     """
     missing = [
         name
