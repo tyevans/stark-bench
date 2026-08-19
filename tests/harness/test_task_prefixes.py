@@ -159,3 +159,26 @@ def test_the_live_provider_is_built_with_the_configured_prefixes(monkeypatch):
     # from correct.
     assert seen["document_prefix"] == "passage: "
     assert seen["query_prefix"] == "query: "
+
+
+def test_every_shipped_config_yields_a_legal_postgres_identifier():
+    """A model id is a vendor's string; a table name is not.
+
+    `Nemotron-3-Embed-1B` carries capitals and redstring's chunk store
+    rejects a table that is not a bare lowercase identifier -- which is how
+    this was found, at the start of an ingest rather than in review. The
+    check runs over the shipped configs rather than invented names because
+    the defect is a real model id arriving, and no invented name would have
+    had capitals in it.
+    """
+    import re
+    from pathlib import Path
+
+    from stark_bench.harness.config import load_config
+
+    root = Path(__file__).resolve().parents[2] / "config"
+    paths = sorted(root.glob("*.yaml"))
+    assert paths, "no configs found -- this test would pass vacuously"
+    for path in paths:
+        table = _table_for(load_config(path))
+        assert re.fullmatch(r"[a-z_][a-z0-9_]*", table), f"{path.name}: {table!r}"

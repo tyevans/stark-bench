@@ -153,7 +153,12 @@ def _table_for(config: RunConfig) -> str:
     later -- the dimension guard cannot see a model-identity mismatch, so
     the table name is keyed on the embeddings identifier by construction.
     """
-    slug = config.embeddings.replace("-", "_")
+    # Lowercased and non-alphanumerics collapsed, because a model id is a
+    # vendor's string and a Postgres identifier is not. `Nemotron-3-Embed-1B`
+    # has capitals; redstring's chunk store rejects anything but a bare
+    # lowercase identifier, which is how that was found rather than by
+    # anyone reading this line.
+    slug = "".join(c if c.isalnum() else "_" for c in config.embeddings).lower()
     if not config.document_prefix and not config.query_prefix:
         return f"kg_chunks_{slug}"
     # The task prefix is part of the model's identity, not a formatting

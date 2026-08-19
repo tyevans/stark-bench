@@ -17,7 +17,13 @@ requires = ["uv_build>=0.8.8,<0.9.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
-redstring = { path = "../redstring" }
+# Editable, and that is load-bearing rather than a convenience. Installed
+# as a plain path copy, a redstring change does not reach this venv until
+# something forces a reinstall -- which cost a calibration run when
+# `document_prefix` had been merged upstream for an hour and the venv
+# still held the signature without it. That failure was loud; a change
+# to a function BODY would not have been.
+redstring = { path = "../redstring", editable = true }
 
 [dependency-groups]
 dev = [

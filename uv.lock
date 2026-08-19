@@ -1124,7 +1124,7 @@ wheels = [
 [[package]]
 name = "redstring"
 version = "0.9.2"
-source = { directory = "../redstring" }
+source = { editable = "../redstring" }
 dependencies = [
     { name = "dateparser" },
     { name = "eventsource-py" },
@@ -1408,7 +1408,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.2" },
-    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], directory = "../redstring" },
+    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], editable = "../redstring" },
 ]
 
 [package.metadata.requires-dev]
