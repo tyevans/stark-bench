@@ -10,7 +10,7 @@ mapping of *builders* instead.
 
 ## A budget is per query, not per run
 
-`harness.runner.run` constructs one agent and calls `retrieve` once per query,
+`application.run_queries.run` constructs one agent and calls `retrieve` once per query,
 so a `DeepAgent` holding a single `Budget` would spend the whole run's
 allowance on query 1 and return `[]` for the remaining eleven thousand -- a
 silently near-zero score rather than a crash, which is the worst shape a

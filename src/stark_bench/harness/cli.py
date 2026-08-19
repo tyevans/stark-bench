@@ -45,7 +45,7 @@ from stark_bench.harness.providers import (
     node_vector_lookup,
 )
 from stark_bench.harness.report import summarise_cost, write_report
-from stark_bench.harness.runner import run
+from stark_bench.application.run_queries import run
 from stark_bench.harness.scoring import score_predictions
 from stark_bench.skb.artifacts import (
     read_doc_embeddings,
