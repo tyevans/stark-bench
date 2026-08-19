@@ -58,6 +58,21 @@ an architecture finding and is a data finding. Re-ingest with
 `--ingest-edges` before reporting any `deep` number, or state clearly that
 the number is traversal-free.
 
+**It is not a re-ingest, and that is worth knowing before anyone budgets
+one.** Read `skb/ingest.py:162`: the resume path returns `None` for the
+vectors and nothing else -- the entity is still built, still appended to
+`batch`, still added to `known`. So `--ingest --ingest-edges` over an
+already-ingested corpus, with resume left at its default, re-upserts
+entities without embedding a single character and then loads the edges.
+Minutes, not the two hours the word "re-ingest" implies. The entities being
+present is also what keeps `upsert_relationships` from raising
+`MissingEntityError` on the first edge.
+
+Two things to check when it runs, neither of which the ingest itself will
+tell you: that `self_loops_dropped` is non-zero (STaRK's PRIME has them, so
+a zero is more likely a loader that stopped looking than a clean corpus),
+and that `edges` matches the line count of `edges.jsonl` minus those drops.
+
 ## B-ADA002-TABLE-1: the `vss-control` corpus is orphaned in the pre-rename `kg_chunks` table
 
 `_table_for` in `src/stark_bench/harness/cli.py` derives a per-embedding-model
