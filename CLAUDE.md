@@ -130,6 +130,74 @@ Two hazards, both hit for real:
   unusually short — 1801 nodes/min there against 1449 on the first 1500,
   same server. That looked like a regression from a server change and was
   entirely the sample. Fix the slice before varying anything else.
+- **A resumed ingest measures nothing.** Re-chunking to compute ids and
+  skipping what is already stored is CPU work that writes no rows, so the
+  row count is flat while the process is busy and then jumps. On
+  2026-08-19 a rate taken across that phase read **611 chunks/min** and was
+  reported with a 1h45m ETA; the same run's real rate was ~3,600/min and it
+  finished in minutes. **Only measure an arm ingesting into an empty
+  tenant**, and if you must watch a resumed one, wait for the skip phase to
+  end before starting the clock.
+- **Scope every progress query to the tenant.** `native-wholedoc`,
+  `redstring-native` and `native-sliding1k` share one chunk table and are
+  separated only by `tenant_id`, so a bare `count(*)` sums three arms. This
+  made an arm at 133,919 read as 141,673 against a target of ~136,700 —
+  finished and overshooting when it was neither. See B-MONITOR-TENANT-1.
+
+### The only clean number we have
+
+**2,046 chunks/min**, whole-arm: `redstring-native` wrote 147,329 chunks
+into an **empty** tenant in 72 minutes on 2026-08-19, at
+`--embed-concurrency 4 --embed-batch 64` against Nemotron-3-Embed-1B
+served with `--ctx-size 16384 --batch-size 8192 --ubatch-size 8192 -np 4`.
+
+Quote that figure, not an interval. An earlier version of this section said
+**1,666 chunks/min** from two consecutive 3-minute samples early in the same
+run, and it was 19% low: the run's instantaneous rate ranged from 334 to
+6,666 chunks/min depending on document length and flush timing. The tail is
+the slow part -- the longest documents produce the most tokens per batch,
+and request rate fell from 117/min at the start to 9/min at the end while
+the process was entirely healthy.
+
+One interval read 1606 and was **not** clean: a `--run` scoring pass was
+launched during it. That pass used precomputed vectors and touched no GPU, which is
+why it was thought safe to run alongside — and it contends on *Postgres*
+instead, where `hybrid` does lexical search over a 5.7M-row terms table
+while the ingest is writing to the same database. The next interval fell to
+1071/min, a 36% drop, and **recovered to 2406/min in the interval after
+that pass finished**. The recovery is what makes this a diagnosis rather
+than a coincidence: 1666 before, 1071 during, 2406 after, with nothing else
+changed. **Nothing else may touch the database while a throughput number is
+being taken**, whatever it does to the GPU.
+
+### Sampling this workload is harder than measuring it
+
+Two mistakes, both made on 2026-08-19, both of which produced a confident
+wrong answer:
+
+- **A short interval measures the flush, not the throughput.** Chunks
+  commit in batches (`CHUNK_BATCH = 1000`), so the row count steps rather
+  than climbs. Three-minute samples of one arm gave 1650, 5768, 2000, 333,
+  667 and 5771 chunks/min -- a seventeen-fold spread -- while the running
+  average stayed near 2100. A 333 reading was *exactly one flush*. **Quote
+  the whole-arm average**: total chunks over total wall time, which is the
+  only figure immune to when you happened to look.
+- **Two rates from two different windows are not comparable.** A request
+  rate sampled in one minute (117/min) was divided by a chunk rate from a
+  different interval, implying each request carried a handful of texts
+  against a configured 64 -- and nearly became a filed batching bug.
+  Measured over *one* 90-second window: 91 requests, 5500 chunks, **~60
+  texts per request**. Batching was working the whole time. Sample both
+  sides of a ratio in the same window or do not compute it.
+
+**Whether `--ubatch-size 8192` beat 4096 is unresolved, and no number in
+this file answers it.** Every 4096 measurement was taken across a resume
+skip phase, and the one prior clean figure (1792 nodes/min at
+`--ubatch-size 2048`) used a *different chunker*, so its chunks differ in
+both size and count. Settling it needs the same arm re-ingested at both
+settings — about 40 minutes of GPU time for a throughput knob. It was
+judged not worth it against ten uncollected result numbers. Do not quote a
+comparison; there isn't one.
 
 Background a long ingest with the harness's own backgrounding, **not `nohup`
 or `setsid`** — those did not survive here, twice, and the second time the
