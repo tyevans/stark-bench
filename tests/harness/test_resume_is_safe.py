@@ -1,0 +1,98 @@
+"""Resuming an ingest across a chunking change is worse than starting over.
+
+Not merely stale: a chunk id derives from `(source, text)`, so a changed
+chunker writes new ids and the old ones remain as live rows in the same
+tenant, still returned by search. The corpus becomes a silent mixture of two
+chunkings -- every count inflated, and the arm no longer measures the
+granularity its config names.
+
+So the guard refuses on anything short of a byte-identical match, and each
+way of being short of one is tested, because the whole value of the guard is
+in the cases where it says no.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from scripts.resume_is_safe import resume_is_safe
+
+CONFIG = "name: arm\nchunker: whole-document\n"
+
+
+@pytest.fixture
+def root(tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "results").mkdir()
+    (tmp_path / "config" / "arm.yaml").write_text(CONFIG, encoding="utf-8")
+    return tmp_path
+
+
+def _report(root, **fields) -> None:
+    (root / "results" / "arm.ingest.json").write_text(json.dumps(fields), encoding="utf-8")
+
+
+def test_an_identical_config_allows_resume(root):
+    _report(root, nodes=129375, config_verbatim=CONFIG)
+    assert resume_is_safe("arm", root) is True
+
+
+def test_a_changed_chunker_refuses(root):
+    """The case the guard exists for."""
+    _report(root, nodes=129375, config_verbatim="name: arm\nchunker: sliding-1000-500\n")
+    assert resume_is_safe("arm", root) is False
+
+
+def test_a_whitespace_difference_refuses(root):
+    """Byte-identical, not equivalent -- the guard cannot parse intent."""
+    _report(root, nodes=129375, config_verbatim=CONFIG + "\n")
+    assert resume_is_safe("arm", root) is False
+
+
+def test_a_report_predating_the_field_refuses(root):
+    """No claim about what produced it, so it cannot vouch for the corpus.
+
+    This is the case that would fail *open* under a `.get(...) == ...`
+    written without care: `None == None` is true if the source were also
+    missing, and a default of `""` would match an empty config file.
+    """
+    _report(root, nodes=129375)
+    assert resume_is_safe("arm", root) is False
+
+
+def test_a_missing_report_refuses(root):
+    assert resume_is_safe("arm", root) is False
+
+
+def test_a_missing_config_refuses(root):
+    _report(root, config_verbatim=CONFIG)
+    (root / "config" / "arm.yaml").unlink()
+    assert resume_is_safe("arm", root) is False
+
+
+def test_unreadable_json_refuses(root):
+    (root / "results" / "arm.ingest.json").write_text("{not json", encoding="utf-8")
+    assert resume_is_safe("arm", root) is False
+
+
+def test_the_ingest_report_actually_records_the_field():
+    """The guard is inert unless `--ingest` writes what it reads.
+
+    Third time this session that a helper was correct while nothing checked
+    the producer -- see test_ingest_stats_reach_the_report.py. Structural,
+    because writing a real report needs Postgres and an endpoint.
+    """
+    import ast
+    from pathlib import Path
+
+    import stark_bench.harness.cli as cli_module
+
+    source = Path(cli_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    found = any(
+        isinstance(node, ast.Constant) and node.value == "config_verbatim"
+        for node in ast.walk(tree)
+    )
+    assert found, "cli.py never writes config_verbatim into the ingest report"

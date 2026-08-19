@@ -48,6 +48,13 @@ CONCURRENCY="${CONCURRENCY:-32}"
 # The peer is restarted by hand and has crashed on its own. Over a run this
 # long, three attempts is optimistic.
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
+# RESUME=1 makes even the FIRST attempt resume rather than starting the arm
+# clean. Use it to continue an interrupted sweep: four relaunches in one
+# session each discarded ~20k already-embedded chunks before this existed.
+#
+# Guarded, not trusted -- see scripts/resume_is_safe.py for why a changed
+# chunker makes resuming actively wrong rather than merely stale.
+RESUME="${RESUME:-0}"
 LOG_DIR="${LOG_DIR:-/tmp/stark-sweep}"
 mkdir -p "$LOG_DIR"
 
@@ -63,9 +70,20 @@ run_cli() {  # run_cli <logfile> <args...>
 
 ingest_arm() {  # ingest_arm <config>
   local cfg="$1" attempt
+  local first_extra=(--no-resume)
+  if [ "$RESUME" = "1" ]; then
+    if python3 scripts/resume_is_safe.py "$cfg"; then
+      echo "=== RESUME $cfg: recorded config matches, continuing existing corpus"
+      first_extra=()
+    else
+      echo "=== RESUME refused for $cfg: config differs from the recorded ingest,"
+      echo "===   or none was recorded. Re-ingesting clean -- a changed chunker"
+      echo "===   leaves stale chunk ids behind that still answer queries."
+    fi
+  fi
   for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
-    local extra=(--no-resume)
-    [ "$attempt" -gt 1 ] && extra=()   # retries resume; see header
+    local extra=("${first_extra[@]}")
+    [ "$attempt" -gt 1 ] && extra=()   # retries always resume; see header
     echo "=== INGEST $cfg attempt=$attempt $(date -u +%H:%M:%S)"
     if run_cli "$LOG_DIR/$cfg.ingest.log" \
          --config "config/$cfg.yaml" --ingest --ingest-edges \

@@ -408,6 +408,13 @@ async def _do_ingest(
         "resume": resume,
         "existing_ids_load_s": existing_ids_load_s,
         "wall_time_s": elapsed,
+        # The config that produced this corpus, verbatim, so a later run can
+        # tell whether resuming is safe. A chunk id derives from
+        # (source, text): a changed chunker writes new ids and leaves the old
+        # ones behind as live rows that still answer queries, so resuming
+        # across a chunking change yields a silent mixture of two chunkings
+        # rather than a merely stale corpus. See scripts/resume_is_safe.py.
+        "config_verbatim": config.raw,
     }
 
 
