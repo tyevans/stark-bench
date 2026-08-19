@@ -13,7 +13,7 @@ from redstring import (
 
 from stark_bench.agents.hybrid import HybridAgent
 from stark_bench.application.run_queries import run
-from stark_bench.harness.scoring import score_predictions
+from stark_bench.adapters.stark_scorer import score_predictions
 from stark_bench.skb.artifacts import read_edges, read_nodes, read_queries
 from stark_bench.skb.chunkers import WholeDocumentChunker
 from stark_bench.skb.ingest import ingest

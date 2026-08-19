@@ -1,6 +1,6 @@
 import pytest
 
-from stark_bench.harness.scoring import score_predictions
+from stark_bench.adapters.stark_scorer import score_predictions
 from stark_bench.domain import Ranked
 
 

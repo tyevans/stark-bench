@@ -2,11 +2,11 @@
 
 The four architectures do not share a constructor. `DenseAgent`, `HybridAgent`
 and `ZeroShotAgent` take `k` alone; `DeepAgent` additionally requires a
-`BudgetTracker` and deliberately has no default for it -- `agents/` may not
-import `stark_bench.harness`, where the concrete `Budget` lives, so the
-harness is the only place that can supply one. A plain
-`{name: class}` mapping cannot express that, which is why this module holds a
-mapping of *builders* instead.
+`BudgetTracker` and deliberately has no default for it -- `agents/` is
+forbidden from importing `domain.budget`, where the concrete `Budget`
+lives, so composition is the only place that can supply one. A plain
+`{name: class}` mapping cannot express that, which is why this module holds
+a mapping of *builders* instead.
 
 ## A budget is per query, not per run
 

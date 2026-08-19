@@ -37,16 +37,16 @@ from redstring.graph.adapters.neo4j import Neo4jGraphStore
 from redstring.llm.adapters.langchain import LangChainLlmProvider
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
-from stark_bench.harness.agents import AGENTS, build_agent
+from stark_bench.composition.agent_registry import AGENTS, build_agent
 from stark_bench.adapters.config_file import load_config
 from stark_bench.domain.run_config import RunConfig
-from stark_bench.harness.providers import (
+from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
 )
-from stark_bench.harness.report import summarise_cost, write_report
+from stark_bench.adapters.report_file import summarise_cost, write_report
 from stark_bench.application.run_queries import run
-from stark_bench.harness.scoring import score_predictions
+from stark_bench.adapters.stark_scorer import score_predictions
 from stark_bench.skb.artifacts import (
     read_doc_embeddings,
     read_edges,
