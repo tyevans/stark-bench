@@ -1,0 +1,23 @@
+# The confound-separating cell.
+#
+# `redstring-native` differs from `vss-control` in TWO ways at once: the
+# embedding model (ada-002 1536d -> nomic 768d) and the chunking
+# (whole-document -> boundary-preference). A gap between them cannot be
+# attributed to either.
+#
+# This config holds the chunking fixed at whole-document, matching
+# vss-control, and varies only the embedding model. vss-control minus this
+# is the model's contribution; this minus redstring-native is chunking's.
+#
+# Shares kg_chunks_nomic_embed_text with redstring-native -- same model, same
+# dimension, so ADR 0002 is satisfied -- and is isolated from it by tenant_id,
+# which is derived from `name`.
+name: native-wholedoc
+dataset: prime
+split: test-0.1
+chunker: whole-document
+embeddings: nomic-embed-text
+dimension: 768
+aggregation: max
+agent: dense
+k: 20
