@@ -17,7 +17,7 @@ from stark_bench.adapters.stark_scorer import score_predictions
 from stark_bench.skb.artifacts import read_edges, read_nodes, read_queries
 from stark_bench.skb.chunkers import WholeDocumentChunker
 from stark_bench.skb.ingest import ingest
-from stark_bench.tools.redstring_tools import RedstringToolset
+from stark_bench.adapters.redstring_toolset import RedstringToolset
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "tiny_skb"
 
