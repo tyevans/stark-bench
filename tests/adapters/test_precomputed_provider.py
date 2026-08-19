@@ -1,6 +1,6 @@
 import pytest
 
-from stark_bench.harness.providers import (
+from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     PrecomputedLookupError,
     node_vector_lookup,

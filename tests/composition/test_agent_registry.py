@@ -9,7 +9,11 @@ from redstring import TenantId
 from redstring.llm.adapters.langchain import LangChainLlmProvider
 
 from stark_bench.agents.zero_shot import ZeroShotAgent
-from stark_bench.harness.agents import AGENTS, PerQueryDeepAgent, build_agent
+from stark_bench.composition.agent_registry import (
+    AGENTS,
+    PerQueryDeepAgent,
+    build_agent,
+)
 from stark_bench.harness.cli import (
     DEFAULT_CHAT_MODEL,
     _llm_for,
