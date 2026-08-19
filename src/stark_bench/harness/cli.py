@@ -73,12 +73,24 @@ POSTGRES_DSN = "postgresql://stark:stark@localhost:55432/stark"
 NEO4J_URI = "bolt://localhost:57687"
 NEO4J_AUTH = ("neo4j", "starkbench")
 
-#: The endpoint backing `nomic-embed-text`. Shared infrastructure -- see
+#: llama-swap, which fronts **both** the embedding model and the chat model
+#: on one port and loads whichever a request names.
+#:
+#: Named for the endpoint rather than for one of its models, because it was
+#: `EMBED_BASE_URL` while also being what `_llm_for` passed as the chat
+#: provider's `base_url` -- correct, and reading like a bug. The old comment
+#: said it backed `nomic-embed-text`, which stopped being true when the
+#: embedder became Nemotron-3-Embed-1B.
+#:
+#: Shared infrastructure: ask before saturating it, and see
 #: `--embed-concurrency` on the CLI.
-EMBED_BASE_URL = "http://192.168.1.14:8080/v1/"
+#:
+#: One port, one model resident at a time -- so an agent that interleaves
+#: embedding and chat makes llama-swap thrash. See B-CORESIDENCE-1.
+INFERENCE_BASE_URL = "http://192.168.1.14:8080/v1/"
 
 #: The chat model behind `zero_shot` and `deep`, on the same endpoint as
-#: `EMBED_BASE_URL` (llama-swap serves both, embeddings on a separate peer).
+#: `INFERENCE_BASE_URL` (llama-swap serves both, embeddings on a separate peer).
 #: Overridable per config via `chat_model:`; a config that omits it gets this.
 #: Text-only, 16k context, `-np 1`. The variant matters for a reason that
 #: has nothing to do with quality: the multimodal `qwen3.8-27b-mtp` at
@@ -210,7 +222,7 @@ def _table_for(config: RunConfig) -> str:
 def _live_embeddings_for(config: RunConfig) -> EmbeddingProvider:
     if config.embeddings in LIVE_EMBEDDINGS:
         return LangChainEmbeddingProvider.openai_compatible(
-            base_url=EMBED_BASE_URL,
+            base_url=INFERENCE_BASE_URL,
             model=config.embeddings,
             dimension=config.dimension,
             document_prefix=config.document_prefix,
@@ -228,7 +240,7 @@ def _llm_for(config: RunConfig) -> LlmProvider:
     LLM -- is a second place for the agent name to be interpreted.
     """
     return LangChainLlmProvider.openai_compatible(
-        base_url=EMBED_BASE_URL,
+        base_url=INFERENCE_BASE_URL,
         model=config.chat_model or DEFAULT_CHAT_MODEL,
     )
 
