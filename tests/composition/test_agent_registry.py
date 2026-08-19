@@ -54,9 +54,28 @@ CONFIG = RunConfig(
 )
 
 
-def test_all_four_architectures_are_reachable_by_name():
-    """The two LLM agents shipped tested but unreachable from a config."""
-    assert set(AGENTS) == {"dense", "hybrid", "zero_shot", "deep"}
+def test_every_architecture_is_reachable_by_name():
+    """The two LLM agents shipped tested but unreachable from a config.
+
+    Asserted as an exact set rather than a subset, which is why adding
+    `lexical` failed here first. That is the intended behaviour: a new
+    retrieval architecture changes what the results table means, so it
+    should not be able to appear without someone updating this line.
+    """
+    assert set(AGENTS) == {"dense", "lexical", "hybrid", "zero_shot", "deep"}
+
+
+def test_the_three_retrieval_channels_are_all_reachable():
+    """`dense`, `lexical` and `hybrid` are one measurement, not three.
+
+    `hybrid` is redstring's rank fusion of the other two, so reading its
+    contribution off `hybrid - dense` assumes the fusion adds exactly the
+    difference. Without `lexical` scored on its own, a corpus where BM25 is
+    strong and a corpus where fusion merely reorders a strong dense result
+    are indistinguishable.
+    """
+    for channel in ("dense", "lexical", "hybrid"):
+        assert channel in AGENTS, f"{channel} is not reachable from a config"
 
 
 @pytest.mark.parametrize(

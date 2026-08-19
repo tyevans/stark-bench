@@ -2,6 +2,7 @@ import pytest
 
 from stark_bench.agents.dense import DenseAgent
 from stark_bench.agents.hybrid import HybridAgent
+from stark_bench.agents.lexical import LexicalAgent
 from stark_bench.domain import Query, Ranked, ToolCall
 from stark_bench.ports import Agent
 
@@ -54,3 +55,33 @@ async def test_baselines_make_no_llm_call():
 def test_both_satisfy_the_agent_protocol():
     assert isinstance(DenseAgent(k=20), Agent)
     assert isinstance(HybridAgent(k=20), Agent)
+
+
+@pytest.mark.asyncio
+async def test_lexical_uses_the_lexical_channel_only():
+    tools = RecordingTools()
+    await LexicalAgent(k=20).retrieve(Query(1, "aspirin"), tools)
+    assert tools.modes == ["lexical"]
+
+
+@pytest.mark.asyncio
+async def test_the_three_channels_are_mutually_distinct():
+    """No two retrieval agents may run the same channel.
+
+    The per-agent tests above each pin one mode, and together they still
+    permit a copy-paste that this catches directly: the whole point of
+    scoring all three is that `hybrid` is the fusion of the other two, so
+    two agents sharing a channel would produce a decomposition that is
+    arithmetic on a duplicated column.
+
+    Written after a `LexicalAgent` whose body said `mode="hybrid"` passed
+    the entire suite.
+    """
+    modes = []
+    for agent in (DenseAgent(k=20), LexicalAgent(k=20), HybridAgent(k=20)):
+        tools = RecordingTools()
+        await agent.retrieve(Query(1, "aspirin"), tools)
+        modes.extend(tools.modes)
+
+    assert modes == ["semantic", "lexical", "hybrid"]
+    assert len(set(modes)) == 3, f"two agents share a channel: {modes}"
