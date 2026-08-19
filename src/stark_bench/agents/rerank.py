@@ -30,6 +30,7 @@ reranking.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -41,10 +42,19 @@ if TYPE_CHECKING:
 
 from stark_bench.domain import Ranked as _Ranked
 
-#: How much of a candidate's text the model is shown. Long enough for the
-#: `- relations:` block to begin, short enough that 40 candidates fit a
-#: 16k-token context with the query and instructions.
-_MAX_PASSAGE_CHARS = 1_200
+logger = logging.getLogger(__name__)
+
+#: How much of a candidate's text the model is shown. Sized against the
+#: *context*, not against what would be nice to show: 40 candidates at 600
+#: characters is ~24k characters, ~6k tokens, which leaves room in a 16k
+#: window for the instructions and for 40 scored objects coming back.
+#:
+#: Overflowing that window is the worst failure available to this agent. The
+#: extract call raises, the agent degrades to retrieval order, and the run
+#: scores *exactly* `hybrid` -- a plausible-looking null that says reranking
+#: does not help when what happened is that the model never saw the prompt.
+#: `test_rerank_probe` is the check that it fits in practice.
+_MAX_PASSAGE_CHARS = 600
 
 
 class Relevance(BaseModel):
@@ -93,6 +103,12 @@ class RerankAgent:
                 Relevances,
             )
         except Exception:
+            # Logged, not swallowed quietly. A reranker whose every call
+            # fails returns retrieval order, which scores *identically* to
+            # `hybrid` -- the one failure of this agent that looks like a
+            # result. `grep 'rerank: extract failed'` on a run log is what
+            # separates "reranking did not help" from "reranking did not run".
+            logger.warning("rerank: extract failed for query %s", query.query_id)
             judged = None
 
         retrieval_rank = {p.node_id: i for i, p in enumerate(passages)}
