@@ -122,3 +122,39 @@ chunk's `end`). Same file family, same class of off-by-one on the advance.
 
 Fix belongs upstream in redstring, with a test asserting no chunk's span is
 contained in another's.
+
+## B-MODEL-IDENTITY-1 — the served model is taken on the endpoint's word
+
+`src/stark_bench/harness/cli.py:_table_for` and every `model:` string stored
+next to a vector are derived from `config.embeddings`, which is a name *we*
+write in a YAML file. Nothing checks it against what the server actually
+loaded.
+
+This is not hypothetical. On 2026-08-19 the endpoint was swapped from
+`nomic-embed-text-v1.5` to `Nemotron-3-Embed-1B` while llama-swap continued
+to advertise the model id `nomic-embed-text`; `/v1/models` reported the old
+name and only `/props` on the peer port (8082, not the 8080 llama-swap
+front) revealed `nemotron-3-embed-1b-q4_k_m.gguf`. Had the two models shared
+a dimension, an entire corpus would have been embedded by one model, stored
+in a table named for another, and labelled with the wrong provenance -- and
+nothing would have raised.
+
+What saved it was accidental: redstring's `LangChainEmbeddingProvider`
+checks the returned width against the declared `dimension` on the first
+`embed` and raises `EmbeddingProviderError` naming both, and 768 != 2048.
+That guard is real and worth relying on, but it is a *dimension* check
+standing in for a *model identity* check, and it fails open for any two
+models of equal width -- which, at 768 and 1024, is most of them.
+
+Why this was deferred rather than fixed: there is no portable route to the
+truth. `/props` carries `model_path` but only on the llama.cpp peer itself;
+llama-swap exposes neither `/props` nor `/upstream/{model}/props` on its
+front port, so a preflight would have to be told the peer's address, which
+is a second piece of endpoint topology in the config for a check that only
+works against this one deployment. A stronger and portable option exists
+and is the one to build: embed a fixed canary string at ingest, store the
+vector alongside the run report, and refuse to query a store whose canary
+does not reproduce within cosine 0.99 (per redstring's port docs, vectors
+reproduce in direction, not bit-for-bit). That catches a model swap, a
+quantisation change, and a pooling-flag change, none of which any name
+comparison can see.
