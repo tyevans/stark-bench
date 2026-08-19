@@ -174,7 +174,23 @@ reproduce in direction, not bit-for-bit). That catches a model swap, a
 quantisation change, and a pooling-flag change, none of which any name
 comparison can see.
 
-## B-CORESIDENCE-1 — the LLM arms need two models resident at once
+## B-CORESIDENCE-1 — RESOLVED: both models are resident together
+
+**Resolved 2026-08-19.** The embedding endpoint now runs concurrently with
+the chat model — confirmed operationally, not inferred — so there is no
+swapping and the LLM arms are runnable. The analysis below is kept because
+it is why the endpoint is configured the way it is, and because the
+prediction it makes about the fix held.
+
+Two things downstream of this were wrong while it was open and have been
+corrected: `composition/cli.py` carried a comment claiming one model is
+resident at a time, and run queues were ordering `rerank` last to avoid a
+thrash that cannot happen. Neither is true.
+
+The 36.9s cold-start latencies seen during ingest are a *first load* after
+the model has been evicted for idleness, not swap churn between models.
+
+### Original entry
 
 `zero_shot` and `deep` cannot run against the current endpoint. Both search
 with text the LLM produced moments earlier -- `zero_shot` rewrites the query

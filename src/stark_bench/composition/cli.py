@@ -90,8 +90,13 @@ NEO4J_AUTH = ("neo4j", "starkbench")
 #: Shared infrastructure: ask before saturating it, and see
 #: `--embed-concurrency` on the CLI.
 #:
-#: One port, one model resident at a time -- so an agent that interleaves
-#: embedding and chat makes llama-swap thrash. See B-CORESIDENCE-1.
+#: One port, both models resident together: the embedding server runs
+#: concurrently with the chat model, so an agent that interleaves embedding
+#: and chat does NOT cause a swap. This comment previously claimed the
+#: opposite and it was wrong -- see B-CORESIDENCE-1, which is resolved.
+#:
+#: Cold-start latency is still real (~37s) but it is an idle eviction and
+#: first load, not churn between two models.
 INFERENCE_BASE_URL = "http://192.168.1.14:8080/v1/"
 
 #: The chat model behind `zero_shot` and `deep`, on the same endpoint as
