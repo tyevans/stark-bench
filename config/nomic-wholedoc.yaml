@@ -1,0 +1,40 @@
+# The PRIME re-baseline on nomic-embed-text.
+#
+# Exists because the embedder changed and every existing PRIME arm is
+# Nemotron-3-Embed-1B. Comparing a nomic MAG run against a Nemotron PRIME run
+# would confound the corpus (what we want to measure) with the model (what we
+# changed), so PRIME is re-run here on nomic and MAG runs on nomic too.
+#
+# ## Why the model changed
+#
+# Nemotron-3-Embed-1B did not earn its size. Against the precomputed ada-002
+# control on the same split, at 2048 dimensions against 1536:
+#
+#     vss-control.dense      mrr=0.2306  recall@20=0.3788   (ada-002)
+#     native-wholedoc.dense  mrr=0.2163  recall@20=0.3778   (Nemotron)
+#
+# Worse MRR, a tie on recall, and 3.4x slower to embed: 18 texts/s against
+# nomic's measured 61 texts/s on 5,000-character inputs. That throughput gap
+# is what made MAG a 10.8-hour ingest instead of a 3.2-hour one, and it was
+# misread three times today as a broken endpoint before it was measured.
+#
+# Everything except the embedding model and its dimension matches
+# `native-wholedoc.yaml`, so `native-wholedoc.*` minus `nomic-wholedoc.*` is
+# the model's contribution and nothing else.
+name: nomic-wholedoc
+dataset: prime
+split: test-0.1
+chunker: capped-whole-5000
+embeddings: nomic-embed-text
+dimension: 768
+aggregation: max
+agent: dense
+k: 20
+
+# nomic-embed-text is asymmetric and its prefixes are NOT the `passage: ` /
+# `query: ` pair the Nemotron configs use -- they are these, and getting them
+# wrong is silent. `results/archive/nomic-no-prefixes` is what omitting them
+# looked like: well-formed vectors, plausible scores, quietly worse than the
+# model can do.
+document_prefix: "search_document: "
+query_prefix: "search_query: "

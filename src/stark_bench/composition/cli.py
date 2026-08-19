@@ -190,7 +190,17 @@ CHUNKERS = {
         SlidingWindowChunker, default_chunk_size=5000, default_overlap=0
     ),
 }
-LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B"}
+#: Models `_live_embeddings_for` will build a provider for. Membership is the
+#: only gate -- dimension and task prefixes come from the config, so adding a
+#: model here is adding a name, not a code path.
+#:
+#: Nemotron-3-Embed-1B is kept alongside `nomic-embed-text` because the
+#: Nemotron arms in `results/` are still the comparison for the model swap:
+#: it scored WORSE than precomputed ada-002 (0.2163 vs 0.2306 MRR on
+#: `dense`, recall@20 a tie) at 2048 dimensions against 768, which is what
+#: made the swap worth doing. Removing it would make those numbers
+#: unreproducible.
+LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text"}
 
 
 def _tenant_for(config: RunConfig) -> TenantId:
