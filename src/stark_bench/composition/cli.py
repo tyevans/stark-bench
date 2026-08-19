@@ -109,7 +109,21 @@ INFERENCE_BASE_URL = "http://192.168.1.14:8080/v1/"
 #: resident for nothing; and 16384 is the per-slot window the previous
 #: configuration actually gave (65536 / 4), so `deep.py`'s context
 #: assumptions are unchanged.
-DEFAULT_CHAT_MODEL = "qwen3.8-27b-16k-txt"
+#:
+#: Raised to a 32k window on 2026-08-19, for the reranker: it puts 40
+#: candidate documents in one prompt, and at 16k each had to be cut to 600
+#: characters -- which on the relations corpus truncates every document
+#: *before* the `- relations:` block, the exact text that arm exists to test.
+#:
+#: **The model id carries the window, so raising it renames the model.** The
+#: 16k id stopped existing the moment the 32k one appeared, and a stale
+#: constant here does not degrade gracefully: every chat call 404s, the
+#: agents that swallow LLM errors fall back to plain retrieval, and the run
+#: still produces a full set of plausible numbers. `redstring-native/deep`
+#: died mid-run at the changeover with 143 of 280 queries empty, which is
+#: the loud version of the same event -- the quiet version scores like
+#: `hybrid` and says nothing.
+DEFAULT_CHAT_MODEL = "qwen3.8-27b-32k-txt"
 
 #: Chunking strategies, as zero-argument builders.
 #:

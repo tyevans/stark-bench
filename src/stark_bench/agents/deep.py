@@ -16,10 +16,9 @@ Two hard bounds keep that honest:
   that discards the run: the loop catches `BudgetExhausted` and returns
   whatever candidates it already has.
 - `_MAX_PROMPT_CHARS` caps how much observation history rides along in each
-  `extract` call. The backing endpoint runs at a 16k-token context window
-  shared across several jobs (`-np 4`), and that window covers the prompt
-  *and* the generated output together -- a bound sized to leave no headroom
-  for a response is not a bound. Older observations are dropped, newest
+  `extract` call. That window covers the prompt *and* the generated output
+  together -- a bound sized to leave no headroom for a response is not a
+  bound. Older observations are dropped, newest
   first, once the budget is spent; a single observation larger than the
   whole budget is hard-truncated rather than passed through whole, so no one
   oversized tool result can defeat the cap in the one case it matters most.
@@ -48,13 +47,23 @@ if TYPE_CHECKING:
 
 #: Characters, not tokens -- estimated at ~4 chars/token (conservative for
 #: English text; a real tokenizer would be model-specific and is not worth
-#: the dependency here). The backing window is 16k tokens shared between
-#: prompt and generated output, so this is sized well under half of that:
-#: measured peak against an adversarial fake (50-item results, uncapped
-#: rounds) was 24,774 chars with a 40,000-char bound in place, so 24,000
-#: chars (~6k tokens) is a real limit that will actually be hit, not a
-#: theoretical one -- see tests/agents/test_deep.py.
-_MAX_PROMPT_CHARS = 24_000
+#: the dependency here). The backing window covers the prompt *and* the
+#: generated output together, so this stays under half of it.
+#:
+#: Raised from 24,000 to 48,000 when the endpoint moved to a 32k window on
+#: 2026-08-19. The old value was never the server's limit -- 24,000 chars is
+#: ~6k tokens against a 16k window -- it was this agent's own, and it bound
+#: first and bound hard. The measured peak against an adversarial fake was
+#: 24,774 chars, so the cap was being hit in real runs, and what it drops is
+#: the *oldest* observations: on a hub node like PRIME's ABLIM1 (degree 426)
+#: a single `neighbors` result runs to thousands of characters, so the agent
+#: reached its eighth decision having forgotten what its second and third
+#: calls returned. That is a handicap on precisely the multi-hop queries
+#: traversal is supposed to win.
+#:
+#: Deep numbers measured under the old cap are not comparable with numbers
+#: measured under this one. Re-run every arm rather than mixing them.
+_MAX_PROMPT_CHARS = 48_000
 
 _PROMPT_TEMPLATE = (
     "You are answering a search query by choosing one tool call at a time.\n"

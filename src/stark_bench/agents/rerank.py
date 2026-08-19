@@ -45,16 +45,22 @@ from stark_bench.domain import Ranked as _Ranked
 logger = logging.getLogger(__name__)
 
 #: How much of a candidate's text the model is shown. Sized against the
-#: *context*, not against what would be nice to show: 40 candidates at 600
-#: characters is ~24k characters, ~6k tokens, which leaves room in a 16k
+#: *context*, not against what would be nice to show: 40 candidates at 1500
+#: characters is ~60k characters, ~15k tokens, which leaves room in a 32k
 #: window for the instructions and for 40 scored objects coming back.
 #:
-#: Overflowing that window is the worst failure available to this agent. The
+#: 1500 rather than 600 because of where the useful text sits. STaRK puts a
+#: node's `- relations:` block at the *end* of its document, so 600 characters
+#: truncates the relations corpus exactly before the neighbour names -- the
+#: reranker would read name, type and details and never reach the thing the
+#: arm was built to test.
+#:
+#: Overflowing the window is the worst failure available to this agent. The
 #: extract call raises, the agent degrades to retrieval order, and the run
 #: scores *exactly* `hybrid` -- a plausible-looking null that says reranking
 #: does not help when what happened is that the model never saw the prompt.
-#: `test_rerank_probe` is the check that it fits in practice.
-_MAX_PASSAGE_CHARS = 600
+#: Probe against the live endpoint after changing either number.
+_MAX_PASSAGE_CHARS = 1_500
 
 
 class Relevance(BaseModel):
