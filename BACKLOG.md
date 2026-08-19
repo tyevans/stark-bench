@@ -84,3 +84,41 @@ Two ways out, both a decision rather than a fix:
 
 Until then `results/vss-control.dense.json` is not comparable with anything
 produced after e6411e3 and should not be quoted beside a post-rename number.
+
+## B-SLIDING-REDUNDANT-1 — SlidingWindowChunker emits one fully-redundant tail chunk
+
+`redstring/extraction/chunkers/sliding_window_chunker.py`. For every document
+longer than the window, the last chunk is entirely contained in the one before
+it. The penultimate chunk already reaches end-of-text; the loop advances one
+more stride and emits a subset.
+
+Measured, window=1000 overlap=500, always exactly one redundant chunk:
+
+```
+len   chunks  last three spans
+1001    3     (0,1000)    (500,1001)  (501,1001)
+2600    6     (1500,2500) (2000,2600) (2100,2600)
+5000   10     (3500,4500) (4000,5000) (4500,5000)
+```
+
+Reproduce:
+```python
+from redstring.extraction.chunkers.sliding_window_chunker import SlidingWindowChunker
+c = SlidingWindowChunker(default_chunk_size=1000, default_overlap=500)
+[(x.start_char, x.start_char + len(x.text)) for x in c.chunk("x" * 2600).chunks]
+```
+
+Not fixed here because this is a redstring defect, not a stark-bench one, and
+the `native-sliding1k` ingest was already sized and queued against the current
+behaviour. Cost in this benchmark: ~18.6k of ~250.7k chunks (7%) are wasted
+embeddings. It is waste rather than corruption -- the text is genuine -- so it
+does not invalidate the sweep, but note that chunk COUNT for that config
+overstates distinct coverage by ~7%.
+
+Worth checking whether the loop-termination condition here is the same shape
+as the boundary-preference bug fixed in redstring PR #64 (that one compared a
+candidate against the current window's `start` rather than the previous
+chunk's `end`). Same file family, same class of off-by-one on the advance.
+
+Fix belongs upstream in redstring, with a test asserting no chunk's span is
+contained in another's.
