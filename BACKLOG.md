@@ -337,6 +337,25 @@ Note it belongs in `redstring`'s `llm/adapters/langchain_embedding.py` rather
 than here if the retry should benefit every caller — decide which before
 writing it.
 
+**Do not "add retry" here without measuring first.** The `openai` client under
+`OpenAIEmbeddings` already retries 408, 409, 429 and every >=500, and defaults
+to `max_retries=2`. Our failure was a 500, so retries were almost certainly
+already firing and a hand-written retry loop would be a no-op that looks like a
+fix. `redstring`'s adapter argues this deliberately: "the caller constructs the
+LangChain object, so a deployment's own retry, callback and tracing
+configuration is not something this class must mirror."
+
+The likelier mechanism is that all three attempts expire *inside* the cold
+load: 36s to load, a 60s proxy header timeout, no backoff long enough to
+outlast it, and a wave of concurrent requests keeping the queue saturated. If
+so the lever is client `timeout` and backoff, exposed through
+`openai_compatible`, not retry count.
+
+Deferred rather than guessed because distinguishing the two needs a forced
+model swap on the shared GPU, which was busy. Reproduce by issuing a chat
+request to evict the embedding model, then firing N concurrent embeds and
+logging per-attempt latency.
+
 Ingest is resumable (`loaded N existing chunk ids for tenant`), so the cost of
 a crash is the wave in flight, not the run. That is what makes this a backlog
 item and not a blocker.
