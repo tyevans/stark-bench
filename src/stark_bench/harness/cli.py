@@ -514,11 +514,13 @@ def main() -> None:
         "--embed-concurrency",
         type=int,
         default=4,
-        help="Embedding REQUESTS in flight at once. See --embed-batch, which "
-        "is the knob that actually moves throughput. The inference endpoint "
-        "is shared -- do not raise this without confirming spare capacity "
-        "with whoever else uses it. Ignored for precomputed-embeddings "
-        "configs, which do no live I/O.",
+        help="Embedding requests in flight at once. Against the local "
+        "single-slot llama.cpp used here it buys about 4%% and --embed-batch "
+        "is the better knob; against a hosted API or a multi-slot server, "
+        "where round-trip latency dominates, this is the one that matters. "
+        "The inference endpoint is shared -- do not raise it without "
+        "confirming spare capacity with whoever else uses it. Ignored for "
+        "precomputed-embeddings configs, which do no live I/O.",
     )
     parser.add_argument(
         "--embed-batch",

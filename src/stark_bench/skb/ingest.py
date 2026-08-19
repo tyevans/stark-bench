@@ -138,7 +138,26 @@ async def ingest(
 
     The general form of that mistake is worth more than the number: **the
     baseline in a speedup claim has to be the thing you are actually
-    replacing.** `vector_for` does no I/O and ignores both knobs.
+    replacing.**
+
+    ## Which knob wins depends on the endpoint, so keep both
+
+    Everything measured here is against **one llama.cpp process, one slot,
+    one local GPU**, and that setting is unusually kind to batching and
+    unusually unkind to concurrency: there is no per-request network latency
+    worth hiding, and no second slot for a second request to occupy, so
+    concurrent requests fragment work that could have been one large forward
+    pass. On this endpoint `concurrency=1` with a large `embed_batch` was
+    the best configuration observed.
+
+    Do not read that as a general rule. Against a hosted API, a multi-slot
+    or multi-replica server, or anything across a real network, round-trip
+    latency dominates and concurrency is the knob that matters -- batching
+    alone would leave most of the throughput unclaimed, and a provider that
+    caps request size may not even permit a large batch. The two are
+    independent and both are exposed for that reason.
+
+    `vector_for` does no I/O and ignores both.
 
     A batch is bounded by texts, not tokens, and that is safe here for a
     reason worth stating: llama.cpp splits an over-large *request* across
