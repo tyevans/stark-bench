@@ -101,6 +101,7 @@ async def ingest(
     embeddings: EmbeddingProvider | None = None,
     vector_for: Callable[[str], list[float]] | None = None,
     concurrency: int = 1,
+    embed_batch: int = 64,
     existing_chunk_ids: AbstractSet[ChunkId] = frozenset(),
     resume: bool = True,
 ) -> IngestReport:
@@ -116,12 +117,38 @@ async def ingest(
 
     Exactly one must be given; both or neither is a caller error.
 
-    `concurrency` bounds how many nodes are chunked-and-embedded at once. It
-    only matters for the `embeddings` branch -- a live endpoint is shared
-    infrastructure, and processing nodes one at a time against it wastes the
-    round trip latency for no reason. `vector_for` does no I/O, so it always
-    runs one node at a time regardless of this value; raising it there would
-    only reorder writes into batches without buying anything.
+    ## Two knobs, and the second is the one that matters
+
+    `embed_batch` is how many chunk texts go into **one** embedding request.
+    `concurrency` is how many such requests are in flight at once.
+
+    Getting this wrong is expensive and does not look like anything. An
+    earlier version issued one request *per node* and relied on
+    `concurrency` alone, which on a corpus averaging 1.06 chunks per node
+    means every request carried roughly one text. Measured against
+    llama.cpp serving Nemotron-3-Embed-1B on one connection:
+
+    | texts per request | texts/min |
+    |---|---|
+    | 1 | 298 |
+    | 16 | 790 |
+    | 64 | 1850 |
+
+    Six times, from batching alone. The reason is that the server was
+    running `-np 1`, so concurrent requests **queue and execute serially** --
+    thirty-two in flight bought thirty-two forward passes of one sequence
+    each, not one forward pass of thirty-two. The GPU reported 92%
+    utilisation throughout, because "a kernel is resident" and "the device
+    is doing useful work" are different measurements.
+
+    So batch first, then add concurrency on top. `vector_for` does no I/O and
+    ignores both.
+
+    A batch is bounded by texts, not tokens, and that is safe here for a
+    reason worth stating: llama.cpp splits an over-large *request* across
+    decode batches by itself, and only a single **sequence** is bounded by
+    `--ubatch-size`. The chunker's own size cap is what keeps a sequence
+    inside that, so no batch size chosen here can produce a 413.
 
     ## Resuming an interrupted ingest
 
@@ -146,6 +173,8 @@ async def ingest(
         raise ValueError("ingest needs exactly one of embeddings or vector_for")
     if concurrency < 1:
         raise ValueError("concurrency must be at least 1")
+    if embed_batch < 1:
+        raise ValueError("embed_batch must be at least 1")
     observed_at = datetime.now(UTC)
     known: set[str] = set()
     node_count = chunk_count = skipped_count = 0
@@ -153,28 +182,70 @@ async def ingest(
     batch: list[Entity] = []
     chunk_batch: list[StoredChunk] = []
 
-    async def _process(
-        node: SkbNode,
-    ) -> tuple[SkbNode, list, list | None]:
+    def _plan(node: SkbNode) -> tuple[SkbNode, list, bool]:
+        """Chunk a node and decide whether it needs vectors. No I/O.
+
+        Split out from the embedding so that a whole group's texts can go
+        into one request -- see the `embed_batch` note in the docstring.
+        """
         result = chunker.chunk(node.document)
         source_id = SourceId(f"{dataset}:{node.node_id}")
         ids = [chunk_id(source_id, piece.text) for piece in result.chunks]
-        if resume and ids and all(i in existing_chunk_ids for i in ids):
-            return node, result.chunks, None
-        if vector_for is not None:
-            vectors = [vector_for(node.node_id) for _ in result.chunks]
-        else:
-            texts = [c.text for c in result.chunks]
-            vectors = await embeddings.embed(texts) if texts else []
-        return node, result.chunks, vectors
+        wanted = not (resume and ids and all(i in existing_chunk_ids for i in ids))
+        return node, result.chunks, wanted
 
-    group_size = concurrency if embeddings is not None else 1
+    async def _embed_group(texts: list[str]) -> list[list[float]]:
+        """One flat list of texts in, one flat list of vectors out, in order.
+
+        Slices into `embed_batch`-sized requests and runs `concurrency` of
+        them at a time. The result is reassembled by slice index rather than
+        by completion order, because `asyncio.gather` preserves argument
+        order but a future reader should not have to know that to trust the
+        alignment -- and misaligning vectors with texts is a defect that
+        produces a fully-populated store scoring like noise, with nothing
+        raising anywhere.
+        """
+        if not texts:
+            return []
+        slices = [texts[i : i + embed_batch] for i in range(0, len(texts), embed_batch)]
+        out: list[list[float]] = []
+        for start in range(0, len(slices), concurrency):
+            wave = slices[start : start + concurrency]
+            for result in await asyncio.gather(*(embeddings.embed(s) for s in wave)):
+                out.extend(result)
+        if len(out) != len(texts):
+            raise ValueError(
+                f"embedding provider returned {len(out)} vectors for {len(texts)} "
+                "texts; the port promises one per input, in order"
+            )
+        return out
+
+    group_size = concurrency * embed_batch if embeddings is not None else 1
     node_iter = iter(nodes)
     while True:
         group = list(itertools.islice(node_iter, group_size))
         if not group:
             break
-        processed = await asyncio.gather(*(_process(node) for node in group))
+
+        planned = [_plan(node) for node in group]
+
+        if vector_for is not None:
+            processed = [
+                (node, pieces, [vector_for(node.node_id) for _ in pieces] if wanted else None)
+                for node, pieces, wanted in planned
+            ]
+        else:
+            flat = [p.text for _, pieces, wanted in planned if wanted for p in pieces]
+            vectors = await _embed_group(flat)
+            cursor = 0
+            processed = []
+            for node, pieces, wanted in planned:
+                if not wanted:
+                    processed.append((node, pieces, None))
+                    continue
+                processed.append((node, pieces, vectors[cursor : cursor + len(pieces)]))
+                cursor += len(pieces)
+
         for node, pieces, vectors in processed:
             batch.append(
                 _entity(
@@ -206,10 +277,22 @@ async def ingest(
                 )
                 chunk_count += 1
 
-        if len(batch) >= BATCH or len(chunk_batch) >= CHUNK_BATCH:
-            await graph.upsert_entities(batch)
-            await chunks.upsert_many(chunk_batch)
-            batch, chunk_batch = [], []
+            # Inside the per-node loop, not outside it. When the group was one
+            # node this was the same place; batching made `group_size`
+            # concurrency * embed_batch, and a group of 64 nodes at 500 chunks
+            # each accumulated a single 5000-chunk upsert. `PostgresChunkStore`
+            # serialises a batch into one jsonb parameter and Postgres rejects
+            # that array past 268,435,455 bytes -- at 2048 dimensions, 5000
+            # chunks is roughly 255 MB, so this was one corpus away from
+            # `ProgramLimitExceededError` on a run that had already cost hours.
+            #
+            # Caught by test_chunk_batch_is_flushed_independently_of_entity_batch,
+            # which existed for exactly this and is why the flush bound is
+            # asserted on the observed call sizes rather than on the constant.
+            if len(batch) >= BATCH or len(chunk_batch) >= CHUNK_BATCH:
+                await graph.upsert_entities(batch)
+                await chunks.upsert_many(chunk_batch)
+                batch, chunk_batch = [], []
 
     if batch:
         await graph.upsert_entities(batch)
