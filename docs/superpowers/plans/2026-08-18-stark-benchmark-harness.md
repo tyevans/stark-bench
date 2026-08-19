@@ -1563,7 +1563,7 @@ class RedstringToolset:
 - [ ] **Step 4: Run the tests**
 
 Run: `uv run pytest tests/tools/test_redstring_tools.py -v -p no:randomly`
-Expected: PASS (5 tests). If `LlmProvider.complete` has a different name or response shape, read the port in the redstring checkout and correct `complete`.
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1606,7 +1606,7 @@ class RecordingTools:
     async def get_node(self, node_id): return None
     async def neighbors(self, node_id, *, depth=1): return []
     async def get_relationships(self, node_id): return []
-    async def complete(self, prompt): raise AssertionError("baselines use no LLM")
+    async def extract(self, prompt, schema): raise AssertionError("baselines use no LLM")
 
 
 @pytest.mark.asyncio
@@ -1715,7 +1715,7 @@ class Tools:
     async def get_node(self, node_id): return None
     async def neighbors(self, node_id, *, depth=1): return []
     async def get_relationships(self, node_id): return []
-    async def complete(self, prompt): return ""
+    async def extract(self, prompt, schema): return schema()
 
 
 class Boom:
@@ -2454,10 +2454,15 @@ git add -A && git commit -m "The redstring-native number: chunked corpus, nomic 
 - Test: `tests/agents/test_zero_shot.py`
 
 **Interfaces:**
-- Consumes: `Toolset.complete`.
+- Consumes: `Toolset.extract`.
 - Produces: `ZeroShotAgent(k=20)`.
 
 One LLM call turns the query into a retrieval query, then one retrieval round. Fixed cost per query, no loop.
+
+The seam is `extract(prompt, schema)`, so the agent declares a pydantic schema for
+what it wants back — e.g. `class RewrittenQuery(BaseModel): query: str`. That is
+strictly better than parsing prose: the model either returns a valid instance or
+redstring raises, and there is no string handling in between to get wrong.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2470,6 +2475,9 @@ from stark_bench.ports import Query, Ranked, ToolCall
 
 
 class Tools:
+    """A fake toolset. `extract` returns a populated schema instance, which is
+    what redstring's `LlmProvider` contract actually provides."""
+
     def __init__(self, reply="cyclooxygenase inhibitor drug"):
         self.calls: list[ToolCall] = []
         self.reply = reply
@@ -2483,9 +2491,9 @@ class Tools:
     async def get_node(self, node_id): return None
     async def neighbors(self, node_id, *, depth=1): return []
     async def get_relationships(self, node_id): return []
-    async def complete(self, prompt):
+    async def extract(self, prompt, schema):
         self.prompts.append(prompt)
-        return self.reply
+        return schema(query=self.reply)
 
 
 @pytest.mark.asyncio
@@ -2514,7 +2522,7 @@ async def test_an_empty_rewrite_falls_back_to_the_original_query():
 @pytest.mark.asyncio
 async def test_an_llm_failure_falls_back_rather_than_losing_the_query():
     class Failing(Tools):
-        async def complete(self, prompt):
+        async def extract(self, prompt, schema):
             raise RuntimeError("endpoint down")
 
     tools = Failing()
@@ -2597,7 +2605,7 @@ class Tools:
     async def get_node(self, node_id): return {"node_id": node_id, "name": "n", "node_type": "t"}
     async def neighbors(self, node_id, *, depth=1): return ["2", "3"]
     async def get_relationships(self, node_id): return [("1", "targets", "2")]
-    async def complete(self, prompt): return "SEARCH: more terms"
+    async def extract(self, prompt, schema): return schema(action="search", argument="more terms")
 
 
 @pytest.mark.asyncio
