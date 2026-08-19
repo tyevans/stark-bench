@@ -5,7 +5,7 @@ text. Two different seams need that mapping, in two different shapes:
 
 - **Ingest** writes a vector straight onto `StoredChunk.embedding` by node id
   -- it never calls `embed()`. `node_vector_lookup` builds that callable for
-  `stark_bench.skb.ingest.ingest`'s `vector_for` parameter.
+  `stark_bench.adapters.stark_ingest_engine.ingest`'s `vector_for` parameter.
 - **Retrieval** needs `redstring`'s `EmbeddingProvider.embed(texts)`, which is
   keyed by *text*. `PrecomputedEmbeddingProvider` closes that gap for
   queries: it is built from a `{text: vector}` table resolved once via the

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from stark_bench.skb.artifacts import read_edges, read_nodes, read_queries
+from stark_bench.adapters.stark_artifacts import read_edges, read_nodes, read_queries
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "tiny_skb"
 

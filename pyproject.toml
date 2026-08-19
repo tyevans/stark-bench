@@ -71,7 +71,7 @@ exhaustive = true
 # is a slice of the refactor; the list reaching empty is the refactor being
 # done, and it cannot be quietly abandoned because `exhaustive` fails on
 # anything not named here or in `layers`.
-exhaustive_ignores = ["harness", "skb", "sidecar"]
+exhaustive_ignores = ["harness", "sidecar"]
 
 # The contract that actually protects a result. `agents/` holds the subject
 # of the benchmark; everything it can reach, it can be accidentally helped
@@ -97,7 +97,6 @@ forbidden_modules = [
     "stark_bench.adapters",
     "stark_bench.composition",
     "stark_bench.harness",
-    "stark_bench.skb",
     "stark_bench.sidecar",
 ]
 

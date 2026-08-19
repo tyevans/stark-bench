@@ -19,10 +19,10 @@ from redstring import InMemoryChunkStore, InMemoryGraphStore, TenantId
 from redstring.domain.ids import SourceId
 from uuid import uuid4
 
-from stark_bench.skb.artifacts import SkbNode
+from stark_bench.adapters.stark_artifacts import SkbNode
 from redstring.extraction.chunkers.sliding_window_chunker import SlidingWindowChunker
-from stark_bench.skb.chunkers import WholeDocumentChunker
-from stark_bench.skb.ingest import ingest
+from stark_bench.adapters.chunkers import WholeDocumentChunker
+from stark_bench.adapters.stark_ingest_engine import ingest
 
 DIM = 8
 
@@ -83,17 +83,26 @@ def _nodes(n: int, *, long_every: int = 0) -> list[SkbNode]:
     for i in range(n):
         body = f"node-{i:04d}-" + ("x" * (i % 37 + 1))
         if long_every and i % long_every == 0:
-            body = body + " " + ("y" * 4000)   # forces multiple chunks
-        out.append(SkbNode(node_id=str(i), node_type="gene", name=f"n{i}", document=body))
+            body = body + " " + ("y" * 4000)  # forces multiple chunks
+        out.append(
+            SkbNode(node_id=str(i), node_type="gene", name=f"n{i}", document=body)
+        )
     return out
 
 
 async def _run(nodes, tenant, provider, chunker, **kwargs):
     graph, chunks = InMemoryGraphStore(), InMemoryChunkStore(dimension=DIM)
     report = await ingest(
-        nodes, iter(()), dataset="prime", tenant_id=tenant,
-        graph=graph, chunks=chunks, chunker=chunker,
-        embeddings=provider, resume=False, **kwargs,
+        nodes,
+        iter(()),
+        dataset="prime",
+        tenant_id=tenant,
+        graph=graph,
+        chunks=chunks,
+        chunker=chunker,
+        embeddings=provider,
+        resume=False,
+        **kwargs,
     )
     return report, chunks
 
@@ -103,9 +112,9 @@ async def _assert_every_vector_matches_its_text(chunks, tenant, nodes):
     for node in nodes:
         source_id = SourceId(f"prime:{node.node_id}")
         for stored in await chunks.get_by_source(source_id, tenant):
-            assert stored.embedding == _fingerprint(stored.text), (
-                f"node {node.node_id}: vector does not belong to its chunk text"
-            )
+            assert stored.embedding == _fingerprint(
+                stored.text
+            ), f"node {node.node_id}: vector does not belong to its chunk text"
             seen += 1
     assert seen > 0, "no chunks stored -- the assertion would pass vacuously"
     return seen
@@ -116,8 +125,9 @@ async def test_vectors_stay_with_their_chunks_when_batched(tenant):
     """The headline property, over more nodes than one batch holds."""
     nodes = _nodes(150)
     provider = FingerprintingProvider()
-    _, chunks = await _run(nodes, tenant, provider, WholeDocumentChunker(),
-                           concurrency=4, embed_batch=16)
+    _, chunks = await _run(
+        nodes, tenant, provider, WholeDocumentChunker(), concurrency=4, embed_batch=16
+    )
     await _assert_every_vector_matches_its_text(chunks, tenant, nodes)
 
 
@@ -132,9 +142,14 @@ async def test_alignment_holds_when_nodes_produce_different_chunk_counts(tenant)
     """
     nodes = _nodes(120, long_every=7)
     provider = FingerprintingProvider()
-    _, chunks = await _run(nodes, tenant, provider,
-                           SlidingWindowChunker(default_chunk_size=1000, default_overlap=0),
-                           concurrency=3, embed_batch=8)
+    _, chunks = await _run(
+        nodes,
+        tenant,
+        provider,
+        SlidingWindowChunker(default_chunk_size=1000, default_overlap=0),
+        concurrency=3,
+        embed_batch=8,
+    )
     stored = await _assert_every_vector_matches_its_text(chunks, tenant, nodes)
     assert stored > len(nodes), "no node produced multiple chunks -- test is vacuous"
 
@@ -144,8 +159,14 @@ async def test_the_assertion_catches_a_provider_that_reorders(tenant):
     """Proves the two tests above are testing something."""
     nodes = _nodes(40)
     with pytest.raises(AssertionError, match="does not belong"):
-        _, chunks = await _run(nodes, tenant, ShufflingProvider(), WholeDocumentChunker(),
-                               concurrency=2, embed_batch=8)
+        _, chunks = await _run(
+            nodes,
+            tenant,
+            ShufflingProvider(),
+            WholeDocumentChunker(),
+            concurrency=2,
+            embed_batch=8,
+        )
         await _assert_every_vector_matches_its_text(chunks, tenant, nodes)
 
 
@@ -158,8 +179,14 @@ async def test_texts_are_actually_batched(tenant):
     which is exactly the state this change is fixing.
     """
     provider = FingerprintingProvider()
-    await _run(_nodes(150), tenant, provider, WholeDocumentChunker(),
-               concurrency=4, embed_batch=16)
+    await _run(
+        _nodes(150),
+        tenant,
+        provider,
+        WholeDocumentChunker(),
+        concurrency=4,
+        embed_batch=16,
+    )
     assert max(provider.batch_sizes) > 1, "every request carried one text"
     assert max(provider.batch_sizes) <= 16, "a request exceeded embed_batch"
 
@@ -169,8 +196,9 @@ async def test_a_short_final_batch_is_not_dropped(tenant):
     """37 nodes at embed_batch 16 leaves a remainder of 5."""
     nodes = _nodes(37)
     provider = FingerprintingProvider()
-    report, chunks = await _run(nodes, tenant, provider, WholeDocumentChunker(),
-                                concurrency=2, embed_batch=16)
+    report, chunks = await _run(
+        nodes, tenant, provider, WholeDocumentChunker(), concurrency=2, embed_batch=16
+    )
     assert report.nodes == 37
     assert await _assert_every_vector_matches_its_text(chunks, tenant, nodes) == 37
 
@@ -178,5 +206,10 @@ async def test_a_short_final_batch_is_not_dropped(tenant):
 @pytest.mark.asyncio
 async def test_embed_batch_below_one_is_refused(tenant):
     with pytest.raises(ValueError, match="embed_batch"):
-        await _run(_nodes(2), tenant, FingerprintingProvider(), WholeDocumentChunker(),
-                   embed_batch=0)
+        await _run(
+            _nodes(2),
+            tenant,
+            FingerprintingProvider(),
+            WholeDocumentChunker(),
+            embed_batch=0,
+        )
