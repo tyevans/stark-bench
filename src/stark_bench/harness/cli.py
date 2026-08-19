@@ -59,7 +59,7 @@ from stark_bench.skb.ids import NAMESPACE_STARK
 from stark_bench.application.ingest_corpus import ingest_corpus
 from stark_bench.skb.ingest import ingest
 from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
-from stark_bench.tools.redstring_tools import RedstringToolset
+from stark_bench.adapters.redstring_toolset import RedstringToolset
 
 if TYPE_CHECKING:
     from redstring import EmbeddingProvider, LlmProvider

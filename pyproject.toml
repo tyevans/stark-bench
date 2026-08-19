@@ -71,7 +71,7 @@ exhaustive = true
 # is a slice of the refactor; the list reaching empty is the refactor being
 # done, and it cannot be quietly abandoned because `exhaustive` fails on
 # anything not named here or in `layers`.
-exhaustive_ignores = ["harness", "skb", "sidecar", "tools"]
+exhaustive_ignores = ["harness", "skb", "sidecar"]
 
 # The contract that actually protects a result. `agents/` holds the subject
 # of the benchmark; everything it can reach, it can be accidentally helped
@@ -99,7 +99,6 @@ forbidden_modules = [
     "stark_bench.harness",
     "stark_bench.skb",
     "stark_bench.sidecar",
-    "stark_bench.tools",
 ]
 
 # The sidecar runs under a different Python (3.11, for `stark-qa`) as a

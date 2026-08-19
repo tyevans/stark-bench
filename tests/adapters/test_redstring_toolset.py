@@ -17,7 +17,7 @@ from stark_bench.skb.artifacts import SkbEdge, SkbNode
 from stark_bench.skb.chunkers import WholeDocumentChunker
 from stark_bench.skb.ids import STARK_ID_KEY
 from stark_bench.skb.ingest import ingest
-from stark_bench.tools.redstring_tools import RedstringToolset
+from stark_bench.adapters.redstring_toolset import RedstringToolset
 
 
 @pytest.fixture
