@@ -388,3 +388,25 @@ letting an empty store look like a bad retriever.
 Note what did NOT need recovering: `results/*.json` and the persisted
 predictions are files in the repo, so every scored number survived intact.
 Keep expensive-to-recompute artifacts out of the containers.
+
+## B-NOMIC-CONFOUND-1 — nomic vs Nemotron varies two things at once
+
+`nomic-wholedoc` was built to isolate the embedding model against
+`native-wholedoc`, and it does not. nomic's context ceiling is 2048 tokens
+against Nemotron's 4096, so it cannot run `capped-whole-5000` -- the server
+rejects chunks over the limit -- and runs `capped-whole-4000` instead.
+
+Finer chunking is the largest single effect measured in RESULTS.md (finding
+1: 1.057 -> 1.139 chunks/node costs 15% of mrr), and it is negative. So the
+comparison now varies the model and the granularity together, in the same
+direction, and a gap cannot be attributed to either.
+
+To make it clean, re-run Nemotron at `capped-whole-4000` and compare that to
+`nomic-wholedoc`. Not done here because Nemotron embeds at 18 texts/s against
+nomic's 60, so the PRIME corpus is ~2.3h against ~40min, and the swap to
+nomic was already justified on the ada-002 comparison
+(0.2163 vs 0.2306 mrr) which is unaffected by this.
+
+What is NOT confounded, and is the reason the MAG run exists: PRIME against
+MAG, both on nomic at `capped-whole-4000`. That comparison holds the model
+and the chunker fixed and varies only the corpus.

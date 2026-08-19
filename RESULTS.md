@@ -1,6 +1,6 @@
 # Results
 
-**Six of twelve retrieval numbers are in** (2026-08-19). The table is
+**Seven of twelve retrieval numbers are in** (2026-08-19). The table is
 generated — run `uv run python scripts/results_table.py` and paste.
 Everything else on this page is the framework for reading it, written
 before the numbers existed so that it is a prediction rather than a
@@ -72,6 +72,73 @@ initially reported here as graph results on the strength of the agent's
 *name*, while the "What each comparison isolates" section below said
 `dense` → `hybrid` was the lexical channel all along. `--agent lexical`
 now exists so the third column is measured rather than subtracted.
+
+### 4. Showing the LLM the document is worth more than everything else combined
+
+`rerank` reorders `hybrid`'s top 20 with one listwise LLM call, on the same
+corpus and the same candidate set:
+
+| metric | hybrid | rerank | Δ |
+|---|---|---|---|
+| mrr | 0.21872 | **0.34075** | +0.12203 |
+| hit@1 | 0.15000 | **0.28571** | +0.13571 |
+| hit@5 | 0.29643 | **0.40000** | +0.10357 |
+| recall@20 | 0.36799 | 0.36799 | ±0.00000 |
+
+**recall@20 identical to five decimals is the control**: recall@20 is a
+property of the candidate *set*, so an unchanged value proves the two arms
+saw the same 20 documents and differ only in order. The metrics were also
+recomputed straight from the persisted predictions without the sidecar and
+agree to five decimals. The gap is 4.6 standard errors (per-query se
+0.0263); the 95% CI is [0.289, 0.392].
+
+This confirms finding 2's prediction. That finding argued the embedding
+model "retrieves the same documents and orders them worse... a reranking
+problem rather than a retrieval one, and the shape a cross-encoder fixes."
+It was written before any reranker existed. The correction is that the fix
+did not need a cross-encoder — a generative model reading the text listwise
+was enough.
+
+**What was actually missing was the text.** No agent before this one had
+ever shown the LLM a document. `get_node` returns a name and a type;
+`search_chunks` matched on text and then discarded it. `zero_shot` and
+`deep` were reasoning over identifiers, which is why their numbers sit on
+top of the retrieval they were given. `Toolset.search_passages` returns the
+matched passage, and one prompt does the rest.
+
+#### Listwise against STaRK's pointwise, and why ours gains more
+
+STaRK's published GPT-4 reranker tops the PRIME Synthesized(10%) board at
+0.2655 mrr, a gain of about +3.05 over its dense baseline. Ours gains
++12.20. **That is not "we beat GPT-4"** — it is a different protocol, and
+the comparison worth drawing is mechanical rather than competitive:
+
+| | STaRK's reranker | ours |
+|---|---|---|
+| shape | pointwise, one call per candidate | listwise, one call per query |
+| calls/query | up to `max_k=100` | 1 |
+| output | one float 0.0–1.0, `max_tokens=5` | 20 scores, 0–100 |
+| candidate text | `add_rel=True` (relations included) | relation-free |
+| prior | `sim_weight=0.1` retrieval-rank blend | retrieval rank as tie-break only |
+
+Theirs sees *more* text per candidate and gains *less*. That rules out
+"better documents" as the explanation and points at the comparison itself:
+scoring candidates against each other in one context lets the model use
+relative judgements it cannot make when each candidate is scored blind. It
+is also ~100x cheaper per query.
+
+#### Reranking is now near its ceiling, and recall is the constraint
+
+hit@20 on this arm is **0.44643** — no reranker can promote a document
+retrieval never surfaced. Against that ceiling:
+
+- hit@1 0.28571 / 0.44643 = **64%** of reachable queries answered first
+- hit@5 0.40000 / 0.44643 = **90%** reachable into the top five
+
+So further reranking effort has little left to win. For 55% of queries the
+answer is not in the candidate set at all, and that is where the next gain
+is. This reverses the page's working assumption: ranking was the bottleneck
+and is now largely solved; retrieval recall is the bottleneck.
 
 ### What is not measured
 

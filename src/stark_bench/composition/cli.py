@@ -189,6 +189,37 @@ CHUNKERS = {
     "capped-whole-5000": partial(
         SlidingWindowChunker, default_chunk_size=5000, default_overlap=0
     ),
+    #: For nomic-embed-text, whose hard ceiling is **2048 tokens** -- the
+    #: model's trained context. The server enforces it per request:
+    #:
+    #:     400 exceed_context_size_error
+    #:     input (2083 tokens) is larger than the max context size (2048)
+    #:
+    #: That failure is why this entry exists. `capped-whole-5000` was reused
+    #: for nomic on the strength of an estimate of 4.0 characters per token,
+    #: which was measured on CHAT prompts through Qwen's tokenizer -- a
+    #: different tokenizer over different text. Through nomic's WordPiece the
+    #: densest PRIME documents run about **2.4** characters per token, so a
+    #: 5000-character chunk is ~2083 tokens and overruns by 35.
+    #:
+    #: 4000 characters is 1667 tokens at that measured 2.4, and still 2000 at
+    #: a pessimistic 2.0 -- inside the ceiling either way. Sampling 25
+    #: documents put the worst ratio at 3.42, which would have justified a
+    #: 6300-character cap; the sample missed the dense tail of a 129,375
+    #: document corpus and the production failure did not. **Size against the
+    #: observed failure, not against a sample that never reproduced it.**
+    #:
+    #: This is NOT a free swap of one cap for another. Finding 1 in
+    #: RESULTS.md measures finer chunking as the largest single effect and
+    #: it is negative, so nomic pays a granularity penalty that Nemotron --
+    #: with 4096 tokens to spend -- does not. A nomic-against-Nemotron
+    #: comparison therefore varies the model AND the chunking, and cannot
+    #: attribute a gap to either. Corpus-against-corpus on nomic
+    #: (`nomic-wholedoc` against `mag-wholedoc`) stays clean, which is the
+    #: comparison the MAG run exists for.
+    "capped-whole-4000": partial(
+        SlidingWindowChunker, default_chunk_size=4000, default_overlap=0
+    ),
 }
 #: Models `_live_embeddings_for` will build a provider for. Membership is the
 #: only gate -- dimension and task prefixes come from the config, so adding a
