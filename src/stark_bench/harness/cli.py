@@ -232,6 +232,34 @@ def toolset_for(
     )
 
 
+def ingest_report_path(config: RunConfig) -> Path:
+    """Where `--ingest` leaves its stats, for `--run` to pick up.
+
+    Keyed on the config name and not on the agent, because ingest happens
+    once and all four agents read the corpus it produced.
+    """
+    return RESULTS_ROOT / f"{config.name}.ingest.json"
+
+
+def _ingest_stats(config: RunConfig) -> dict[str, object]:
+    """The ingest half of the cost column, read back from disk.
+
+    `--ingest` and `--run` are separate processes -- deliberately, since an
+    ingest is hours and a run is minutes -- so the run cannot observe what
+    the ingest cost. It reads the file the ingest wrote.
+
+    Returns `{}` when there is no file, rather than raising: a report with
+    an empty ingest block is what every report had until now, and refusing
+    to score a corpus someone ingested by hand would be a worse trade than
+    an incomplete cost column. The absence is visible in the report either
+    way, which is the property that matters.
+    """
+    path = ingest_report_path(config)
+    if not path.exists():
+        return {}
+    return dict(json.loads(path.read_text(encoding="utf-8")))
+
+
 def report_path(config: RunConfig) -> Path:
     """Where this config-and-agent's numbers land.
 
@@ -417,7 +445,7 @@ async def _do_run(config: RunConfig) -> None:
         config=config,
         metrics=metrics,
         cost=cost,
-        ingest={},
+        ingest=_ingest_stats(config),
         queries=len(queries),
     )
     print(metrics)  # noqa: T201
@@ -493,7 +521,7 @@ def main() -> None:
             )
         )
         RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-        (RESULTS_ROOT / f"{config.name}.ingest.json").write_text(
+        ingest_report_path(config).write_text(
             json.dumps(report, indent=2)
         )
         print(report)  # noqa: T201

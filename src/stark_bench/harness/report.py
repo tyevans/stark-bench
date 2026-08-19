@@ -46,7 +46,10 @@ def write_report(
     config: RunConfig,
     metrics: Mapping[str, float],
     cost: Mapping[str, float],
-    ingest: Mapping[str, int],
+    # Not `Mapping[str, int]`: the ingest block carries `wall_time_s`
+    # (float), `edges_ingested` and `resume` (bool). The narrower annotation
+    # was true when the block was always empty.
+    ingest: Mapping[str, object],
     queries: int,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
