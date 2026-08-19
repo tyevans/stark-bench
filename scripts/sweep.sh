@@ -53,7 +53,13 @@ CONCURRENCY="${CONCURRENCY:-4}"   # >= the server's -np; see ingest.py
 # Recorded because the opposite was believed for an hour, on the strength of
 # a standalone probe that used urllib without connection reuse and was
 # therefore measuring TCP handshakes rather than the model.
-EMBED_BATCH="${EMBED_BATCH:-128}"
+# 64, not 128. Batch 128 measured 1618 nodes/min against 64's 1612 -- a
+# statistical tie -- and then killed an ingest 72k chunks in with
+# `peer proxy error: net/http: timeout awaiting response headers`. One
+# request of 128 documents up to 5000 characters each, spread over 4 slots,
+# takes long enough to exceed llama-swap's header timeout. The larger batch
+# bought nothing measurable and cost a 40-minute failure.
+EMBED_BATCH="${EMBED_BATCH:-64}"
 # The peer is restarted by hand and has crashed on its own. Over a run this
 # long, three attempts is optimistic.
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
