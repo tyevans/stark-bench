@@ -11,14 +11,22 @@ rationalisation.
 | corpus | chunks/node | agent | mrr | hit@1 | hit@5 | recall@20 |
 |---|---|---|---|---|---|---|
 | vss-control (ada-002) | 1.000 | dense | 0.23057 | 0.1536 | 0.3107 | 0.37878 |
-| vss-control (ada-002) | 1.000 | hybrid | **0.23111** | 0.1643 | 0.3214 | 0.37096 |
+| vss-control (ada-002) | 1.000 | hybrid | 0.23111 | 0.1643 | 0.3214 | 0.37096 |
 | native-wholedoc | 1.057 | dense | 0.21635 | 0.1357 | 0.3036 | 0.37780 |
 | native-wholedoc | 1.057 | hybrid | 0.21872 | 0.1500 | 0.2964 | 0.36799 |
 | redstring-native | 1.139 | dense | 0.18446 | 0.1214 | 0.2500 | 0.32397 |
 | redstring-native | 1.139 | hybrid | 0.19854 | 0.1357 | 0.2643 | 0.35162 |
+| native-wholedoc | 1.057 | **rerank** | **0.34075** | **0.2857** | **0.4000** | 0.36799 |
 
-All six on complete corpora: 280 queries, 129,375 nodes, both native arms
+All seven on complete corpora: 280 queries, 129,375 nodes, both native arms
 carrying the full 8,100,498 edges.
+
+`rerank` is the top row by a wide margin and is a *reordering* of the
+`native-wholedoc` hybrid row directly above it -- same corpus, same
+candidates, one LLM call per query. See finding 4. For scale, the best
+published entry on this split is GPT-4 reranking at 0.2655 mrr, though at a
+different protocol; the comparison is drawn honestly in finding 4 and is not
+a claim to have beaten it.
 
 ### 1. Chunk granularity is the largest effect, and finer is worse
 
