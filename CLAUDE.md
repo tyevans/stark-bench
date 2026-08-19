@@ -149,7 +149,15 @@ Two hazards, both hit for real:
 **1,666 chunks/min**, measured 2026-08-19 on `redstring-native` ingesting
 into an **empty** tenant: `--embed-concurrency 4 --embed-batch 64` against
 Nemotron-3-Embed-1B at `--ctx-size 16384 --batch-size 8192 --ubatch-size
-8192 -np 4`. Three consecutive 3-minute intervals gave 1667, 1666 and 1606.
+8192 -np 4`. Two consecutive 3-minute intervals gave **1667 and 1666**.
+
+A third read 1606 and is **not** clean: a `--run` scoring pass was launched
+during it. That pass used precomputed vectors and touched no GPU, which is
+why it was thought safe to run alongside — and it contends on *Postgres*
+instead, where `hybrid` does lexical search over a 5.7M-row terms table
+while the ingest is writing to the same database. The next interval fell to
+1071/min, a 36% drop. **Nothing else may touch the database while a
+throughput number is being taken**, whatever it does to the GPU.
 
 **Whether `--ubatch-size 8192` beat 4096 is unresolved, and no number in
 this file answers it.** Every 4096 measurement was taken across a resume
