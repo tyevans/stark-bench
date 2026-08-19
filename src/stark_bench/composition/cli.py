@@ -464,8 +464,15 @@ async def _do_run(config: RunConfig) -> None:
         )
         agent = build_agent(config)
 
-        predictions = await run(agent, queries, tools, k=config.k)
-        write_predictions(predictions_path(config), predictions)
+        preds_path = predictions_path(config)
+        predictions = await run(
+            agent,
+            queries,
+            tools,
+            k=config.k,
+            checkpoint=partial(write_predictions, preds_path),
+        )
+        write_predictions(preds_path, predictions)
 
         candidates_path = data_dir / "candidates.json"
         candidate_ids = [int(c) for c in json.loads(candidates_path.read_text())]
