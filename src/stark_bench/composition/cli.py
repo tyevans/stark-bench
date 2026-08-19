@@ -202,12 +202,29 @@ CHUNKERS = {
     #: densest PRIME documents run about **2.4** characters per token, so a
     #: 5000-character chunk is ~2083 tokens and overruns by 35.
     #:
-    #: 4000 characters is 1667 tokens at that measured 2.4, and still 2000 at
-    #: a pessimistic 2.0 -- inside the ceiling either way. Sampling 25
-    #: documents put the worst ratio at 3.42, which would have justified a
-    #: 6300-character cap; the sample missed the dense tail of a 129,375
-    #: document corpus and the production failure did not. **Size against the
-    #: observed failure, not against a sample that never reproduced it.**
+    #: **This cap was wrong three times, each time from a sample that missed
+    #: the dense tail.** The sequence is worth keeping, because every estimate
+    #: was defensible and every one was too high:
+    #:
+    #:   5000 chars -- from 4.0 chars/token, measured on CHAT prompts through
+    #:                 Qwen's tokenizer. Failed at 2083 tokens.
+    #:   4000 chars -- from 2.4, the ratio implied by that failure. A 25-doc
+    #:                 sample said 3.42 and would have justified 6300; it was
+    #:                 ignored in favour of the failure, and the failure was
+    #:                 still not the worst case. Failed at 2088 tokens.
+    #:   2400 chars -- from 1.754, measured by ranking all 607,292 documents
+    #:                 over 800 characters in BOTH corpora by token density
+    #:                 and probing the 250 densest individually. The worst is
+    #:                 a MAG physics title.
+    #:
+    #: 2400 is deliberately below the 2873 that 1.754 permits at a 20% margin.
+    #: At the measured worst it is 1368 tokens, 67% of the ceiling, and it
+    #: survives any ratio down to 1.17. Two consecutive underestimates are
+    #: enough evidence that the tail is longer than sampling finds.
+    #:
+    #: The principled fix is to cap by TOKENS, which needs nomic's WordPiece
+    #: vocabulary locally, or to catch the 400 and split the offending chunk.
+    #: Either ends this guessing permanently -- see B-TOKEN-CAP-1.
     #:
     #: This is NOT a free swap of one cap for another. RESULTS.md finding 4
     #: measures a 25% spread in dense mrr across chunkers, so the chunker is
@@ -224,8 +241,8 @@ CHUNKERS = {
     #: confound needs, and enough for it. Corpus-against-corpus on nomic
     #: (`nomic-wholedoc` against `mag-wholedoc`) stays clean, which is the
     #: comparison the MAG run exists for.
-    "capped-whole-4000": partial(
-        SlidingWindowChunker, default_chunk_size=4000, default_overlap=0
+    "capped-whole-2400": partial(
+        SlidingWindowChunker, default_chunk_size=2400, default_overlap=0
     ),
 }
 #: Models `_live_embeddings_for` will build a provider for. Membership is the

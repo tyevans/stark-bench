@@ -23,7 +23,7 @@
 # The chunker differs too, and it has to. nomic's hard ceiling is 2048
 # tokens against Nemotron's 4096, so `capped-whole-5000` overruns it -- the
 # server rejects a 2083-token chunk outright. This arm therefore runs
-# `capped-whole-4000`. RESULTS.md finding 4 measures a 25% spread in dense
+# `capped-whole-2400`. RESULTS.md finding 4 measures a 25% spread in dense
 # mrr across chunkers, so changing the cap moves a variable that matters --
 # in an unknown direction, since finding 3 retracted the claim that finer is
 # monotonically worse.
@@ -40,7 +40,7 @@
 name: nomic-wholedoc
 dataset: prime
 split: test-0.1
-chunker: capped-whole-4000
+chunker: capped-whole-2400
 embeddings: nomic-embed-text
 dimension: 768
 aggregation: max
