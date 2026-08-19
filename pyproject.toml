@@ -62,7 +62,7 @@ layers = [
     "(composition)",
     "(adapters)",
     "agents",
-    "(application)",
+    "application",
     "ports",
     "domain",
 ]
