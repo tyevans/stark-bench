@@ -46,12 +46,61 @@ addopts = "-m 'not integration'"
 [tool.importlinter]
 root_packages = ["stark_bench"]
 
+# Layers, highest to lowest. A layer may import those below it and never
+# those above. `exhaustive` means a new top-level module under
+# `stark_bench` is a contract failure until it is placed deliberately --
+# which is the point: deciding where something sits is the design work, and
+# a package that drifts in unplaced has had that decision made by accident.
 [[tool.importlinter.contracts]]
-name = "agents may only import ports"
+name = "hexagon"
+type = "layers"
+containers = ["stark_bench"]
+# Parenthesised layers are optional -- they do not exist yet. Each loses
+# its parentheses as its slice lands, so the diff that creates a layer is
+# also the diff that starts enforcing its position.
+layers = [
+    "(composition)",
+    "(adapters)",
+    "agents",
+    "(application)",
+    "ports",
+    "domain",
+]
+exhaustive = true
+# Modules still awaiting a home in the hexagon. Each one leaving this list
+# is a slice of the refactor; the list reaching empty is the refactor being
+# done, and it cannot be quietly abandoned because `exhaustive` fails on
+# anything not named here or in `layers`.
+exhaustive_ignores = ["harness", "skb", "sidecar", "tools"]
+
+# The contract that actually protects a result. `agents/` holds the subject
+# of the benchmark; everything it can reach, it can be accidentally helped
+# by. The runner knows each query's `answer_ids`, so an agent that can
+# import it is one attribute access from a perfect score -- and a perfect
+# score arrived at that way looks exactly like a good architecture.
+#
+# Stated separately from the layer contract rather than folded into it,
+# because the layer contract permits agents -> application and this forbids
+# it. Two directions, two contracts.
+[[tool.importlinter.contracts]]
+name = "agents see only ports and domain"
 type = "forbidden"
 source_modules = ["stark_bench.agents"]
 forbidden_modules = [
+    "stark_bench.application",
+    "stark_bench.adapters",
+    "stark_bench.composition",
     "stark_bench.harness",
     "stark_bench.skb",
     "stark_bench.sidecar",
+    "stark_bench.tools",
 ]
+
+# The sidecar runs under a different Python (3.11, for `stark-qa`) as a
+# subprocess invoked by path. It must import nothing from `stark_bench` at
+# all -- not even domain -- because none of it will be importable there.
+[[tool.importlinter.contracts]]
+name = "the sidecar shares no code"
+type = "forbidden"
+source_modules = ["stark_bench.sidecar"]
+forbidden_modules = ["stark_bench.domain", "stark_bench.ports"]

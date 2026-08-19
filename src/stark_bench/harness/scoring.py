@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from stark_bench.ports import Ranked
+    from stark_bench.domain import Ranked
 
 DEFAULT_METRICS = ("mrr", "hit@1", "hit@5", "recall@20")
 

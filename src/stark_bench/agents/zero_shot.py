@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from stark_bench.ports import Query, Ranked, Toolset
+    from stark_bench.domain import Query, Ranked
+    from stark_bench.ports import Toolset
 
 
 class RewrittenQuery(BaseModel):

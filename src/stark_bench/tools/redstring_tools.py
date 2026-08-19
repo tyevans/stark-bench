@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 from redstring import ChunkRetriever, RetrievalMode
 
 from stark_bench.harness.aggregate import aggregate
-from stark_bench.ports import Ranked, ToolCall
+from stark_bench.domain import Ranked, ToolCall
 from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for, node_id_of
 
 if TYPE_CHECKING:

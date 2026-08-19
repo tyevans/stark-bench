@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from stark_bench.ports import Query, Ranked, Toolset
+    from stark_bench.domain import Query, Ranked
+    from stark_bench.ports import Toolset
 
 
 @dataclass(frozen=True, slots=True)

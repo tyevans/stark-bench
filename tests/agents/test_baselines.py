@@ -2,7 +2,8 @@ import pytest
 
 from stark_bench.agents.dense import DenseAgent
 from stark_bench.agents.hybrid import HybridAgent
-from stark_bench.ports import Agent, Query, Ranked, ToolCall
+from stark_bench.domain import Query, Ranked, ToolCall
+from stark_bench.ports import Agent
 
 
 class RecordingTools:

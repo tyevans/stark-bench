@@ -1,7 +1,7 @@
 import pytest
 
 from stark_bench.agents.zero_shot import ZeroShotAgent
-from stark_bench.ports import Query, Ranked, ToolCall
+from stark_bench.domain import Query, Ranked, ToolCall
 
 
 class Tools:
