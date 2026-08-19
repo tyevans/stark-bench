@@ -18,8 +18,20 @@ class IngestOutcome:
     Every field is something a later reader needs and cannot recover:
     `skipped` distinguishes a resumed ingest from a slow one, and
     `self_loops_dropped` distinguishes a clean corpus from a loader that
-    stopped looking -- PRIME has self-loops, so a zero there is more likely
-    a bug than a property of the data.
+    stopped looking.
+
+    This docstring used to say a zero there was "more likely a bug than a
+    property of the data", because PRIME has self-loops. Measured on
+    2026-08-19, `prime/test-0.1` has **none**: 8,100,498 edges, zero where
+    `source == target`, and the full ingest loaded all 8,100,498. So a zero
+    is the honest answer for this split, and treating it as suspicious sends
+    the next reader hunting a defect that is not there.
+
+    What makes the zero trustworthy is not this file: the drop path has its
+    own test (`test_a_self_loop_is_dropped_and_counted`), so the counter is
+    known to work on input that exercises it. A field whose only evidence is
+    a run whose input could not exercise it is unverified no matter what
+    number it shows.
     """
 
     nodes: int
