@@ -60,6 +60,22 @@ class PrecomputedEmbeddingProvider:
             out.append(list(vector))
         return out
 
+    async def embed_query(self, texts: Sequence[str]) -> list[list[float]]:
+        """Identical to `embed`, because ada-002 is a symmetric model.
+
+        Not an oversight and not a stub. `text-embedding-ada-002` has no task
+        prefix: OpenAI embeds a query and a document with the same call, and
+        STaRK's precomputed `.npz` artifacts were produced that way. The two
+        sides of the port coincide *for this model*, which is exactly the case
+        ADR 0043 leaves open by defaulting both prefixes to empty.
+
+        It has to be written out even so. `ChunkRetriever` calls `embed_query`,
+        and a provider missing it fails with `AttributeError` at the first
+        query -- after a full ingest, which for the control is the cheap part
+        but for anything live is an hour.
+        """
+        return await self.embed(texts)
+
 
 def node_vector_lookup(
     doc_embeddings: Mapping[str, Sequence[float]],

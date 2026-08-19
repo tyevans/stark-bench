@@ -22,6 +22,7 @@ import json
 import logging
 import time
 from functools import partial
+from hashlib import blake2b
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -143,7 +144,25 @@ def _table_for(config: RunConfig) -> str:
     the table name is keyed on the embeddings identifier by construction.
     """
     slug = config.embeddings.replace("-", "_")
-    return f"kg_chunks_{slug}"
+    if not config.document_prefix and not config.query_prefix:
+        return f"kg_chunks_{slug}"
+    # The task prefix is part of the model's identity, not a formatting
+    # detail: text embedded behind `search_document: ` and the same text
+    # embedded bare land in different regions of the space, and cosine
+    # between them is meaningless. redstring ADR 0043 says so explicitly,
+    # extending ADR 0002's "new model means a new store".
+    #
+    # A digest rather than the prefixes themselves because a prefix is
+    # free-form text and a table name is not. It is appended only when a
+    # prefix is set, so the unprefixed tables keep the names the existing
+    # results were written against -- renaming those would orphan every row
+    # ingested before today, which is precisely the failure that cost this
+    # project a full ada-002 run.
+    identity = (
+        f"{config.embeddings}\x00{config.document_prefix}\x00{config.query_prefix}"
+    )
+    digest = blake2b(identity.encode("utf-8"), digest_size=4).hexdigest()
+    return f"kg_chunks_{slug}_{digest}"
 
 
 def _live_embeddings_for(config: RunConfig) -> EmbeddingProvider:
@@ -152,6 +171,8 @@ def _live_embeddings_for(config: RunConfig) -> EmbeddingProvider:
             base_url=NOMIC_BASE_URL,
             model="nomic-embed-text",
             dimension=config.dimension,
+            document_prefix=config.document_prefix,
+            query_prefix=config.query_prefix,
         )
     raise NotImplementedError(f"no live embedding provider for {config.embeddings!r}")
 

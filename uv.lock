@@ -1408,7 +1408,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.2" },
-    { name = "redstring", extras = ["neo4j", "pgvector", "llm"], directory = "../redstring" },
+    { name = "redstring", extras = ["llm", "neo4j", "pgvector"], directory = "../redstring" },
 ]
 
 [package.metadata.requires-dev]

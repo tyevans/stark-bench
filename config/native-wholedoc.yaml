@@ -28,3 +28,11 @@ dimension: 768
 aggregation: max
 agent: dense
 k: 20
+
+# nomic-embed-text-v1.5 is asymmetric: it was trained with these exact task
+# prefixes and expects them at inference. Omitting them is silent -- the
+# vectors are well-formed and score plausibly, just worse than the model can
+# do -- which is why every nomic config states them rather than relying on a
+# default.
+document_prefix: "search_document: "
+query_prefix: "search_query: "
