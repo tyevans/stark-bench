@@ -46,6 +46,21 @@ if TYPE_CHECKING:
 
 BATCH = 500
 
+#: Chunks are flushed independently of `BATCH`, which bounds the *entity*
+#: count per flush. A skipped node (resume path) still counts toward
+#: `BATCH` without adding a single chunk, while a non-skipped node with a
+#: real chunker (`BoundaryPreferenceChunker`, not the 1:1 `WholeDocumentChunker`
+#: control) can contribute many chunks per node -- so `len(batch) >= BATCH`
+#: can go a long time between flushes while `chunk_batch` keeps growing.
+#: `PostgresChunkStore.upsert_many` serialises the whole batch into one
+#: `jsonb` parameter, and Postgres rejects a jsonb array once its total
+#: element size passes 268,435,455 bytes (`ProgramLimitExceededError`).
+#: Measured against a live Postgres with 768-dim embeddings and 2000-char
+#: chunk text (`BoundaryPreferenceChunker`'s ceiling per chunk): 15,000
+#: chunks succeeded, 16,000 failed. 1,000 is committed here for roughly a
+#: 15x margin under that measured ceiling.
+CHUNK_BATCH = 1000
+
 
 @dataclass(frozen=True, slots=True)
 class IngestReport:
@@ -191,7 +206,7 @@ async def ingest(
                 )
                 chunk_count += 1
 
-        if len(batch) >= BATCH:
+        if len(batch) >= BATCH or len(chunk_batch) >= CHUNK_BATCH:
             await graph.upsert_entities(batch)
             await chunks.upsert_many(chunk_batch)
             batch, chunk_batch = [], []

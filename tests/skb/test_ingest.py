@@ -334,3 +334,91 @@ async def test_resume_resumes_a_partial_prior_ingest(stores):
     assert report.chunks == 2
     assert report.skipped == 3
     assert spy.texts_embedded == ["d", "e"]
+
+
+class ManyChunksPerNode:
+    """A chunker that splits every document into many pieces.
+
+    Exercises the case `BATCH` (entity count) cannot see: few nodes, each
+    contributing far more than one chunk, so `chunk_batch` can grow past a
+    flush threshold expressed only in nodes. `BoundaryPreferenceChunker`
+    behaves this way on real documents; this fake makes the shape
+    deterministic and cheap for a unit test.
+    """
+
+    def __init__(self, chunks_per_node: int):
+        self._n = chunks_per_node
+
+    @property
+    def chunker_type(self) -> str:
+        return "many-chunks-per-node"
+
+    def chunk(self, text, max_chunk_size=None, overlap_size=None):
+        from redstring.extraction.chunking import Chunk, ChunkingResult
+
+        pieces = [
+            Chunk(text=f"{text}-{i}", chunk_index=i, start_char=0, end_char=1)
+            for i in range(self._n)
+        ]
+        return ChunkingResult(
+            chunks=pieces,
+            total_chunks=self._n,
+            original_length=len(text),
+            chunking_method="many-chunks-per-node",
+            overlap_size=0,
+        )
+
+
+class RecordingChunkStore:
+    """Wraps a real chunk store and records the size of every `upsert_many`
+    call, so a test can assert the flush threshold was honoured without
+    needing a real Postgres payload limit to trip it."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.call_sizes: list[int] = []
+
+    async def upsert_many(self, chunks):
+        self.call_sizes.append(len(chunks))
+        await self._inner.upsert_many(chunks)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+async def test_chunk_batch_is_flushed_independently_of_entity_batch(stores):
+    """Few nodes, many chunks each: `upsert_many` must never be called with
+    more chunks than `CHUNK_BATCH`, even though the entity-count threshold
+    (`BATCH`) would not fire until far more nodes had been processed.
+
+    This is the regression for the real ingest failure: a run resuming with
+    `BoundaryPreferenceChunker` sent `chunk_batch` well past Postgres's
+    jsonb-array size limit because only `len(batch) >= BATCH` triggered a
+    flush.
+    """
+    from stark_bench.skb.ingest import CHUNK_BATCH
+
+    graph, real_chunks = stores
+    chunks = RecordingChunkStore(real_chunks)
+    tenant = TenantId(uuid4())
+    # BATCH is 500 entities; 10 nodes each producing far more chunks than
+    # CHUNK_BATCH would, without the chunk-count flush, accumulate one
+    # enormous chunk_batch across the whole run.
+    chunks_per_node = CHUNK_BATCH // 2
+    nodes = [SkbNode(str(i), "drug", f"node{i}", f"doc{i}") for i in range(10)]
+
+    report = await ingest(
+        nodes,
+        [],
+        dataset="prime",
+        tenant_id=tenant,
+        graph=graph,
+        chunks=chunks,
+        chunker=ManyChunksPerNode(chunks_per_node),
+        embeddings=FakeEmbeddingProvider(dimension=8),
+    )
+
+    assert report.chunks == 10 * chunks_per_node
+    assert chunks.call_sizes, "upsert_many was never called"
+    assert all(size <= CHUNK_BATCH for size in chunks.call_sizes), chunks.call_sizes
