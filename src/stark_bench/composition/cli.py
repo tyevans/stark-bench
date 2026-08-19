@@ -189,8 +189,56 @@ CHUNKERS = {
     "capped-whole-5000": partial(
         SlidingWindowChunker, default_chunk_size=5000, default_overlap=0
     ),
+    #: For nomic-embed-text, whose hard ceiling is **2048 tokens** -- the
+    #: model's trained context. The server enforces it per request:
+    #:
+    #:     400 exceed_context_size_error
+    #:     input (2083 tokens) is larger than the max context size (2048)
+    #:
+    #: That failure is why this entry exists. `capped-whole-5000` was reused
+    #: for nomic on the strength of an estimate of 4.0 characters per token,
+    #: which was measured on CHAT prompts through Qwen's tokenizer -- a
+    #: different tokenizer over different text. Through nomic's WordPiece the
+    #: densest PRIME documents run about **2.4** characters per token, so a
+    #: 5000-character chunk is ~2083 tokens and overruns by 35.
+    #:
+    #: 4000 characters is 1667 tokens at that measured 2.4, and still 2000 at
+    #: a pessimistic 2.0 -- inside the ceiling either way. Sampling 25
+    #: documents put the worst ratio at 3.42, which would have justified a
+    #: 6300-character cap; the sample missed the dense tail of a 129,375
+    #: document corpus and the production failure did not. **Size against the
+    #: observed failure, not against a sample that never reproduced it.**
+    #:
+    #: This is NOT a free swap of one cap for another. RESULTS.md finding 4
+    #: measures a 25% spread in dense mrr across chunkers, so the chunker is
+    #: the second-largest retrieval effect on the page and changing the cap
+    #: changes it. A nomic-against-Nemotron comparison therefore varies the
+    #: model AND the chunking and cannot attribute a gap to either.
+    #:
+    #: Note what this does NOT claim. An earlier version of this comment said
+    #: finer chunking is monotonically worse, citing a finding RESULTS.md has
+    #: since **retracted**: `native-sliding1k` has twice `redstring-native`'s
+    #: granularity and scores 15% better, so the effect is not monotonic in
+    #: chunks/node. The direction of the 5000 -> 4000 change is therefore
+    #: unknown, not merely unmeasured -- which is a weaker claim than the
+    #: confound needs, and enough for it. Corpus-against-corpus on nomic
+    #: (`nomic-wholedoc` against `mag-wholedoc`) stays clean, which is the
+    #: comparison the MAG run exists for.
+    "capped-whole-4000": partial(
+        SlidingWindowChunker, default_chunk_size=4000, default_overlap=0
+    ),
 }
-LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B"}
+#: Models `_live_embeddings_for` will build a provider for. Membership is the
+#: only gate -- dimension and task prefixes come from the config, so adding a
+#: model here is adding a name, not a code path.
+#:
+#: Nemotron-3-Embed-1B is kept alongside `nomic-embed-text` because the
+#: Nemotron arms in `results/` are still the comparison for the model swap:
+#: it scored WORSE than precomputed ada-002 (0.2163 vs 0.2306 MRR on
+#: `dense`, recall@20 a tie) at 2048 dimensions against 768, which is what
+#: made the swap worth doing. Removing it would make those numbers
+#: unreproducible.
+LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text"}
 
 
 def _tenant_for(config: RunConfig) -> TenantId:

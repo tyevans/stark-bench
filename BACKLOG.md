@@ -337,6 +337,83 @@ Note it belongs in `redstring`'s `llm/adapters/langchain_embedding.py` rather
 than here if the retry should benefit every caller — decide which before
 writing it.
 
+**Do not "add retry" here without measuring first.** The `openai` client under
+`OpenAIEmbeddings` already retries 408, 409, 429 and every >=500, and defaults
+to `max_retries=2`. Our failure was a 500, so retries were almost certainly
+already firing and a hand-written retry loop would be a no-op that looks like a
+fix. `redstring`'s adapter argues this deliberately: "the caller constructs the
+LangChain object, so a deployment's own retry, callback and tracing
+configuration is not something this class must mirror."
+
+The likelier mechanism is that all three attempts expire *inside* the cold
+load: 36s to load, a 60s proxy header timeout, no backoff long enough to
+outlast it, and a wave of concurrent requests keeping the queue saturated. If
+so the lever is client `timeout` and backoff, exposed through
+`openai_compatible`, not retry count.
+
+Deferred rather than guessed because distinguishing the two needs a forced
+model swap on the shared GPU, which was busy. Reproduce by issuing a chat
+request to evict the embedding model, then firing N concurrent embeds and
+logging per-attempt latency.
+
 Ingest is resumable (`loaded N existing chunk ids for tenant`), so the cost of
 a crash is the wave in flight, not the run. That is what makes this a backlog
 item and not a blocker.
+
+## B-EPHEMERAL-STORES-1 — the stores had no volumes, and an ingest was lost
+
+`docker-compose.yml` declared no `volumes:` for either service, so Postgres
+and Neo4j wrote to anonymous volumes that are destroyed with their container.
+A `docker compose down`-shaped event at 2026-08-19T22:08:51Z removed both
+containers and the `stark-bench_default` network, taking 589,790 embedded
+chunks across four tenants with them.
+
+Fixed here by adding named volumes (`stark-pgdata`, `stark-neo4jdata`). What
+is still open is the detection gap, which is the part that cost time:
+
+- **Nothing announced the loss.** The next run failed with
+  `ConnectionRefusedError` on 55432, which reads as "the container is down",
+  not as "the corpus is gone". Those need different responses and looked
+  identical.
+- **A surviving container with an empty store would have been worse.** The
+  connection error at least failed loudly; had the stack been restarted first,
+  the queue's ingest gate would have passed on a fresh empty corpus and the
+  arms would have scored low-but-plausible numbers. That is the same silent
+  degradation shape as the stale model id and the three-valued rerank scores.
+
+So the fix worth adding is a preflight that asserts the configured tenant's
+chunk count is non-zero (or that ingest is being asked for), rather than
+letting an empty store look like a bad retriever.
+
+Note what did NOT need recovering: `results/*.json` and the persisted
+predictions are files in the repo, so every scored number survived intact.
+Keep expensive-to-recompute artifacts out of the containers.
+
+## B-NOMIC-CONFOUND-1 — nomic vs Nemotron varies two things at once
+
+`nomic-wholedoc` was built to isolate the embedding model against
+`native-wholedoc`, and it does not. nomic's context ceiling is 2048 tokens
+against Nemotron's 4096, so it cannot run `capped-whole-5000` -- the server
+rejects chunks over the limit -- and runs `capped-whole-4000` instead.
+
+The chunker is the second-largest retrieval effect in RESULTS.md (finding 4:
+a 25% spread in dense mrr across four corpora), so the comparison now varies
+the model and the chunking together and a gap cannot be attributed to either.
+
+This entry originally argued the penalty was *negative and monotonic in
+granularity*, citing a RESULTS.md finding that has since been retracted --
+`native-sliding1k` has twice the granularity of `redstring-native` and scores
+15% better. The correct statement is that the direction of the 5000 -> 4000
+change is unknown. That is a weaker claim and still sufficient: an unknown
+effect of unknown sign sitting on top of the model swap is exactly what makes
+the comparison unattributable.
+
+To make it clean, re-run Nemotron at `capped-whole-4000` and compare that to
+`nomic-wholedoc`. Not done here because Nemotron embeds at 18 texts/s against
+nomic's 60, so the PRIME corpus is ~2.3h against ~40min, and the swap to
+nomic was already justified on the ada-002 comparison
+(0.2163 vs 0.2306 mrr) which is unaffected by this.
+
+What is NOT confounded, and is the reason the MAG run exists: PRIME against
+MAG, both on nomic at `capped-whole-4000`. That comparison holds the model
+and the chunker fixed and varies only the corpus.

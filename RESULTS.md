@@ -1,7 +1,8 @@
 # Results
 
-**All twelve retrieval numbers are in** (2026-08-19); the four LLM-agent
-cells are not. The table is generated — run
+**All twelve retrieval numbers are in** (2026-08-19), and the first
+LLM-agent cell with them: `rerank` is now the best result on the page by a
+wide margin (finding 6). The table is generated — run
 `uv run python scripts/results_table.py` and paste. Everything else on this
 page is the framework for reading it, written before the numbers existed so
 that it is a prediction rather than a rationalisation.
@@ -30,6 +31,7 @@ metrics from `stark_qa.evaluator.Evaluator` in the 3.11 sidecar.
 | vss-control | dense | 0.2306 | 0.1536 | 0.3107 | 0.3788 | 1.00 | 0.00 | 85.7 | 1.000 | 297.0 |
 | vss-control | hybrid | 0.2311 | 0.1643 | 0.3214 | 0.3710 | 1.00 | 0.00 | 176.3 | 1.000 | 297.0 |
 | vss-control | lexical | 0.1848 | 0.1429 | 0.2607 | 0.2139 | 1.00 | 0.00 | 94.4 | 1.000 | 297.0 |
+| native-wholedoc | **rerank** | **0.3408** | **0.2857** | **0.4000** | 0.3680 | 1.00 | 1.00 | 4364.7 | 1.057 | 2566.9 |
 
 Reproducibility was checked rather than assumed: `native-wholedoc/dense` was
 re-run four hours after its first scoring and returned
@@ -45,12 +47,18 @@ signal, not run-to-run variance.
 | redstring-native | boundary-preference | 1.139 | **0.1845** | 0.2014 | 0.1985 |
 | native-sliding1k | sliding-1000-500 | 2.238 | 0.2125 | 0.1988 | 0.2211 |
 
-### 1. Nothing beats the published-vector control
+### 1. Nothing in *retrieval* beats the published-vector control
 
 `vss-control` -- plain dense retrieval over STaRK's own ada-002 vectors,
-whole documents, no graph -- is still the best cell in the table at 0.2311.
-The closest any locally-embedded arm comes is `native-sliding1k/hybrid` at
-0.2211, 4% behind.
+whole documents, no graph -- is the best of the twelve retrieval cells at
+0.2311. The closest any locally-embedded arm comes is
+`native-sliding1k/hybrid` at 0.2211, 4% behind.
+
+**Scope corrected**: this finding read "nothing beats the control" until
+`rerank` scored 0.3408 (finding 6). The claim holds over retrieval and only
+retrieval -- which, given that no amount of retrieval work in this table
+closed a 4% gap and one LLM call opened a 47% one, is the narrower and less
+interesting half of the page.
 
 ### 2. The embedding model costs ranking, not recall
 
@@ -135,6 +143,71 @@ from the above. On `native-wholedoc`, BM25 alone **beats dense at hit@1**
 (0.1464 against 0.1357) while its recall@20 is 42% lower (0.2197 against
 0.3778) -- exact matching nails the obvious cases and misses paraphrase,
 and the vector channel is the reverse. Fusion beats both on mrr there.
+
+### 6. Showing the LLM the document beats every retrieval change combined
+
+`rerank` reorders `native-wholedoc/hybrid`'s top 20 with one listwise LLM
+call:
+
+| metric | hybrid | rerank | Δ |
+|---|---|---|---|
+| mrr | 0.21872 | **0.34075** | +0.12203 |
+| hit@1 | 0.15000 | **0.28571** | +0.13571 |
+| hit@5 | 0.29643 | **0.40000** | +0.10357 |
+| recall@20 | 0.36799 | 0.36799 | ±0.00000 |
+
+**recall@20 unchanged to five decimals is the control.** recall@20 is a
+property of the candidate *set*, so an identical value proves both arms saw
+the same 20 documents and differ only in order. Metrics were also recomputed
+from the persisted predictions without the sidecar and agree to five
+decimals. The gap is 4.6 standard errors (per-query se 0.0263), 95% CI
+[0.289, 0.392].
+
+Put against findings 1-5: every retrieval change measured on this page moves
+mrr within 0.1845-0.2311, a band of 0.047. One LLM call moves it 0.122 —
+**two and a half times the entire spread of the retrieval work.**
+
+This is finding 2's prediction, which said the embedding model "retrieves the
+same documents and orders them worse -- the shape a reranker fixes and a
+bigger bi-encoder may not." It was written before a reranker existed. The one
+correction: it did not need a cross-encoder. A generative model reading the
+passages listwise was enough.
+
+**What was missing was the text.** No agent before this one had shown the LLM
+a document. `get_node` returns a name and a type; `search_chunks` matched on
+text and discarded it. `zero_shot` and `deep` were reasoning over
+identifiers, which is why they never separated from the retrieval they were
+handed. `Toolset.search_passages` returns the matched passage.
+
+#### Listwise against STaRK's pointwise
+
+The published GPT-4 reranker tops the PRIME Synthesized(10%) board at 0.2655
+mrr, about +3.05 over its dense baseline. Ours gains +12.20. **That is not
+"we beat GPT-4"** — it is a different protocol:
+
+| | STaRK's reranker | ours |
+|---|---|---|
+| shape | pointwise, one call per candidate | listwise, one call per query |
+| calls/query | up to `max_k=100` | 1 |
+| output | one float 0.0-1.0, `max_tokens=5` | 20 scores, 0-100 |
+| candidate text | `add_rel=True` | relation-free |
+| prior | `sim_weight=0.1` rank blend | retrieval rank as tie-break only |
+
+Theirs sees *more* text per candidate and gains *less*, which rules out
+"better documents" and points at the comparison itself: scoring candidates
+against each other in one context supports relative judgements that scoring
+each blind cannot. It is also ~100x cheaper per query.
+
+#### Reranking is near its ceiling; recall is the constraint
+
+hit@20 on this arm is **0.44643**, and no reranker can promote a document
+retrieval never surfaced. Against that ceiling, hit@1 is **64%** of what is
+reachable and hit@5 is **90%**. For 55% of queries the answer is not in the
+candidate set at all.
+
+So the page's working assumption inverts. Ranking was the bottleneck and is
+now largely spent; **retrieval recall is the bottleneck**, and that is where
+the next gain has to come from.
 
 ### What is still not measured
 

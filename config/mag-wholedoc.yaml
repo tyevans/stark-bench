@@ -1,0 +1,55 @@
+# The generalisation cell: does the listwise reranking gain survive a
+# different corpus?
+#
+# On PRIME, `rerank` beat `hybrid` by +0.122 MRR at an identical candidate
+# set. The mechanism we believe is listwise comparison of document text, so
+# the way it breaks is a corpus whose documents give the comparison less to
+# work with. MAG is exactly that: titles and abstracts, mean 1,212 chars
+# against PRIME's biomedical entries, uniform in shape across the corpus.
+#
+# EVERY knob here matches `nomic-wholedoc` -- same embedding model,
+# dimension, prefixes, aggregation, chunker and k. That is the point. A
+# weaker result must be attributable to the corpus, and retuning anything
+# for MAG would forfeit that.
+#
+# The chunker is nominally `capped-whole-4000` but degenerates to
+# whole-document here: MAG candidate documents average 1,212 characters
+# (p99 2,692), so essentially every one is a single chunk. The cap is set by
+# nomic's 2048-token ceiling rather than by anything about MAG -- see the
+# CHUNKERS entry in composition/cli.py.
+#
+# ## Why `mag-cand` and not `mag`
+#
+# MAG has 1,872,968 nodes but only 700,244 candidates; the rest are authors
+# (1,104,554), fields of study (59,469) and institutions (8,701), none of
+# which can be a correct answer -- `Evaluator` scores over `candidate_ids`.
+#
+# PRIME could not distinguish "ingest every node" from "ingest the candidate
+# set" because there every node IS a candidate (129,375 of 129,375). So the
+# policy that is consistent across both datasets is the candidate set, and
+# it only looks like a MAG-specific decision. Ingesting the other 1.17M
+# would let nodes that cannot be answers take top-k slots they never
+# competed for on PRIME, which would depress every metric for a reason that
+# has nothing to do with retrieval quality.
+#
+# `data/mag-cand/nodes.jsonl` is that filter; the queries, edges and
+# candidate list are symlinks to `data/mag/`, so there is one copy of each.
+#
+# The graph store is unaffected by this and should still hold all nodes and
+# all 39,802,116 edges when a traversal arm runs -- an author is not a valid
+# answer but is a perfectly good hop between two papers.
+name: mag-wholedoc
+dataset: mag-cand
+split: test-0.1
+chunker: capped-whole-4000
+embeddings: nomic-embed-text
+dimension: 768
+aggregation: max
+agent: dense
+k: 20
+
+# Same asymmetric-model prefixes as every other Nemotron config; see
+# `nomic-wholedoc.yaml` for why they are stated rather than defaulted, and
+# note they differ from the Nemotron configs' `passage: ` / `query: ` pair.
+document_prefix: "search_document: "
+query_prefix: "search_query: "
