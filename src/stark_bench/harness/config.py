@@ -28,6 +28,11 @@ class RunConfig:
     agent: str
     k: int
     raw: str
+    #: The chat model an LLM agent talks to, as the server's own model id.
+    #: Optional: `dense` and `hybrid` make no LLM call at all, so a config
+    #: for either would have nothing to say here. `None` means the CLI's
+    #: `DEFAULT_CHAT_MODEL`.
+    chat_model: str | None = None
 
 
 def load_config(path: Path) -> RunConfig:

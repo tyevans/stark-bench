@@ -4,11 +4,13 @@ Two subcommands, `--ingest` and `--run`, over one `RunConfig`. Ingest and
 retrieval are separate invocations deliberately -- a run this large is worth
 being able to retry independently of the other.
 
-`--ingest-edges` defaults OFF. `dense` and `hybrid` retrieve through
-`ChunkRetriever`, which holds a `ChunkStore` and never touches the graph;
-edges are only needed by traversal agents, which this CLI does not yet run.
-Whichever way it was run is recorded in the report, so a later reader is not
-left guessing whether a number came from a graph-less store.
+`--ingest-edges` defaults OFF. `dense`, `hybrid` and `zero_shot` retrieve
+through `ChunkRetriever`, which holds a `ChunkStore` and never touches the
+graph. `deep` does traverse -- its `neighbors` and `relationships` actions go
+to the graph store -- so a `deep` run against a corpus ingested without edges
+measures an agent that has been given no edges to walk. Whichever way ingest
+was run is recorded in the report, so a later reader is not left guessing
+whether a number came from a graph-less store.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import itertools
 import json
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid5
@@ -30,10 +33,10 @@ from redstring.extraction.chunkers.boundary_preference_chunker import (
     BoundaryPreferenceChunker,
 )
 from redstring.graph.adapters.neo4j import Neo4jGraphStore
+from redstring.llm.adapters.langchain import LangChainLlmProvider
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
-from stark_bench.agents.dense import DenseAgent
-from stark_bench.agents.hybrid import HybridAgent
+from stark_bench.harness.agents import AGENTS, build_agent
 from stark_bench.harness.config import RunConfig, load_config
 from stark_bench.harness.providers import (
     PrecomputedEmbeddingProvider,
@@ -55,7 +58,7 @@ from stark_bench.skb.ingest import ingest
 from stark_bench.tools.redstring_tools import RedstringToolset
 
 if TYPE_CHECKING:
-    from redstring import EmbeddingProvider
+    from redstring import EmbeddingProvider, LlmProvider
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +73,15 @@ NEO4J_AUTH = ("neo4j", "starkbench")
 #: `--embed-concurrency` on the CLI.
 NOMIC_BASE_URL = "http://192.168.1.14:8080/v1/"
 
+#: The chat model behind `zero_shot` and `deep`, on the same endpoint as
+#: `NOMIC_BASE_URL` (llama-swap serves both, embeddings on a separate peer).
+#: Overridable per config via `chat_model:`; a config that omits it gets this.
+DEFAULT_CHAT_MODEL = "qwen3.8-27b-mtp"
+
 CHUNKERS = {
     "whole-document": WholeDocumentChunker,
     "boundary-preference": BoundaryPreferenceChunker,
 }
-AGENTS = {"dense": DenseAgent, "hybrid": HybridAgent}
 LIVE_EMBEDDINGS = {"nomic-embed-text"}
 
 
@@ -108,6 +115,58 @@ def _live_embeddings_for(config: RunConfig) -> EmbeddingProvider:
             dimension=config.dimension,
         )
     raise NotImplementedError(f"no live embedding provider for {config.embeddings!r}")
+
+
+def _llm_for(config: RunConfig) -> LlmProvider:
+    """The chat provider `zero_shot` and `deep` extract through.
+
+    Built unconditionally for a `--run`, including for `dense` and `hybrid`
+    which never call it: construction is pure configuration and does no I/O,
+    and the alternative -- deciding per agent whether the toolset gets an
+    LLM -- is a second place for the agent name to be interpreted.
+    """
+    return LangChainLlmProvider.openai_compatible(
+        base_url=NOMIC_BASE_URL,
+        model=config.chat_model or DEFAULT_CHAT_MODEL,
+    )
+
+
+def toolset_for(
+    *,
+    chunks: object,
+    graph: object,
+    embeddings: EmbeddingProvider,
+    config: RunConfig,
+    tenant_id: TenantId,
+) -> RedstringToolset:
+    """The agent-facing toolset, LLM included.
+
+    A separate function because the LLM is the part that is easy to leave
+    out: a toolset built without one is fully functional for `dense` and
+    `hybrid` and raises only when an LLM agent first calls `extract`, which
+    is several thousand lines of run into a benchmark.
+    """
+    return RedstringToolset(
+        chunks=chunks,
+        graph=graph,
+        embeddings=embeddings,
+        tenant_id=tenant_id,
+        dataset=config.dataset,
+        llm=_llm_for(config),
+        aggregation=config.aggregation,
+    )
+
+
+def report_path(config: RunConfig) -> Path:
+    """Where this config-and-agent's numbers land.
+
+    The agent is in the filename, not only in the file. One config serves all
+    four architectures via `--agent`, so a path keyed on `config.name` alone
+    would have each run overwrite the last -- and the survivor would carry
+    the correct `config_verbatim` for whichever ran last, so nothing in the
+    file would reveal the loss.
+    """
+    return RESULTS_ROOT / f"{config.name}.{config.agent}.json"
 
 
 async def _load_existing_chunk_ids(table: str, tenant_id: TenantId) -> set[str]:
@@ -228,9 +287,6 @@ async def _do_run(config: RunConfig) -> None:
         LIVE_EMBEDDINGS
     ):
         raise NotImplementedError(f"no run wiring for {config.embeddings!r}")
-    if config.agent not in AGENTS:
-        raise NotImplementedError(f"unknown agent {config.agent!r}")
-
     data_dir = _data_dir(config)
     tenant_id = _tenant_for(config)
 
@@ -262,15 +318,14 @@ async def _do_run(config: RunConfig) -> None:
     await chunks.ensure_schema()
     await graph.ensure_schema()
     try:
-        tools = RedstringToolset(
+        tools = toolset_for(
             chunks=chunks,
             graph=graph,
             embeddings=embeddings,
+            config=config,
             tenant_id=tenant_id,
-            dataset=config.dataset,
-            aggregation=config.aggregation,
         )
-        agent = AGENTS[config.agent](k=config.k)
+        agent = build_agent(config)
 
         predictions = await run(agent, queries, tools, k=config.k)
 
@@ -283,7 +338,7 @@ async def _do_run(config: RunConfig) -> None:
         await graph.close()
 
     write_report(
-        RESULTS_ROOT / f"{config.name}.json",
+        report_path(config),
         config=config,
         metrics=metrics,
         cost=cost,
@@ -300,12 +355,22 @@ def main() -> None:
     parser.add_argument("--ingest", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument(
+        "--agent",
+        default=None,
+        choices=sorted(AGENTS),
+        help="Override the config's `agent:` for this invocation, so one "
+        "config file serves all four architectures. The report filename "
+        "carries the agent, so the four runs do not overwrite each other.",
+    )
+    parser.add_argument(
         "--ingest-edges",
         action="store_true",
         default=False,
-        help="Also load edges into the graph store. Off by default: dense "
-        "and hybrid retrieve through ChunkRetriever, which never touches "
-        "the graph, so this costs ~16k transactions for no benefit to them.",
+        help="Also load edges into the graph store. Off by default: dense, "
+        "hybrid and zero_shot retrieve through ChunkRetriever, which never "
+        "touches the graph, so this costs ~16k transactions for no benefit "
+        "to them. The deep agent does traverse -- run it against a corpus "
+        "ingested with this flag, or its traversal actions find nothing.",
     )
     parser.add_argument(
         "--embed-concurrency",
@@ -339,6 +404,8 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.config)
+    if args.agent is not None:
+        config = replace(config, agent=args.agent)
 
     if args.ingest:
         report = asyncio.run(
