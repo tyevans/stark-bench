@@ -50,3 +50,30 @@ def test_rank_order_matters():
         metrics=["mrr"],
     )
     assert first["mrr"] > second["mrr"]
+
+
+class TestEmptyPredictions:
+    """STaRK's evaluator does `min(pred)` per query and cannot take an empty one.
+
+    Left unguarded it dies inside a 3.11 subprocess with
+    `ValueError: min() arg is an empty sequence`, naming no query and no
+    cause, at the end of a run that has already done all its retrieval.
+    """
+
+    def test_one_empty_query_names_that_query(self):
+        with pytest.raises(ValueError, match=r"\b7\b") as caught:
+            score_predictions(
+                {1: [Ranked("6", 1.0)], 7: []},
+                {1: ["6"], 7: ["9"]},
+                candidate_ids=list(range(1, 1000)),
+            )
+        assert "1 of 2" in str(caught.value)
+
+    def test_every_query_empty_says_the_corpus_is_the_suspect(self):
+        with pytest.raises(ValueError, match="2 of 2") as caught:
+            score_predictions(
+                {1: [], 7: []},
+                {1: ["6"], 7: ["9"]},
+                candidate_ids=list(range(1, 1000)),
+            )
+        assert "every query" in str(caught.value)

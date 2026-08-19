@@ -32,7 +32,33 @@ def score_predictions(
     candidate_ids: Sequence[int],
     metrics: Sequence[str] = DEFAULT_METRICS,
 ) -> dict[str, float]:
-    """Run the official evaluator over `predictions`. Raises on any failure."""
+    """Run the official evaluator over `predictions`. Raises on any failure.
+
+    A query that retrieved nothing is rejected here rather than passed on.
+    STaRK's evaluator computes `min(pred) - 1` as the floor score for every
+    unranked candidate, so one empty prediction ends the run with
+    `ValueError: min() arg is an empty sequence` from inside a subprocess --
+    after all the retrieval has been paid for, and naming neither the query
+    nor the cause.
+    """
+    empty = sorted(qid for qid, ranked in predictions.items() if not ranked)
+    if empty:
+        shown = ", ".join(str(qid) for qid in empty[:10])
+        if len(empty) > 10:
+            shown += ", ..."
+        cause = (
+            "every query retrieved nothing, which points at the corpus rather "
+            "than at the agent: check that the config's chunk table holds rows "
+            "for this config's tenant"
+            if len(empty) == len(predictions)
+            else "the agent returned no candidates for these queries"
+        )
+        raise ValueError(
+            f"{len(empty)} of {len(predictions)} queries have no predictions "
+            f"({shown}); {cause}. STaRK's evaluator cannot score an empty "
+            f"prediction list."
+        )
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         preds_path, answers_path, candidates_path, out_path = (

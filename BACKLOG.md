@@ -57,3 +57,30 @@ an agent whose traversal always returns empty -- a low number that looks like
 an architecture finding and is a data finding. Re-ingest with
 `--ingest-edges` before reporting any `deep` number, or state clearly that
 the number is traversal-free.
+
+## B-ADA002-TABLE-1: the `vss-control` corpus is orphaned in the pre-rename `kg_chunks` table
+
+`_table_for` in `src/stark_bench/harness/cli.py` derives a per-embedding-model
+chunk table (`kg_chunks_precomputed_ada002` for `vss-control`). It landed in
+e6411e3 (17:14). The `vss-control` ingest ran at 17:05 and the dense run at
+17:08, both against the hardcoded `kg_chunks` of the time -- so
+`results/vss-control.dense.json` (mrr 0.23057) was measured against a table
+the harness no longer reads.
+
+Today: `kg_chunks` holds 129,375 rows for tenant
+`9ef286ae-92c2-5655-8d1a-47a9ff4d0892`, which is exactly
+`_tenant_for(vss-control)`. `kg_chunks_precomputed_ada002` holds **zero** rows;
+`ensure_schema` creates it empty on every run. Every one of the 280 queries
+therefore retrieves nothing, in *all three* retrieval modes -- this is not a
+hybrid-vs-dense difference, and any future `vss-control` number is a data
+finding until the corpus is back.
+
+Two ways out, both a decision rather than a fix:
+
+- rename the data across (`kg_chunks` also holds 200 rows for a second tenant,
+  `5a7ba3cf-...`, and there is a companion `kg_chunks_terms`), or
+- re-ingest `vss-control`, which is cheap because its embeddings are
+  precomputed -- no endpoint time.
+
+Until then `results/vss-control.dense.json` is not comparable with anything
+produced after e6411e3 and should not be quoted beside a post-rename number.
