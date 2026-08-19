@@ -524,13 +524,13 @@ def main() -> None:
         "--embed-batch",
         type=int,
         default=64,
-        help="Chunk texts per embedding request. This is the throughput knob, "
-        "and it is worth more than concurrency by a wide margin: measured "
-        "against llama.cpp on one connection, 1 text per request gave 298 "
-        "texts/min, 16 gave 790, and 64 gave 1850. Concurrent requests to a "
-        "server running -np 1 queue and execute serially, so raising "
-        "--embed-concurrency alone buys N forward passes of one sequence "
-        "rather than one forward pass of N.",
+        help="Chunk texts per embedding request. Worth about 18%% end to end "
+        "on this corpus -- 1368 nodes/min at 1 text per request against 1612 "
+        "at 64, both at concurrency 8. A standalone probe on ONE SERIAL "
+        "CONNECTION showed 298 against 1850 over the same range, which is a "
+        "misleading comparison and is recorded here so nobody repeats it: "
+        "the ingest is not serial, and pipelining had already recovered most "
+        "of that gap before a single text was batched.",
     )
     parser.add_argument(
         "--limit",

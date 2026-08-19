@@ -122,27 +122,23 @@ async def ingest(
     `embed_batch` is how many chunk texts go into **one** embedding request.
     `concurrency` is how many such requests are in flight at once.
 
-    Getting this wrong is expensive and does not look like anything. An
-    earlier version issued one request *per node* and relied on
+    An earlier version issued one request *per node* and relied on
     `concurrency` alone, which on a corpus averaging 1.06 chunks per node
-    means every request carried roughly one text. Measured against
-    llama.cpp serving Nemotron-3-Embed-1B on one connection:
+    means every request carried roughly one text. Batching is worth about
+    **18%** over that, measured end to end on 3000 nodes at concurrency 8:
+    1368 nodes/min at one text per request, 1612 at sixty-four.
 
-    | texts per request | texts/min |
-    |---|---|
-    | 1 | 298 |
-    | 16 | 790 |
-    | 64 | 1850 |
+    A standalone probe over the same range on a **single serial connection**
+    gave 298 against 1850 texts/min, and that six-fold figure is recorded
+    here only to be disbelieved. The ingest was never serial: eight requests
+    were already in flight, which recovers most of the same ground by hiding
+    round-trip latency. Comparing "no pipelining at all" to "batching plus
+    pipelining" credits the whole gap to batching. Roughly 4.6x of it is
+    concurrency and 1.18x is batching.
 
-    Six times, from batching alone. The reason is that the server was
-    running `-np 1`, so concurrent requests **queue and execute serially** --
-    thirty-two in flight bought thirty-two forward passes of one sequence
-    each, not one forward pass of thirty-two. The GPU reported 92%
-    utilisation throughout, because "a kernel is resident" and "the device
-    is doing useful work" are different measurements.
-
-    So batch first, then add concurrency on top. `vector_for` does no I/O and
-    ignores both.
+    The general form of that mistake is worth more than the number: **the
+    baseline in a speedup claim has to be the thing you are actually
+    replacing.** `vector_for` does no I/O and ignores both knobs.
 
     A batch is bounded by texts, not tokens, and that is safe here for a
     reason worth stating: llama.cpp splits an over-large *request* across
