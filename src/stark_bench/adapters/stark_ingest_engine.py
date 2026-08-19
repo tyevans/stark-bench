@@ -33,7 +33,7 @@ from redstring import (
 )
 from redstring.domain.chunk import StoredChunk, chunk_id
 
-from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for
+from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from redstring import EmbeddingProvider, TenantId
     from redstring.domain.chunk import ChunkId
 
-    from stark_bench.skb.artifacts import SkbEdge, SkbNode
+    from stark_bench.adapters.stark_artifacts import SkbEdge, SkbNode
 
 BATCH = 500
 
@@ -268,7 +268,11 @@ async def ingest(
 
         if vector_for is not None:
             processed = [
-                (node, pieces, [vector_for(node.node_id) for _ in pieces] if wanted else None)
+                (
+                    node,
+                    pieces,
+                    [vector_for(node.node_id) for _ in pieces] if wanted else None,
+                )
                 for node, pieces, wanted in planned
             ]
         else:

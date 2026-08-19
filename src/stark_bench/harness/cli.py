@@ -47,17 +47,17 @@ from stark_bench.adapters.precomputed_embeddings import (
 from stark_bench.adapters.report_file import summarise_cost, write_report
 from stark_bench.application.run_queries import run
 from stark_bench.adapters.stark_scorer import score_predictions
-from stark_bench.skb.artifacts import (
+from stark_bench.adapters.stark_artifacts import (
     read_doc_embeddings,
     read_edges,
     read_nodes,
     read_queries,
     read_query_embeddings,
 )
-from stark_bench.skb.chunkers import WholeDocumentChunker
-from stark_bench.skb.ids import NAMESPACE_STARK
+from stark_bench.adapters.chunkers import WholeDocumentChunker
+from stark_bench.domain.stark_ids import NAMESPACE_STARK
 from stark_bench.application.ingest_corpus import ingest_corpus
-from stark_bench.skb.ingest import ingest
+from stark_bench.adapters.stark_ingest_engine import ingest
 from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
 from stark_bench.adapters.redstring_toolset import RedstringToolset
 

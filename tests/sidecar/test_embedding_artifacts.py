@@ -8,7 +8,10 @@ the JSONL artifacts.
 import numpy as np
 import pytest
 
-from stark_bench.skb.artifacts import read_doc_embeddings, read_query_embeddings
+from stark_bench.adapters.stark_artifacts import (
+    read_doc_embeddings,
+    read_query_embeddings,
+)
 
 
 @pytest.fixture

@@ -13,10 +13,10 @@ from redstring import (
 from uuid import uuid4
 
 from stark_bench.ports import Toolset
-from stark_bench.skb.artifacts import SkbEdge, SkbNode
-from stark_bench.skb.chunkers import WholeDocumentChunker
-from stark_bench.skb.ids import STARK_ID_KEY
-from stark_bench.skb.ingest import ingest
+from stark_bench.adapters.stark_artifacts import SkbEdge, SkbNode
+from stark_bench.adapters.chunkers import WholeDocumentChunker
+from stark_bench.domain.stark_ids import STARK_ID_KEY
+from stark_bench.adapters.stark_ingest_engine import ingest
 from stark_bench.adapters.redstring_toolset import RedstringToolset
 
 

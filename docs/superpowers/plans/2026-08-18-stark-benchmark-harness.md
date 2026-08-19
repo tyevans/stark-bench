@@ -343,7 +343,7 @@ Note the collision test. Redstring's own notes record five separate defects wher
 # tests/skb/test_ids.py
 import pytest
 
-from stark_bench.skb.ids import entity_id_for, node_id_of, STARK_ID_KEY
+from stark_bench.domain.stark_ids import entity_id_for, node_id_of, STARK_ID_KEY
 
 
 def test_the_same_node_maps_to_the_same_id_every_time():
@@ -517,7 +517,7 @@ The last edge is a self-loop. Redstring rejects self-loops at validation, so it 
 # tests/skb/test_artifacts.py
 from pathlib import Path
 
-from stark_bench.skb.artifacts import read_edges, read_nodes, read_queries
+from stark_bench.adapters.stark_artifacts import read_edges, read_nodes, read_queries
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "tiny_skb"
 
@@ -657,10 +657,10 @@ import pytest
 from redstring import FakeEmbeddingProvider, InMemoryChunkStore, InMemoryGraphStore, TenantId
 from uuid import uuid4
 
-from stark_bench.skb.artifacts import SkbEdge, SkbNode
-from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for
-from stark_bench.skb.ingest import ingest
-from stark_bench.skb.chunkers import WholeDocumentChunker
+from stark_bench.adapters.stark_artifacts import SkbEdge, SkbNode
+from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for
+from stark_bench.adapters.stark_ingest_engine import ingest
+from stark_bench.adapters.chunkers import WholeDocumentChunker
 
 
 @pytest.fixture
@@ -818,14 +818,14 @@ from redstring import (
 )
 from redstring.domain.chunk import StoredChunk, chunk_id
 
-from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for
+from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from redstring import EmbeddingProvider, TenantId
 
-    from stark_bench.skb.artifacts import SkbEdge, SkbNode
+    from stark_bench.adapters.stark_artifacts import SkbEdge, SkbNode
 
 BATCH = 500
 
@@ -1341,9 +1341,9 @@ from redstring import FakeEmbeddingProvider, InMemoryChunkStore, InMemoryGraphSt
 from uuid import uuid4
 
 from stark_bench.ports import Toolset
-from stark_bench.skb.artifacts import SkbEdge, SkbNode
-from stark_bench.skb.chunkers import WholeDocumentChunker
-from stark_bench.skb.ingest import ingest
+from stark_bench.adapters.stark_artifacts import SkbEdge, SkbNode
+from stark_bench.adapters.chunkers import WholeDocumentChunker
+from stark_bench.adapters.stark_ingest_engine import ingest
 from stark_bench.tools.redstring_tools import RedstringToolset
 
 
@@ -1429,7 +1429,7 @@ from redstring import ChunkRetriever, RetrievalMode
 
 from stark_bench.harness.aggregate import aggregate
 from stark_bench.ports import Ranked, ToolCall
-from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for, node_id_of
+from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for, node_id_of
 
 if TYPE_CHECKING:
     from redstring import EmbeddingProvider, TenantId
@@ -1795,9 +1795,9 @@ from redstring import FakeEmbeddingProvider, InMemoryChunkStore, InMemoryGraphSt
 from stark_bench.agents.hybrid import HybridAgent
 from stark_bench.harness.runner import run
 from stark_bench.harness.scoring import score_predictions
-from stark_bench.skb.artifacts import read_edges, read_nodes, read_queries
-from stark_bench.skb.chunkers import WholeDocumentChunker
-from stark_bench.skb.ingest import ingest
+from stark_bench.adapters.stark_artifacts import read_edges, read_nodes, read_queries
+from stark_bench.adapters.chunkers import WholeDocumentChunker
+from stark_bench.adapters.stark_ingest_engine import ingest
 from stark_bench.tools.redstring_tools import RedstringToolset
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "tiny_skb"
@@ -2009,7 +2009,7 @@ import json
 
 import pytest
 
-from stark_bench.skb.artifacts import read_edges, read_nodes, read_queries
+from stark_bench.adapters.stark_artifacts import read_edges, read_nodes, read_queries
 
 
 @pytest.fixture

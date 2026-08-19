@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from stark_bench.skb.artifacts import read_edges, read_nodes, read_queries
+from stark_bench.adapters.stark_artifacts import read_edges, read_nodes, read_queries
 
 
 @pytest.fixture

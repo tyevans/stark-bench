@@ -1,6 +1,6 @@
 import pytest
 
-from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for, node_id_of
+from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for, node_id_of
 
 
 def test_the_same_node_maps_to_the_same_id_every_time():
