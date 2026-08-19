@@ -18,6 +18,9 @@ from pathlib import Path
 
 RESULTS = Path(__file__).resolve().parent.parent / "results"
 
+EXPECTED_NODES = 129375
+"""Nodes in prime/test-0.1. A report below this is not describing this corpus."""
+
 METRICS = ("mrr", "hit@1", "hit@5", "recall@20")
 AGENTS = ("dense", "hybrid", "zero_shot", "deep")
 
@@ -43,13 +46,32 @@ def load() -> list[dict]:
             continue
         data = json.loads(path.read_text(encoding="utf-8"))
         rows.append({"config": config, "agent": agent, "data": data, "path": path})
-    rows.sort(key=lambda r: (r["config"], AGENTS.index(r["agent"]) if r["agent"] in AGENTS else 99))
+    rows.sort(
+        key=lambda r: (
+            r["config"],
+            AGENTS.index(r["agent"]) if r["agent"] in AGENTS else 99,
+        )
+    )
     return rows
 
 
 def render(rows: list[dict]) -> str:
-    out = ["| config | agent | " + " | ".join(METRICS) + " | tool/q | llm/q | run s | chunks/node | ingest s |"]
-    out.append("|" + "---|" * (5 + len(METRICS)))
+    # Derived from one list, because the header and its separator are two
+    # things that must agree and were written twice: the header had eleven
+    # columns and the separator emitted `5 + len(METRICS)` = nine, so every
+    # rendered table was malformed.
+    columns = [
+        "config",
+        "agent",
+        *METRICS,
+        "tool/q",
+        "llm/q",
+        "run s",
+        "chunks/node",
+        "ingest s",
+    ]
+    out = ["| " + " | ".join(columns) + " |"]
+    out.append("|" + "---|" * len(columns))
     for row in rows:
         d = row["data"]
         metrics = d.get("metrics") or {}
@@ -86,14 +108,32 @@ def check(rows: list[dict]) -> list[str]:
             problems.append(f"{where}: no metrics at all")
             continue
         if all(v == 0 for v in metrics.values()):
-            problems.append(f"{where}: every metric is zero -- retrieval returned nothing")
-        if not d.get("ingest"):
+            problems.append(
+                f"{where}: every metric is zero -- retrieval returned nothing"
+            )
+        ingest = d.get("ingest") or {}
+        if not ingest:
             problems.append(f"{where}: empty ingest block -- cost column is unbacked")
+        elif ingest.get("nodes") and ingest["nodes"] < EXPECTED_NODES:
+            # A report from a *different, smaller* run -- a --limit probe, or
+            # an ingest that died. The config check in resume_is_safe.py
+            # cannot see this: a 3000-node probe uses the same config file as
+            # the full run, so the recorded text matches byte for byte.
+            #
+            # Observed 2026-08-19: this table published chunks/node 1.000 and
+            # ingest 207.7s for native-wholedoc from a 3000-node probe, while
+            # the real corpus held 136,803 chunks over 129,375 nodes.
+            problems.append(
+                f"{where}: ingest report describes {ingest['nodes']} nodes, "
+                f"expected {EXPECTED_NODES} -- stale report from a smaller run, "
+                f"so chunks/node and ingest s describe a different corpus"
+            )
         if d.get("queries") in (0, None):
             problems.append(f"{where}: scored {d.get('queries')!r} queries")
-        ingest = d.get("ingest") or {}
         if ingest and not ingest.get("edges_ingested") and row["agent"] == "deep":
-            problems.append(f"{where}: deep agent on an edgeless corpus (B-DEEP-EDGES-1)")
+            problems.append(
+                f"{where}: deep agent on an edgeless corpus (B-DEEP-EDGES-1)"
+            )
 
         # A report outlives the config that produced it, and the file name
         # says nothing about which era it belongs to. Two stale
