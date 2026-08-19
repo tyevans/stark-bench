@@ -16,6 +16,8 @@ Two ordering constraints come from the ports themselves:
 
 from __future__ import annotations
 
+import asyncio
+import itertools
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -80,6 +82,7 @@ async def ingest(
     chunker,
     embeddings: EmbeddingProvider | None = None,
     vector_for: Callable[[str], list[float]] | None = None,
+    concurrency: int = 1,
 ) -> IngestReport:
     """Load nodes (and their chunks) then edges, in that order.
 
@@ -92,9 +95,18 @@ async def ingest(
       raise on -- this function does not catch it.
 
     Exactly one must be given; both or neither is a caller error.
+
+    `concurrency` bounds how many nodes are chunked-and-embedded at once. It
+    only matters for the `embeddings` branch -- a live endpoint is shared
+    infrastructure, and processing nodes one at a time against it wastes the
+    round trip latency for no reason. `vector_for` does no I/O, so it always
+    runs one node at a time regardless of this value; raising it there would
+    only reorder writes into batches without buying anything.
     """
     if (embeddings is None) == (vector_for is None):
         raise ValueError("ingest needs exactly one of embeddings or vector_for")
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least 1")
     observed_at = datetime.now(UTC)
     known: set[str] = set()
     node_count = chunk_count = 0
@@ -102,36 +114,48 @@ async def ingest(
     batch: list[Entity] = []
     chunk_batch: list[StoredChunk] = []
 
-    for node in nodes:
-        batch.append(
-            _entity(node, dataset=dataset, tenant_id=tenant_id, observed_at=observed_at)
-        )
-        known.add(node.node_id)
-        node_count += 1
-
-        source_id = SourceId(f"{dataset}:{node.node_id}")
+    async def _process(node: SkbNode) -> tuple[SkbNode, list, list]:
         result = chunker.chunk(node.document)
         if vector_for is not None:
             vectors = [vector_for(node.node_id) for _ in result.chunks]
         else:
             texts = [c.text for c in result.chunks]
-            vectors = await embeddings.embed(texts)
-        for piece, vector in zip(result.chunks, vectors, strict=True):
-            chunk_batch.append(
-                StoredChunk(
-                    id=chunk_id(source_id, piece.text),
-                    tenant_id=tenant_id,
-                    source_id=source_id,
-                    text=piece.text,
-                    chunk_index=piece.chunk_index,
-                    start_char=piece.start_char,
-                    end_char=piece.end_char,
-                    entity_ids=[entity_id_for(dataset, node.node_id)],
-                    metadata={STARK_ID_KEY: node.node_id},
-                    embedding=list(vector),
+            vectors = await embeddings.embed(texts) if texts else []
+        return node, result.chunks, vectors
+
+    group_size = concurrency if embeddings is not None else 1
+    node_iter = iter(nodes)
+    while True:
+        group = list(itertools.islice(node_iter, group_size))
+        if not group:
+            break
+        processed = await asyncio.gather(*(_process(node) for node in group))
+        for node, pieces, vectors in processed:
+            batch.append(
+                _entity(
+                    node, dataset=dataset, tenant_id=tenant_id, observed_at=observed_at
                 )
             )
-            chunk_count += 1
+            known.add(node.node_id)
+            node_count += 1
+
+            source_id = SourceId(f"{dataset}:{node.node_id}")
+            for piece, vector in zip(pieces, vectors, strict=True):
+                chunk_batch.append(
+                    StoredChunk(
+                        id=chunk_id(source_id, piece.text),
+                        tenant_id=tenant_id,
+                        source_id=source_id,
+                        text=piece.text,
+                        chunk_index=piece.chunk_index,
+                        start_char=piece.start_char,
+                        end_char=piece.end_char,
+                        entity_ids=[entity_id_for(dataset, node.node_id)],
+                        metadata={STARK_ID_KEY: node.node_id},
+                        embedding=list(vector),
+                    )
+                )
+                chunk_count += 1
 
         if len(batch) >= BATCH:
             await graph.upsert_entities(batch)

@@ -15,15 +15,21 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import itertools
 import json
 import logging
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid5
 
 from redstring import TenantId
 from redstring.chunks.adapters.postgres import PostgresChunkStore
+from redstring.extraction.chunkers.boundary_preference_chunker import (
+    BoundaryPreferenceChunker,
+)
 from redstring.graph.adapters.neo4j import Neo4jGraphStore
+from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
 from stark_bench.agents.dense import DenseAgent
 from stark_bench.agents.hybrid import HybridAgent
@@ -47,6 +53,9 @@ from stark_bench.skb.ids import NAMESPACE_STARK
 from stark_bench.skb.ingest import ingest
 from stark_bench.tools.redstring_tools import RedstringToolset
 
+if TYPE_CHECKING:
+    from redstring import EmbeddingProvider
+
 logger = logging.getLogger(__name__)
 
 DATA_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "data"
@@ -56,8 +65,16 @@ POSTGRES_DSN = "postgresql://stark:stark@localhost:55432/stark"
 NEO4J_URI = "bolt://localhost:57687"
 NEO4J_AUTH = ("neo4j", "starkbench")
 
-CHUNKERS = {"whole-document": WholeDocumentChunker}
+#: The endpoint backing `nomic-embed-text`. Shared infrastructure -- see
+#: `--embed-concurrency` on the CLI.
+NOMIC_BASE_URL = "http://192.168.1.14:8080/v1/"
+
+CHUNKERS = {
+    "whole-document": WholeDocumentChunker,
+    "boundary-preference": BoundaryPreferenceChunker,
+}
 AGENTS = {"dense": DenseAgent, "hybrid": HybridAgent}
+LIVE_EMBEDDINGS = {"nomic-embed-text"}
 
 
 def _tenant_for(config: RunConfig) -> TenantId:
@@ -69,11 +86,40 @@ def _data_dir(config: RunConfig) -> Path:
     return DATA_ROOT / config.dataset
 
 
-async def _do_ingest(config: RunConfig, *, ingest_edges: bool) -> dict[str, object]:
-    if config.embeddings != "precomputed-ada002":
-        raise NotImplementedError(
-            f"ingest only wires precomputed-ada002 today, got {config.embeddings!r}"
+def _table_for(config: RunConfig) -> str:
+    """One chunk-store table per embedding model, never shared.
+
+    ADR 0002 records that a different embedding model means a new store.
+    Dimension differs here anyway (1536 vs 768), but width alone would not
+    protect against a second same-width model landing in the same table
+    later -- the dimension guard cannot see a model-identity mismatch, so
+    the table name is keyed on the embeddings identifier by construction.
+    """
+    slug = config.embeddings.replace("-", "_")
+    return f"kg_chunks_{slug}"
+
+
+def _live_embeddings_for(config: RunConfig) -> EmbeddingProvider:
+    if config.embeddings == "nomic-embed-text":
+        return LangChainEmbeddingProvider.openai_compatible(
+            base_url=NOMIC_BASE_URL,
+            model="nomic-embed-text",
+            dimension=config.dimension,
         )
+    raise NotImplementedError(f"no live embedding provider for {config.embeddings!r}")
+
+
+async def _do_ingest(
+    config: RunConfig,
+    *,
+    ingest_edges: bool,
+    embed_concurrency: int = 4,
+    limit: int | None = None,
+) -> dict[str, object]:
+    if config.embeddings != "precomputed-ada002" and config.embeddings not in (
+        LIVE_EMBEDDINGS
+    ):
+        raise NotImplementedError(f"no ingest wiring for {config.embeddings!r}")
     if config.chunker not in CHUNKERS:
         raise NotImplementedError(f"unknown chunker {config.chunker!r}")
 
@@ -81,16 +127,33 @@ async def _do_ingest(config: RunConfig, *, ingest_edges: bool) -> dict[str, obje
     tenant_id = _tenant_for(config)
 
     started = time.monotonic()
-    logger.info("loading precomputed doc embeddings from %s", data_dir / "doc_emb.npz")
-    doc_embeddings = read_doc_embeddings(data_dir / "doc_emb.npz")
-    vector_for = node_vector_lookup(doc_embeddings)
 
-    chunks = await PostgresChunkStore.connect(POSTGRES_DSN, dimension=config.dimension)
+    vector_for = None
+    embeddings = None
+    if config.embeddings == "precomputed-ada002":
+        logger.info(
+            "loading precomputed doc embeddings from %s", data_dir / "doc_emb.npz"
+        )
+        doc_embeddings = read_doc_embeddings(data_dir / "doc_emb.npz")
+        vector_for = node_vector_lookup(doc_embeddings)
+    else:
+        logger.info(
+            "embedding live against %r (concurrency=%d)",
+            config.embeddings,
+            embed_concurrency,
+        )
+        embeddings = _live_embeddings_for(config)
+
+    chunks = await PostgresChunkStore.connect(
+        POSTGRES_DSN, table=_table_for(config), dimension=config.dimension
+    )
     graph = Neo4jGraphStore.connect(NEO4J_URI, auth=NEO4J_AUTH)
     await chunks.ensure_schema()
     await graph.ensure_schema()
     try:
         nodes = read_nodes(data_dir / "nodes.jsonl")
+        if limit is not None:
+            nodes = itertools.islice(nodes, limit)
         edges = read_edges(data_dir / "edges.jsonl") if ingest_edges else iter(())
 
         report = await ingest(
@@ -102,6 +165,8 @@ async def _do_ingest(config: RunConfig, *, ingest_edges: bool) -> dict[str, obje
             chunks=chunks,
             chunker=CHUNKERS[config.chunker](),
             vector_for=vector_for,
+            embeddings=embeddings,
+            concurrency=embed_concurrency if embeddings is not None else 1,
         )
     finally:
         await chunks.close()
@@ -119,10 +184,10 @@ async def _do_ingest(config: RunConfig, *, ingest_edges: bool) -> dict[str, obje
 
 
 async def _do_run(config: RunConfig) -> None:
-    if config.embeddings != "precomputed-ada002":
-        raise NotImplementedError(
-            f"run only wires precomputed-ada002 today, got {config.embeddings!r}"
-        )
+    if config.embeddings != "precomputed-ada002" and config.embeddings not in (
+        LIVE_EMBEDDINGS
+    ):
+        raise NotImplementedError(f"no run wiring for {config.embeddings!r}")
     if config.agent not in AGENTS:
         raise NotImplementedError(f"unknown agent {config.agent!r}")
 
@@ -133,20 +198,26 @@ async def _do_run(config: RunConfig) -> None:
     queries = [q for q, _ in pairs]
     answers = {q.query_id: a for q, a in pairs}
 
-    logger.info(
-        "loading precomputed query embeddings from %s", data_dir / "query_emb.npz"
-    )
-    query_vectors_by_id = read_query_embeddings(data_dir / "query_emb.npz")
-    vectors_by_text = {
-        q.text: query_vectors_by_id[str(q.query_id)]
-        for q in queries
-        if str(q.query_id) in query_vectors_by_id
-    }
-    embeddings = PrecomputedEmbeddingProvider(
-        vectors_by_text, dimension=config.dimension
-    )
+    if config.embeddings == "precomputed-ada002":
+        logger.info(
+            "loading precomputed query embeddings from %s", data_dir / "query_emb.npz"
+        )
+        query_vectors_by_id = read_query_embeddings(data_dir / "query_emb.npz")
+        vectors_by_text = {
+            q.text: query_vectors_by_id[str(q.query_id)]
+            for q in queries
+            if str(q.query_id) in query_vectors_by_id
+        }
+        embeddings = PrecomputedEmbeddingProvider(
+            vectors_by_text, dimension=config.dimension
+        )
+    else:
+        logger.info("embedding queries live against %r", config.embeddings)
+        embeddings = _live_embeddings_for(config)
 
-    chunks = await PostgresChunkStore.connect(POSTGRES_DSN, dimension=config.dimension)
+    chunks = await PostgresChunkStore.connect(
+        POSTGRES_DSN, table=_table_for(config), dimension=config.dimension
+    )
     graph = Neo4jGraphStore.connect(NEO4J_URI, auth=NEO4J_AUTH)
     await chunks.ensure_schema()
     await graph.ensure_schema()
@@ -196,12 +267,36 @@ def main() -> None:
         "and hybrid retrieve through ChunkRetriever, which never touches "
         "the graph, so this costs ~16k transactions for no benefit to them.",
     )
+    parser.add_argument(
+        "--embed-concurrency",
+        type=int,
+        default=4,
+        help="Nodes chunked-and-embedded at once, for a config with live "
+        "embeddings. The inference endpoint is shared -- do not raise this "
+        "without confirming spare capacity with whoever else uses it. "
+        "Ignored for precomputed-embeddings configs, which do no live I/O.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Ingest only the first N nodes. For calibrating throughput "
+        "against a live endpoint before committing to a full run -- never "
+        "use it for a config whose numbers get reported.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
 
     if args.ingest:
-        report = asyncio.run(_do_ingest(config, ingest_edges=args.ingest_edges))
+        report = asyncio.run(
+            _do_ingest(
+                config,
+                ingest_edges=args.ingest_edges,
+                embed_concurrency=args.embed_concurrency,
+                limit=args.limit,
+            )
+        )
         RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
         (RESULTS_ROOT / f"{config.name}.ingest.json").write_text(
             json.dumps(report, indent=2)
