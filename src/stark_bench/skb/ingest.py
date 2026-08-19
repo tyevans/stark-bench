@@ -37,8 +37,10 @@ from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
+    from collections.abc import Set as AbstractSet
 
     from redstring import EmbeddingProvider, TenantId
+    from redstring.domain.chunk import ChunkId
 
     from stark_bench.skb.artifacts import SkbEdge, SkbNode
 
@@ -51,6 +53,7 @@ class IngestReport:
     edges: int
     self_loops_dropped: int
     chunks: int
+    skipped: int = 0
 
 
 def _entity(
@@ -83,6 +86,8 @@ async def ingest(
     embeddings: EmbeddingProvider | None = None,
     vector_for: Callable[[str], list[float]] | None = None,
     concurrency: int = 1,
+    existing_chunk_ids: AbstractSet[ChunkId] = frozenset(),
+    resume: bool = True,
 ) -> IngestReport:
     """Load nodes (and their chunks) then edges, in that order.
 
@@ -102,6 +107,25 @@ async def ingest(
     round trip latency for no reason. `vector_for` does no I/O, so it always
     runs one node at a time regardless of this value; raising it there would
     only reorder writes into batches without buying anything.
+
+    ## Resuming an interrupted ingest
+
+    `existing_chunk_ids` is the set of chunk ids this tenant's store already
+    holds, loaded by the caller in one query up front -- this function never
+    queries for it and never issues one lookup per node. A node is skipped
+    (no chunking cost paid twice, no embedding call, no chunk write) only
+    when **every** chunk it would produce already has an id in that set.
+    Chunk ids are content-addressed over `(source_id, text)`
+    (`redstring.domain.chunk.chunk_id`), so a node whose document text
+    changed produces a different id, is not found in the set, and is
+    re-embedded -- the skip is keyed on content, never on the node id alone.
+
+    The node's entity is always written, skip or not: that upsert is a cheap,
+    idempotent no-op and doing it unconditionally means a node's presence in
+    the graph is never made to depend on this optimisation.
+
+    `resume=False` ignores `existing_chunk_ids` entirely and re-embeds every
+    node, for a deliberate full re-ingest.
     """
     if (embeddings is None) == (vector_for is None):
         raise ValueError("ingest needs exactly one of embeddings or vector_for")
@@ -109,13 +133,19 @@ async def ingest(
         raise ValueError("concurrency must be at least 1")
     observed_at = datetime.now(UTC)
     known: set[str] = set()
-    node_count = chunk_count = 0
+    node_count = chunk_count = skipped_count = 0
 
     batch: list[Entity] = []
     chunk_batch: list[StoredChunk] = []
 
-    async def _process(node: SkbNode) -> tuple[SkbNode, list, list]:
+    async def _process(
+        node: SkbNode,
+    ) -> tuple[SkbNode, list, list | None]:
         result = chunker.chunk(node.document)
+        source_id = SourceId(f"{dataset}:{node.node_id}")
+        ids = [chunk_id(source_id, piece.text) for piece in result.chunks]
+        if resume and ids and all(i in existing_chunk_ids for i in ids):
+            return node, result.chunks, None
         if vector_for is not None:
             vectors = [vector_for(node.node_id) for _ in result.chunks]
         else:
@@ -138,6 +168,10 @@ async def ingest(
             )
             known.add(node.node_id)
             node_count += 1
+
+            if vectors is None:
+                skipped_count += len(pieces)
+                continue
 
             source_id = SourceId(f"{dataset}:{node.node_id}")
             for piece, vector in zip(pieces, vectors, strict=True):
@@ -198,4 +232,5 @@ async def ingest(
         edges=edge_count,
         self_loops_dropped=dropped,
         chunks=chunk_count,
+        skipped=skipped_count,
     )

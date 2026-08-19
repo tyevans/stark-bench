@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid5
 
+import asyncpg
 from redstring import TenantId
 from redstring.chunks.adapters.postgres import PostgresChunkStore
 from redstring.extraction.chunkers.boundary_preference_chunker import (
@@ -109,12 +110,33 @@ def _live_embeddings_for(config: RunConfig) -> EmbeddingProvider:
     raise NotImplementedError(f"no live embedding provider for {config.embeddings!r}")
 
 
+async def _load_existing_chunk_ids(table: str, tenant_id: TenantId) -> set[str]:
+    """This tenant's chunk ids, in one query -- the resume skip's input.
+
+    A per-node lookup would be ~129k round trips against `PostgresChunkStore`,
+    which has no bulk-id method on the `ChunkStore` port. Querying the table
+    directly, once, up front, is what keeps the skip check in-memory
+    thereafter. `table` is the same value `_table_for` derives -- a slug of
+    `config.embeddings`, never caller input -- so it is safe to interpolate.
+    """
+    connection = await asyncpg.connect(POSTGRES_DSN)
+    try:
+        rows = await connection.fetch(
+            f"SELECT id FROM {table} WHERE tenant_id = $1",  # nosec B608
+            tenant_id,
+        )
+    finally:
+        await connection.close()
+    return {str(row["id"]) for row in rows}
+
+
 async def _do_ingest(
     config: RunConfig,
     *,
     ingest_edges: bool,
     embed_concurrency: int = 4,
     limit: int | None = None,
+    resume: bool = True,
 ) -> dict[str, object]:
     if config.embeddings != "precomputed-ada002" and config.embeddings not in (
         LIVE_EMBEDDINGS
@@ -144,13 +166,26 @@ async def _do_ingest(
         )
         embeddings = _live_embeddings_for(config)
 
+    table = _table_for(config)
     chunks = await PostgresChunkStore.connect(
-        POSTGRES_DSN, table=_table_for(config), dimension=config.dimension
+        POSTGRES_DSN, table=table, dimension=config.dimension
     )
     graph = Neo4jGraphStore.connect(NEO4J_URI, auth=NEO4J_AUTH)
     await chunks.ensure_schema()
     await graph.ensure_schema()
     try:
+        existing_chunk_ids: set[str] = set()
+        existing_ids_load_s = 0.0
+        if resume:
+            load_started = time.monotonic()
+            existing_chunk_ids = await _load_existing_chunk_ids(table, tenant_id)
+            existing_ids_load_s = time.monotonic() - load_started
+            logger.info(
+                "loaded %d existing chunk ids for tenant in %.2fs (resume)",
+                len(existing_chunk_ids),
+                existing_ids_load_s,
+            )
+
         nodes = read_nodes(data_dir / "nodes.jsonl")
         if limit is not None:
             nodes = itertools.islice(nodes, limit)
@@ -167,6 +202,8 @@ async def _do_ingest(
             vector_for=vector_for,
             embeddings=embeddings,
             concurrency=embed_concurrency if embeddings is not None else 1,
+            existing_chunk_ids=existing_chunk_ids,
+            resume=resume,
         )
     finally:
         await chunks.close()
@@ -176,9 +213,12 @@ async def _do_ingest(
     return {
         "nodes": report.nodes,
         "chunks": report.chunks,
+        "skipped": report.skipped,
         "edges": report.edges,
         "self_loops_dropped": report.self_loops_dropped,
         "edges_ingested": ingest_edges,
+        "resume": resume,
+        "existing_ids_load_s": existing_ids_load_s,
         "wall_time_s": elapsed,
     }
 
@@ -284,6 +324,18 @@ def main() -> None:
         "against a live endpoint before committing to a full run -- never "
         "use it for a config whose numbers get reported.",
     )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        default=False,
+        help="Ingest is resumable by default: a node whose chunk already "
+        "exists in the store (same source and text -- an unchanged node) is "
+        "skipped rather than re-embedded, so an interrupted ingest restarts "
+        "cheaply instead of re-embedding from zero. Pass --no-resume to "
+        "force a full re-ingest of every node regardless of what the store "
+        "already holds -- the escape hatch, because skipping work is "
+        "exactly the kind of optimisation that can hide a bug.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -295,6 +347,7 @@ def main() -> None:
                 ingest_edges=args.ingest_edges,
                 embed_concurrency=args.embed_concurrency,
                 limit=args.limit,
+                resume=not args.no_resume,
             )
         )
         RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
