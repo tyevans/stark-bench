@@ -178,17 +178,27 @@ embedder is loaded and serving them from `PrecomputedEmbeddingProvider`
 covers `dense` and `hybrid` exactly, and covers neither LLM agent at all,
 because neither one ever embeds the original query text.
 
-Three real options, in the order they should be tried:
+**Resolved in approach, not yet run.** The embedding model is not what
+fills the VRAM -- it is ~700MB at Q4_K_M. The KV cache is: 32 slots at 4096
+tokens each. Dropping the embedding server to `-np 1` with a 4096-token
+context shrinks that cache by 32x and both models fit, with no swapping, no
+weaker chat model, and no loss of comparability against the `dense` and
+`hybrid` arms.
 
-1. **A smaller chat model.** `chat_model:` is already per-config, so an arm
-   can name a model that co-resides with a 700MB Q4 1B embedder. This costs
-   comparability against the `dense`/`hybrid` arms only in the LLM's
-   quality, which is the variable those arms do not have anyway -- but it
-   must be stated in `RESULTS.md`, because "deep beat dense" and "deep beat
-   dense while using a weaker LLM" are different claims.
-2. **A second endpoint** serving embeddings, so the chat peer never unloads.
-3. **Accepting the swap cost** for a reduced query subset, which changes the
-   split and makes the number incomparable to every other row. Least good.
+It costs nothing for this workload, which is the part worth noticing: the
+agent loop embeds one short query at a time and waits for it, so 31 of the
+32 slots were never going to be used during an LLM run. High concurrency is
+an *ingest* setting. The two phases want opposite server configurations, and
+the plan is now to run them as two phases:
+
+  - ingest and the `dense`/`hybrid` scoring at `-np 32`, embeddings alone;
+  - the `zero_shot`/`deep` scoring at `-np 1`, both models resident.
+
+Rejected, and worth recording so they are not retried: precomputing the 280
+query vectors covers neither LLM agent, because neither embeds the original
+query text; a smaller chat model would have made "deep beat dense" mean
+something different from what it says; and accepting the swap cost on a
+reduced subset would have produced a number comparable to nothing else here.
 
 Nothing here is blocked on it: the control plus three arms times
 `dense`/`hybrid` is seven of the numbers, and none of them make an LLM call.
