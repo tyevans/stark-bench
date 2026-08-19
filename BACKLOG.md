@@ -158,3 +158,37 @@ does not reproduce within cosine 0.99 (per redstring's port docs, vectors
 reproduce in direction, not bit-for-bit). That catches a model swap, a
 quantisation change, and a pooling-flag change, none of which any name
 comparison can see.
+
+## B-CORESIDENCE-1 — the LLM arms need two models resident at once
+
+`zero_shot` and `deep` cannot run against the current endpoint. Both search
+with text the LLM produced moments earlier -- `zero_shot` rewrites the query
+(`agents/zero_shot.py:42-51`) and `deep` searches on `step.argument` chosen
+per round (`agents/deep.py:101,127`) -- so the embedding model has to answer
+*during* the agent loop, interleaved with chat completions.
+
+Nemotron-3-Embed-1B does not fit in VRAM beside `qwen3.8-27b-mtp`, so
+llama-swap unloads one to serve the other. `deep` is budgeted at 8 LLM calls
+and 8 tool calls per query, which is up to 16 alternating swaps per query,
+280 queries, three configs. That is not a slow run, it is a non-starter.
+
+The obvious workaround does not work, and it is worth writing down so nobody
+spends an afternoon on it: precomputing the 280 query vectors while the
+embedder is loaded and serving them from `PrecomputedEmbeddingProvider`
+covers `dense` and `hybrid` exactly, and covers neither LLM agent at all,
+because neither one ever embeds the original query text.
+
+Three real options, in the order they should be tried:
+
+1. **A smaller chat model.** `chat_model:` is already per-config, so an arm
+   can name a model that co-resides with a 700MB Q4 1B embedder. This costs
+   comparability against the `dense`/`hybrid` arms only in the LLM's
+   quality, which is the variable those arms do not have anyway -- but it
+   must be stated in `RESULTS.md`, because "deep beat dense" and "deep beat
+   dense while using a weaker LLM" are different claims.
+2. **A second endpoint** serving embeddings, so the chat peer never unloads.
+3. **Accepting the swap cost** for a reduced query subset, which changes the
+   split and makes the number incomparable to every other row. Least good.
+
+Nothing here is blocked on it: the control plus three arms times
+`dense`/`hybrid` is seven of the numbers, and none of them make an LLM call.
