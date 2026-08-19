@@ -1,0 +1,46 @@
+# The relational-text cell: does putting neighbours in the document help?
+#
+# Every other config embeds `get_doc_info(node_id, add_rel=False)` -- name,
+# type, source and details, and nothing about what the node is connected to.
+# STaRK's own `multi_vss` and LLM-reranker baselines use `add_rel=True`, which
+# appends a `- relations:` block naming every neighbour grouped by relation
+# type. PRIME's queries name related entities explicitly ("a drug that targets
+# X and is indicated for Y"), so with relations included the answer's own
+# document contains those names verbatim. Without them, the text the queries
+# were written against is simply absent from the index.
+#
+# That makes this the single-variable test of the largest suspected gap.
+# Chunker and model are held at `native-wholedoc`'s values, so
+# `native-rel-whole` minus `native-wholedoc` is the contribution of relational
+# text and nothing else.
+#
+# Corpus size, measured rather than assumed: 129,375 nodes, mean 1,761 chars
+# against the base corpus's 1,204, 228M chars total against 155M -- 1.47x, not
+# the 3.4x a sample of the first 7,548 nodes suggested. Those leading nodes are
+# gene/protein records with long summaries and are not representative.
+# 8.1% exceed the 5000-char cap and are split rather than truncated.
+#
+# Reads `data/prime-rel/`, whose nodes.jsonl is the add_rel export; queries,
+# candidates and edges are symlinks to `data/prime/` so there is exactly one
+# copy of each and no chance of the two datasets disagreeing about them.
+#
+# Shares the chunk table with the other native configs -- same model, same
+# dimension, same prefixes, so ADR 0002 and 0043 are satisfied -- and is
+# isolated by tenant_id, which is derived from `name`.
+name: native-rel-whole
+dataset: prime-rel
+split: test-0.1
+chunker: capped-whole-5000
+embeddings: Nemotron-3-Embed-1B
+dimension: 2048
+aggregation: max
+agent: dense
+k: 20
+
+# Nemotron-3-Embed-1B is asymmetric: it was trained with these exact task
+# prefixes and expects them at inference. Omitting them is silent -- the
+# vectors are well-formed and score plausibly, just worse than the model can
+# do -- which is why every config states them rather than relying on a
+# default.
+document_prefix: "passage: "
+query_prefix: "query: "

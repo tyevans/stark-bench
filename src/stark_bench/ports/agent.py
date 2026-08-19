@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from stark_bench.domain import Query, Ranked, ToolCall
+    from stark_bench.domain import Passage, Query, Ranked, ToolCall
 
 
 @runtime_checkable
@@ -36,6 +36,9 @@ class Toolset(Protocol):
     async def search_chunks(
         self, text: str, *, k: int = 10, mode: str = "hybrid"
     ) -> list[Ranked]: ...
+    async def search_passages(
+        self, text: str, *, k: int = 10, mode: str = "hybrid"
+    ) -> list[Passage]: ...
     async def get_node(self, node_id: str) -> dict[str, object] | None: ...
     async def neighbors(self, node_id: str, *, depth: int = 1) -> list[str]: ...
     async def get_relationships(self, node_id: str) -> list[tuple[str, str, str]]: ...

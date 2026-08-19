@@ -16,10 +16,9 @@ Two hard bounds keep that honest:
   that discards the run: the loop catches `BudgetExhausted` and returns
   whatever candidates it already has.
 - `_MAX_PROMPT_CHARS` caps how much observation history rides along in each
-  `extract` call. The backing endpoint runs at a 16k-token context window
-  shared across several jobs (`-np 4`), and that window covers the prompt
-  *and* the generated output together -- a bound sized to leave no headroom
-  for a response is not a bound. Older observations are dropped, newest
+  `extract` call. That window covers the prompt *and* the generated output
+  together -- a bound sized to leave no headroom for a response is not a
+  bound. Older observations are dropped, newest
   first, once the budget is spent; a single observation larger than the
   whole budget is hard-truncated rather than passed through whole, so no one
   oversized tool result can defeat the cap in the one case it matters most.
@@ -46,15 +45,42 @@ if TYPE_CHECKING:
     from stark_bench.domain import Query
     from stark_bench.ports import Toolset
 
-#: Characters, not tokens -- estimated at ~4 chars/token (conservative for
-#: English text; a real tokenizer would be model-specific and is not worth
-#: the dependency here). The backing window is 16k tokens shared between
-#: prompt and generated output, so this is sized well under half of that:
-#: measured peak against an adversarial fake (50-item results, uncapped
-#: rounds) was 24,774 chars with a 40,000-char bound in place, so 24,000
-#: chars (~6k tokens) is a real limit that will actually be hit, not a
-#: theoretical one -- see tests/agents/test_deep.py.
-_MAX_PROMPT_CHARS = 24_000
+#: Characters, not tokens. The ~4 chars/token rule of thumb this was sized
+#: by was checked against the endpoint rather than trusted: the longest
+#: document in the relations corpus -- the densest text either LLM agent
+#: sees, full of gene symbols and numeric ids -- came back at exactly 4.00
+#: chars/token via `usage.prompt_tokens`. So this cap is ~30k tokens of the
+#: 65,536-token window, 46%, and the window covers prompt and generated
+#: output together.
+#:
+#: 46% is the *cap*, not the working size: the observed peak history is
+#: ~24,774 chars (~6k tokens, under 10% of the window), which is the point --
+#: truncation should be a backstop, not a routine event. The case that could
+#: genuinely approach the cap is `deep` over the relations corpus, where
+#: `get_node` and `neighbors` return documents 1.47x longer and a hub node
+#: has hundreds of them. Read the prompt sizes from that run rather than
+#: assuming.
+#:
+#: Raised from 24,000 to 120,000 as the endpoint went from a 16k window to
+#: 64k. The old value was never the server's limit -- 24,000 chars is ~6k
+#: tokens against a 16k window -- it was this agent's own, and it bound first
+#: and bound hard: the measured adversarial peak was 24,774 chars, so the cap
+#: fired essentially every round. What it drops is the *oldest* observations,
+#: so on a hub like PRIME's ABLIM1 (degree 426), where one `neighbors` result
+#: runs to thousands of characters, the agent reached its eighth decision
+#: having forgotten its second and third. That is a handicap on exactly the
+#: multi-hop queries traversal is supposed to win.
+#:
+#: 120,000 chars is ~30k tokens, under half the 64k window, and comfortably
+#: above any history this agent has been observed to accumulate -- the intent
+#: is that truncation stops being a routine event and becomes the backstop it
+#: was always described as. The cost is bounded and falls where it should:
+#: prefill grows only for the queries whose history would otherwise have been
+#: thrown away, and the LLM-call budget still caps the number of rounds.
+#:
+#: Deep numbers measured under a different cap are not comparable. Re-run
+#: every arm rather than mixing them.
+_MAX_PROMPT_CHARS = 120_000
 
 _PROMPT_TEMPLATE = (
     "You are answering a search query by choosing one tool call at a time.\n"
@@ -90,7 +116,8 @@ class DeepAgent:
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
         self.peak_prompt_chars = 0
-        candidates: dict[str, float] = {}
+        retrieved: dict[str, float] = {}
+        discovered: dict[str, int] = {}
         observations: list[str] = []
 
         while True:
@@ -115,44 +142,80 @@ class DeepAgent:
             except Exception:
                 break
 
-            observation = await self._act(step, tools, candidates)
+            observation = await self._act(step, tools, retrieved, discovered)
             observations.append(observation)
             observations = self._truncate(observations)
 
-        if not candidates:
-            return []
+        return self._rank(retrieved, discovered)
 
-        ranked = sorted(candidates.items(), key=lambda item: item[1], reverse=True)
-        return [Ranked(node_id, score) for node_id, score in ranked[: self.k]]
+    def _rank(
+        self, retrieved: dict[str, float], discovered: dict[str, int]
+    ) -> list[Ranked]:
+        """Retrieval evidence first, then traversal evidence.
+
+        The two are different quantities and comparing them by magnitude is
+        what B-DEEP-SCORE-SCALE-1 was: any constant assigned to a traversal
+        hit either always beats the retriever's scores or never does,
+        depending only on the retriever's scale. redstring's hybrid channel
+        is an RRF fusion scoring ~0.02, so a 0.25 constant always won and a
+        hub's neighbours filled the whole result.
+
+        So order by *source* first and by evidence within it. A node the
+        retriever scored outranks one only reached by traversal, whatever
+        the numbers. Among traversal-only nodes the signal is corroboration:
+        a node arrived at from several different hops is more likely to
+        matter than one seen once, and a raw neighbour list carries no
+        internal order to use instead.
+
+        Emitted scores are rank-derived and strictly decreasing, so nothing
+        downstream can re-derive the comparison this method exists to avoid.
+        """
+        by_score = sorted(retrieved.items(), key=lambda kv: (-kv[1], kv[0]))
+        traversal_only = [
+            (node_id, hits)
+            for node_id, hits in discovered.items()
+            if node_id not in retrieved
+        ]
+        by_corroboration = sorted(traversal_only, key=lambda kv: (-kv[1], kv[0]))
+
+        ordered = [n for n, _ in by_score] + [n for n, _ in by_corroboration]
+        return [
+            Ranked(node_id, 1.0 / (1 + rank))
+            for rank, node_id in enumerate(ordered[: self.k])
+        ]
 
     async def _act(
-        self, step: Step, tools: Toolset, candidates: dict[str, float]
+        self,
+        step: Step,
+        tools: Toolset,
+        retrieved: dict[str, float],
+        discovered: dict[str, int],
     ) -> str:
         if step.action == "search":
             results = await tools.search_chunks(step.argument, k=self.k, mode="hybrid")
             for ranked in results:
-                candidates[ranked.node_id] = max(
-                    candidates.get(ranked.node_id, float("-inf")), ranked.score
+                retrieved[ranked.node_id] = max(
+                    retrieved.get(ranked.node_id, float("-inf")), ranked.score
                 )
             return f"search({step.argument!r}) -> {[r.node_id for r in results]}"
 
         if step.action == "get_node":
             node = await tools.get_node(step.argument)
             if node is not None:
-                candidates.setdefault(step.argument, 0.5)
+                discovered[step.argument] = discovered.get(step.argument, 0) + 1
             return f"get_node({step.argument!r}) -> {node}"
 
         if step.action == "neighbors":
             neighbor_ids = await tools.neighbors(step.argument, depth=1)
             for node_id in neighbor_ids:
-                candidates.setdefault(node_id, 0.25)
+                discovered[node_id] = discovered.get(node_id, 0) + 1
             return f"neighbors({step.argument!r}) -> {neighbor_ids}"
 
         # "relationships" -- reveals edge type/direction that `neighbors`
         # deliberately omits, per the toolset's own contract.
         edges = await tools.get_relationships(step.argument)
         for _source, _edge_type, target in edges:
-            candidates.setdefault(target, 0.25)
+            discovered[target] = discovered.get(target, 0) + 1
         return f"relationships({step.argument!r}) -> {edges}"
 
     @staticmethod

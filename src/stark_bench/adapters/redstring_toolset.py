@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 from redstring import ChunkRetriever, RetrievalMode
 
 from stark_bench.domain.aggregation import aggregate
-from stark_bench.domain import Ranked, ToolCall
+from stark_bench.domain import Passage, Ranked, ToolCall
 from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for, node_id_of
 
 if TYPE_CHECKING:
@@ -106,6 +106,36 @@ class RedstringToolset:
         ranked = aggregate(scored, strategy=self._aggregation)[:k]
         self._record("search_chunks", started, len(ranked))
         return ranked
+
+    async def search_passages(
+        self, text: str, *, k: int = 10, mode: str = "hybrid"
+    ) -> list[Passage]:
+        """Retrieve candidates and keep the text that retrieved each one.
+
+        Folds to one passage per node like `search_chunks`, and keeps the
+        text of that node's *best-scoring* chunk rather than concatenating
+        its chunks. Concatenating would hand a reranker a different amount
+        of evidence per candidate -- a hub node with forty chunks would get
+        forty times the page space of a leaf -- and length is exactly the
+        confound a reranker is supposed to be immune to.
+        """
+        started = perf_counter()
+        result = await self._retriever.retrieve_chunks(
+            text, self._tenant, k=k * 4, mode=MODES[mode]
+        )
+        best: dict[str, tuple[str, float]] = {}
+        for match in result.matches:
+            if STARK_ID_KEY not in match.chunk.metadata:
+                continue
+            node_id = str(match.chunk.metadata[STARK_ID_KEY])
+            held = best.get(node_id)
+            if held is None or match.score > held[1]:
+                best[node_id] = (match.chunk.text, match.score)
+        passages = [Passage(node_id=n, text=t, score=sc) for n, (t, sc) in best.items()]
+        passages.sort(key=lambda p: (-p.score, p.node_id))
+        passages = passages[:k]
+        self._record("search_passages", started, len(passages))
+        return passages
 
     async def get_node(self, node_id: str) -> dict[str, object] | None:
         started = perf_counter()

@@ -44,7 +44,12 @@ from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
 )
-from stark_bench.adapters.report_file import summarise_cost, write_report
+from stark_bench.adapters.model_preflight import require_chat_model
+from stark_bench.adapters.report_file import (
+    summarise_cost,
+    write_predictions,
+    write_report,
+)
 from stark_bench.application.run_queries import run
 from stark_bench.adapters.stark_scorer import score_predictions
 from stark_bench.adapters.stark_artifacts import (
@@ -105,7 +110,21 @@ INFERENCE_BASE_URL = "http://192.168.1.14:8080/v1/"
 #: resident for nothing; and 16384 is the per-slot window the previous
 #: configuration actually gave (65536 / 4), so `deep.py`'s context
 #: assumptions are unchanged.
-DEFAULT_CHAT_MODEL = "qwen3.8-27b-16k-txt"
+#:
+#: Raised to a 64k window on 2026-08-19, for the reranker: it puts 40
+#: candidate documents in one prompt, and at 16k each had to be cut to 600
+#: characters -- which on the relations corpus truncates every document
+#: *before* the `- relations:` block, the exact text that arm exists to test.
+#:
+#: **The model id carries the window, so raising it renames the model.** The
+#: 16k id stopped existing the moment the 32k one appeared, and a stale
+#: constant here does not degrade gracefully: every chat call 404s, the
+#: agents that swallow LLM errors fall back to plain retrieval, and the run
+#: still produces a full set of plausible numbers. `redstring-native/deep`
+#: died mid-run at the changeover with 143 of 280 queries empty, which is
+#: the loud version of the same event -- the quiet version scores like
+#: `hybrid` and says nothing.
+DEFAULT_CHAT_MODEL = "qwen3.8-27b-64k-txt"
 
 #: Chunking strategies, as zero-argument builders.
 #:
@@ -239,9 +258,11 @@ def _llm_for(config: RunConfig) -> LlmProvider:
     and the alternative -- deciding per agent whether the toolset gets an
     LLM -- is a second place for the agent name to be interpreted.
     """
+    model = config.chat_model or DEFAULT_CHAT_MODEL
+    require_chat_model(INFERENCE_BASE_URL, model)
     return LangChainLlmProvider.openai_compatible(
         base_url=INFERENCE_BASE_URL,
-        model=config.chat_model or DEFAULT_CHAT_MODEL,
+        model=model,
     )
 
 
@@ -297,6 +318,19 @@ def _ingest_stats(config: RunConfig) -> dict[str, object]:
     if not path.exists():
         return {}
     return dict(json.loads(path.read_text(encoding="utf-8")))
+
+
+def predictions_path(config: RunConfig) -> Path:
+    """Where this run's raw rankings land, written before anything scores them.
+
+    Retrieval is the expensive half -- `deep` spends ~50 minutes of shared GPU
+    on 280 queries -- and scoring is a subprocess that resolves `stark-qa` from
+    PyPI on every invocation. A PyPI 502 therefore used to discard a completed
+    run at the last step, with nothing on disk to score later. It has happened
+    once, to `redstring-native/deep`. Persist first, score second, and
+    `scripts/rescore.py` turns the survivor back into a report.
+    """
+    return RESULTS_ROOT / f"{config.name}.{config.agent}.predictions.json"
 
 
 def report_path(config: RunConfig) -> Path:
@@ -430,7 +464,15 @@ async def _do_run(config: RunConfig) -> None:
         )
         agent = build_agent(config)
 
-        predictions = await run(agent, queries, tools, k=config.k)
+        preds_path = predictions_path(config)
+        predictions = await run(
+            agent,
+            queries,
+            tools,
+            k=config.k,
+            checkpoint=partial(write_predictions, preds_path),
+        )
+        write_predictions(preds_path, predictions)
 
         candidates_path = data_dir / "candidates.json"
         candidate_ids = [int(c) for c in json.loads(candidates_path.read_text())]

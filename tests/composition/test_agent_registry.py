@@ -62,7 +62,14 @@ def test_every_architecture_is_reachable_by_name():
     retrieval architecture changes what the results table means, so it
     should not be able to appear without someone updating this line.
     """
-    assert set(AGENTS) == {"dense", "lexical", "hybrid", "zero_shot", "deep"}
+    assert set(AGENTS) == {
+        "dense",
+        "lexical",
+        "hybrid",
+        "zero_shot",
+        "deep",
+        "rerank",
+    }
 
 
 def test_the_three_retrieval_channels_are_all_reachable():

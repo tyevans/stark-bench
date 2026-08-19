@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from stark_bench.domain.run_config import RunConfig
-    from stark_bench.domain import ToolCall
+    from stark_bench.domain import Ranked, ToolCall
 
 
 def summarise_cost(calls: Sequence[ToolCall], queries: int) -> dict[str, float]:
@@ -38,6 +38,23 @@ def summarise_cost(calls: Sequence[ToolCall], queries: int) -> dict[str, float]:
         ),
         "seconds_total": sum(c.duration_s for c in calls),
     }
+
+
+def write_predictions(path: Path, predictions: Mapping[int, Sequence[Ranked]]) -> None:
+    """Persist raw rankings, in the shape the scoring sidecar already reads.
+
+    Deliberately the sidecar's own `{qid: {node_id: score}}` format rather than
+    a new one, so a rescore is a file move rather than a translation.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                str(qid): {r.node_id: r.score for r in ranked}
+                for qid, ranked in predictions.items()
+            }
+        )
+    )
 
 
 def write_report(
