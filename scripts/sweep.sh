@@ -44,7 +44,16 @@ EXPECTED_NODES=129375
 # because the measured gain from 16 to 64 was 2.7% at -np 1 (1745 -> 1792
 # nodes/min), which is not worth re-approaching an edge that has already
 # cost four crashes.
-CONCURRENCY="${CONCURRENCY:-32}"
+CONCURRENCY="${CONCURRENCY:-4}"
+# Texts per embedding request. This and CONCURRENCY together decide almost
+# nothing: measured on 3000 nodes, every setting from 2-in-flight to
+# 512-in-flight lands between 1312 and 1618 nodes/min. The endpoint is at a
+# hardware ceiling around 1615 and the knobs move a 23% band around it.
+#
+# Recorded because the opposite was believed for an hour, on the strength of
+# a standalone probe that used urllib without connection reuse and was
+# therefore measuring TCP handshakes rather than the model.
+EMBED_BATCH="${EMBED_BATCH:-64}"
 # The peer is restarted by hand and has crashed on its own. Over a run this
 # long, three attempts is optimistic.
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
@@ -87,7 +96,7 @@ ingest_arm() {  # ingest_arm <config>
     echo "=== INGEST $cfg attempt=$attempt $(date -u +%H:%M:%S)"
     if run_cli "$LOG_DIR/$cfg.ingest.log" \
          --config "config/$cfg.yaml" --ingest --ingest-edges \
-         "${extra[@]}" --embed-concurrency "$CONCURRENCY"; then
+         "${extra[@]}" --embed-concurrency "$CONCURRENCY" --embed-batch "$EMBED_BATCH"; then
       break
     fi
     [ "$attempt" -eq "$MAX_ATTEMPTS" ] && { echo "=== ABORT: $cfg ingest failed ${MAX_ATTEMPTS}x"; exit 1; }
