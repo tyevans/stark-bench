@@ -106,14 +106,25 @@ Two hazards, both hit for real:
   that diagnosis was wrong — a completely different model reported the same
   2048 an hour later. **Verify a server change against `/props` on the peer
   port before reasoning about what it means.**
-- **More slots is not more throughput, and here it was less.** Measured over
-  the same 1500 nodes with the same chunker: `-np 32` with the chat model
-  unloaded gave 994 / 1421 / 1449 nodes/min at client concurrency 32 / 64 /
-  128, while `-np 1` with the 27B chat model *also resident* gave 1745 /
-  1792 at concurrency 16 / 64. One slot batching a deep client queue beats
-  32 slots scheduled against each other; splitting the KV cache 32 ways
-  bought nothing and cost VRAM. Client-side concurrency is the knob that
-  matters, and it saturates around 64.
+- **Client concurrency must be at least the server's `-np`.** A request
+  occupies one slot, so `--embed-concurrency 1` against `-np 4` leaves three
+  quarters of the server idle whatever the batch size. Measured over 3000
+  nodes: `1 x 128` gave 1233 nodes/min and `4 x 128` gave 1618. Slots scale
+  sublinearly (1->2 is +17%, 2->4 is +12%), so there is little past four.
+  The full table and the reasoning live in `skb/ingest.py`'s docstring.
+- **`--embed-batch` is the second knob and is worth about 18%** at fixed
+  concurrency. Both are needed: batching raises the per-slot ceiling,
+  concurrency decides how many slots work at all.
+- **Never tune against GPU utilisation.** `nvidia-smi` reported its highest
+  figure on `1 x 128` -- the *slowest* of seven configurations -- because a
+  kernel is resident whenever any slot is busy and three idle slots are
+  indistinguishable from none. It answers "is the device doing something",
+  not "is it doing as much as it could". Tuning against it would have picked
+  a setting 24% off the best while feeling well-informed.
+- **A throughput claim needs the baseline you are actually replacing.** A
+  standalone probe here showed "6x from batching" and was measuring TCP and
+  HTTP handshakes: it used `urllib` with no connection reuse, while the
+  ingest has a pooled client and was never in that regime.
 - **Do not compare two throughput numbers measured on different slices.**
   The first probes ran on the first 400 nodes of `nodes.jsonl`, which are
   unusually short — 1801 nodes/min there against 1449 on the first 1500,
