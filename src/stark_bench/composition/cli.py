@@ -44,7 +44,11 @@ from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
 )
-from stark_bench.adapters.report_file import summarise_cost, write_report
+from stark_bench.adapters.report_file import (
+    summarise_cost,
+    write_predictions,
+    write_report,
+)
 from stark_bench.application.run_queries import run
 from stark_bench.adapters.stark_scorer import score_predictions
 from stark_bench.adapters.stark_artifacts import (
@@ -299,6 +303,19 @@ def _ingest_stats(config: RunConfig) -> dict[str, object]:
     return dict(json.loads(path.read_text(encoding="utf-8")))
 
 
+def predictions_path(config: RunConfig) -> Path:
+    """Where this run's raw rankings land, written before anything scores them.
+
+    Retrieval is the expensive half -- `deep` spends ~50 minutes of shared GPU
+    on 280 queries -- and scoring is a subprocess that resolves `stark-qa` from
+    PyPI on every invocation. A PyPI 502 therefore used to discard a completed
+    run at the last step, with nothing on disk to score later. It has happened
+    once, to `redstring-native/deep`. Persist first, score second, and
+    `scripts/rescore.py` turns the survivor back into a report.
+    """
+    return RESULTS_ROOT / f"{config.name}.{config.agent}.predictions.json"
+
+
 def report_path(config: RunConfig) -> Path:
     """Where this config-and-agent's numbers land.
 
@@ -431,6 +448,7 @@ async def _do_run(config: RunConfig) -> None:
         agent = build_agent(config)
 
         predictions = await run(agent, queries, tools, k=config.k)
+        write_predictions(predictions_path(config), predictions)
 
         candidates_path = data_dir / "candidates.json"
         candidate_ids = [int(c) for c in json.loads(candidates_path.read_text())]
