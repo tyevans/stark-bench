@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from stark_bench.harness.config import RunConfig
+    from stark_bench.domain.run_config import RunConfig
     from stark_bench.domain import ToolCall
 
 

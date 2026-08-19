@@ -1,4 +1,4 @@
-from stark_bench.harness.config import load_config
+from stark_bench.adapters.config_file import load_config
 
 
 def test_a_config_round_trips_verbatim(tmp_path):

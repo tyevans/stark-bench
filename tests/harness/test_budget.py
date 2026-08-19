@@ -1,6 +1,6 @@
 import pytest
 
-from stark_bench.harness.budget import Budget, BudgetExhausted
+from stark_bench.domain.budget import Budget, BudgetExhausted
 
 
 def test_it_permits_calls_up_to_the_cap():

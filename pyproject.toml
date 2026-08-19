@@ -87,6 +87,12 @@ name = "agents see only ports and domain"
 type = "forbidden"
 source_modules = ["stark_bench.agents"]
 forbidden_modules = [
+    # The concrete budget, not the protocol. An agent that holds a `Budget`
+    # can read the caps it is being judged against and can build its own;
+    # `ports.BudgetTracker` gives it spending and exhaustion and nothing
+    # else. This line is the difference between that being true and it
+    # merely being what everyone happens to have done so far.
+    "stark_bench.domain.budget",
     "stark_bench.application",
     "stark_bench.adapters",
     "stark_bench.composition",

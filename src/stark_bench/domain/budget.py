@@ -11,10 +11,16 @@ exception happened to be raised somewhere.
 
 One counter per resource, not one shared counter: a cheap `search_chunks`
 loop that never calls the LLM must not be able to exhaust the LLM's budget by
-proxy, and vice versa. `stark_bench.ports.BudgetTracker` is the narrow
-protocol this class satisfies, declared over there because `agents/` may not
-import this module directly (see the import-linter contract in
-`pyproject.toml`).
+proxy, and vice versa.
+
+`stark_bench.ports.BudgetTracker` is the narrow protocol this class
+satisfies. While this module lived in `harness/`, the contract forbade
+`agents/` from importing it and the port was the only way an agent could
+see a budget at all. That is no longer the reason -- `agents/` may import
+`domain` -- and the port is kept on the weaker but sufficient one: an agent
+needs to spend and to ask whether it is exhausted, and nothing else here.
+Depending on the class would let an agent read the caps it is being judged
+against, or construct its own.
 """
 
 from __future__ import annotations

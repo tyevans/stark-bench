@@ -14,7 +14,7 @@ import json
 import pytest
 
 from stark_bench.harness.cli import _ingest_stats, ingest_report_path
-from stark_bench.harness.config import RunConfig
+from stark_bench.domain.run_config import RunConfig
 
 
 @pytest.fixture
@@ -68,7 +68,9 @@ def test_the_path_is_keyed_on_the_config_not_the_agent(config, monkeypatch, tmp_
     monkeypatch.setattr("stark_bench.harness.cli.RESULTS_ROOT", tmp_path)
     from dataclasses import replace
 
-    assert ingest_report_path(config) == ingest_report_path(replace(config, agent="deep"))
+    assert ingest_report_path(config) == ingest_report_path(
+        replace(config, agent="deep")
+    )
 
 
 def test_a_float_and_a_bool_survive_the_round_trip(config, monkeypatch, tmp_path):

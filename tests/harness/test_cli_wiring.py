@@ -16,7 +16,7 @@ from stark_bench.harness.cli import (
     report_path,
     toolset_for,
 )
-from stark_bench.harness.config import RunConfig
+from stark_bench.domain.run_config import RunConfig
 from stark_bench.domain import Query, Ranked, ToolCall
 
 

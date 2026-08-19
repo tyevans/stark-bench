@@ -38,7 +38,8 @@ from redstring.llm.adapters.langchain import LangChainLlmProvider
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
 from stark_bench.harness.agents import AGENTS, build_agent
-from stark_bench.harness.config import RunConfig, load_config
+from stark_bench.adapters.config_file import load_config
+from stark_bench.domain.run_config import RunConfig
 from stark_bench.harness.providers import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
