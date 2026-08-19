@@ -22,7 +22,7 @@ EXPECTED_NODES = 129375
 """Nodes in prime/test-0.1. A report below this is not describing this corpus."""
 
 METRICS = ("mrr", "hit@1", "hit@5", "recall@20")
-AGENTS = ("dense", "hybrid", "zero_shot", "deep")
+AGENTS = ("dense", "lexical", "hybrid", "zero_shot", "deep")
 
 
 def _fmt(value: object, places: int = 4) -> str:

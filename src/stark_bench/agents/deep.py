@@ -90,7 +90,8 @@ class DeepAgent:
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
         self.peak_prompt_chars = 0
-        candidates: dict[str, float] = {}
+        retrieved: dict[str, float] = {}
+        discovered: dict[str, int] = {}
         observations: list[str] = []
 
         while True:
@@ -115,44 +116,80 @@ class DeepAgent:
             except Exception:
                 break
 
-            observation = await self._act(step, tools, candidates)
+            observation = await self._act(step, tools, retrieved, discovered)
             observations.append(observation)
             observations = self._truncate(observations)
 
-        if not candidates:
-            return []
+        return self._rank(retrieved, discovered)
 
-        ranked = sorted(candidates.items(), key=lambda item: item[1], reverse=True)
-        return [Ranked(node_id, score) for node_id, score in ranked[: self.k]]
+    def _rank(
+        self, retrieved: dict[str, float], discovered: dict[str, int]
+    ) -> list[Ranked]:
+        """Retrieval evidence first, then traversal evidence.
+
+        The two are different quantities and comparing them by magnitude is
+        what B-DEEP-SCORE-SCALE-1 was: any constant assigned to a traversal
+        hit either always beats the retriever's scores or never does,
+        depending only on the retriever's scale. redstring's hybrid channel
+        is an RRF fusion scoring ~0.02, so a 0.25 constant always won and a
+        hub's neighbours filled the whole result.
+
+        So order by *source* first and by evidence within it. A node the
+        retriever scored outranks one only reached by traversal, whatever
+        the numbers. Among traversal-only nodes the signal is corroboration:
+        a node arrived at from several different hops is more likely to
+        matter than one seen once, and a raw neighbour list carries no
+        internal order to use instead.
+
+        Emitted scores are rank-derived and strictly decreasing, so nothing
+        downstream can re-derive the comparison this method exists to avoid.
+        """
+        by_score = sorted(retrieved.items(), key=lambda kv: (-kv[1], kv[0]))
+        traversal_only = [
+            (node_id, hits)
+            for node_id, hits in discovered.items()
+            if node_id not in retrieved
+        ]
+        by_corroboration = sorted(traversal_only, key=lambda kv: (-kv[1], kv[0]))
+
+        ordered = [n for n, _ in by_score] + [n for n, _ in by_corroboration]
+        return [
+            Ranked(node_id, 1.0 / (1 + rank))
+            for rank, node_id in enumerate(ordered[: self.k])
+        ]
 
     async def _act(
-        self, step: Step, tools: Toolset, candidates: dict[str, float]
+        self,
+        step: Step,
+        tools: Toolset,
+        retrieved: dict[str, float],
+        discovered: dict[str, int],
     ) -> str:
         if step.action == "search":
             results = await tools.search_chunks(step.argument, k=self.k, mode="hybrid")
             for ranked in results:
-                candidates[ranked.node_id] = max(
-                    candidates.get(ranked.node_id, float("-inf")), ranked.score
+                retrieved[ranked.node_id] = max(
+                    retrieved.get(ranked.node_id, float("-inf")), ranked.score
                 )
             return f"search({step.argument!r}) -> {[r.node_id for r in results]}"
 
         if step.action == "get_node":
             node = await tools.get_node(step.argument)
             if node is not None:
-                candidates.setdefault(step.argument, 0.5)
+                discovered[step.argument] = discovered.get(step.argument, 0) + 1
             return f"get_node({step.argument!r}) -> {node}"
 
         if step.action == "neighbors":
             neighbor_ids = await tools.neighbors(step.argument, depth=1)
             for node_id in neighbor_ids:
-                candidates.setdefault(node_id, 0.25)
+                discovered[node_id] = discovered.get(node_id, 0) + 1
             return f"neighbors({step.argument!r}) -> {neighbor_ids}"
 
         # "relationships" -- reveals edge type/direction that `neighbors`
         # deliberately omits, per the toolset's own contract.
         edges = await tools.get_relationships(step.argument)
         for _source, _edge_type, target in edges:
-            candidates.setdefault(target, 0.25)
+            discovered[target] = discovered.get(target, 0) + 1
         return f"relationships({step.argument!r}) -> {edges}"
 
     @staticmethod
