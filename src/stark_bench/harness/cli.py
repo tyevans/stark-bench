@@ -21,6 +21,7 @@ import itertools
 import json
 import logging
 import time
+from functools import partial
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -32,6 +33,7 @@ from redstring.chunks.adapters.postgres import PostgresChunkStore
 from redstring.extraction.chunkers.boundary_preference_chunker import (
     BoundaryPreferenceChunker,
 )
+from redstring.extraction.chunkers.sliding_window_chunker import SlidingWindowChunker
 from redstring.graph.adapters.neo4j import Neo4jGraphStore
 from redstring.llm.adapters.langchain import LangChainLlmProvider
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
@@ -78,9 +80,23 @@ NOMIC_BASE_URL = "http://192.168.1.14:8080/v1/"
 #: Overridable per config via `chat_model:`; a config that omits it gets this.
 DEFAULT_CHAT_MODEL = "qwen3.8-27b-mtp"
 
+#: Chunking strategies, as zero-argument builders.
+#:
+#: `sliding-1000-500` is the deliberately over-chunked end of the sweep: a
+#: 1000-character window advancing 500, so every position in a long document
+#: appears in two chunks. It exists to answer whether chunking helps or hurts
+#: at all, by bracketing `boundary-preference` (1.14 chunks/node) between it
+#: and `whole-document` (1.00) with the embedding model held fixed.
+#:
+#: Note what it can and cannot move: 86% of this corpus is under 1000
+#: characters and comes through whole regardless, so the three configs differ
+#: only on the 14% long tail.
 CHUNKERS = {
     "whole-document": WholeDocumentChunker,
     "boundary-preference": BoundaryPreferenceChunker,
+    "sliding-1000-500": partial(
+        SlidingWindowChunker, default_chunk_size=1000, default_overlap=500
+    ),
 }
 LIVE_EMBEDDINGS = {"nomic-embed-text"}
 

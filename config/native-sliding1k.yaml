@@ -1,0 +1,36 @@
+# The over-chunked end of the chunking sweep.
+#
+# Three configs share the nomic-embed-text model and vary only the chunker,
+# so the difference between them is chunking and nothing else:
+#
+#   native-wholedoc      whole-document      1.00 chunks/node
+#   redstring-native     boundary-preference 1.14 chunks/node
+#   native-sliding1k     sliding-1000-500    ~1.94 chunks/node (estimated)
+#
+# A 1000-character window advancing 500 puts every position of a long
+# document into two chunks. Deliberately aggressive: the question is whether
+# chunking helps or hurts, and one point either side of the current default
+# is what makes the answer a direction rather than an anecdote.
+#
+# Two things to hold in mind when reading the result:
+#
+#  - 86% of this corpus (111,001 of 129,575 documents) is under 1000
+#    characters and comes through whole under every one of the three. The
+#    sweep can only move the 14% long tail.
+#  - SlidingWindowChunker emits exactly one fully-redundant final chunk per
+#    document over the window size (for 2600 chars: [2000,2600) then
+#    [2100,2600)). That is ~18.6k of the ~250.7k chunks here. It is waste,
+#    not corruption -- the text is real -- but it means chunk COUNT for this
+#    config overstates distinct coverage by about 7%.
+#
+# Shares kg_chunks_nomic_embed_text with the other two nomic configs -- same
+# model, same dimension, ADR 0002 satisfied -- isolated by tenant_id.
+name: native-sliding1k
+dataset: prime
+split: test-0.1
+chunker: sliding-1000-500
+embeddings: nomic-embed-text
+dimension: 768
+aggregation: max
+agent: dense
+k: 20
