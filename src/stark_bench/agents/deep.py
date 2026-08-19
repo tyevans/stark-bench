@@ -45,10 +45,21 @@ if TYPE_CHECKING:
     from stark_bench.domain import Query
     from stark_bench.ports import Toolset
 
-#: Characters, not tokens -- estimated at ~4 chars/token (conservative for
-#: English text; a real tokenizer would be model-specific and is not worth
-#: the dependency here). The backing window covers the prompt *and* the
-#: generated output together, so this stays under half of it.
+#: Characters, not tokens. The ~4 chars/token rule of thumb this was sized
+#: by was checked against the endpoint rather than trusted: the longest
+#: document in the relations corpus -- the densest text either LLM agent
+#: sees, full of gene symbols and numeric ids -- came back at exactly 4.00
+#: chars/token via `usage.prompt_tokens`. So this cap is ~30k tokens of the
+#: 65,536-token window, 46%, and the window covers prompt and generated
+#: output together.
+#:
+#: 46% is the *cap*, not the working size: the observed peak history is
+#: ~24,774 chars (~6k tokens, under 10% of the window), which is the point --
+#: truncation should be a backstop, not a routine event. The case that could
+#: genuinely approach the cap is `deep` over the relations corpus, where
+#: `get_node` and `neighbors` return documents 1.47x longer and a hub node
+#: has hundreds of them. Read the prompt sizes from that run rather than
+#: assuming.
 #:
 #: Raised from 24,000 to 120,000 as the endpoint went from a 16k window to
 #: 64k. The old value was never the server's limit -- 24,000 chars is ~6k
