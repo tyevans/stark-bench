@@ -209,12 +209,19 @@ CHUNKERS = {
     #: document corpus and the production failure did not. **Size against the
     #: observed failure, not against a sample that never reproduced it.**
     #:
-    #: This is NOT a free swap of one cap for another. Finding 1 in
-    #: RESULTS.md measures finer chunking as the largest single effect and
-    #: it is negative, so nomic pays a granularity penalty that Nemotron --
-    #: with 4096 tokens to spend -- does not. A nomic-against-Nemotron
-    #: comparison therefore varies the model AND the chunking, and cannot
-    #: attribute a gap to either. Corpus-against-corpus on nomic
+    #: This is NOT a free swap of one cap for another. RESULTS.md finding 4
+    #: measures a 25% spread in dense mrr across chunkers, so the chunker is
+    #: the second-largest retrieval effect on the page and changing the cap
+    #: changes it. A nomic-against-Nemotron comparison therefore varies the
+    #: model AND the chunking and cannot attribute a gap to either.
+    #:
+    #: Note what this does NOT claim. An earlier version of this comment said
+    #: finer chunking is monotonically worse, citing a finding RESULTS.md has
+    #: since **retracted**: `native-sliding1k` has twice `redstring-native`'s
+    #: granularity and scores 15% better, so the effect is not monotonic in
+    #: chunks/node. The direction of the 5000 -> 4000 change is therefore
+    #: unknown, not merely unmeasured -- which is a weaker claim than the
+    #: confound needs, and enough for it. Corpus-against-corpus on nomic
     #: (`nomic-wholedoc` against `mag-wholedoc`) stays clean, which is the
     #: comparison the MAG run exists for.
     "capped-whole-4000": partial(

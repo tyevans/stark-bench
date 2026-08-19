@@ -1,90 +1,153 @@
 # Results
 
-**Seven of twelve retrieval numbers are in** (2026-08-19). The table is
-generated — run `uv run python scripts/results_table.py` and paste.
-Everything else on this page is the framework for reading it, written
-before the numbers existed so that it is a prediction rather than a
-rationalisation.
+**All twelve retrieval numbers are in** (2026-08-19), and the first
+LLM-agent cell with them: `rerank` is now the best result on the page by a
+wide margin (finding 6). The table is generated — run
+`uv run python scripts/results_table.py` and paste. Everything else on this
+page is the framework for reading it, written before the numbers existed so
+that it is a prediction rather than a rationalisation.
 
-## Findings so far
+Two of that framework's predictions were wrong and are marked as retracted
+below, in place rather than quietly edited: chunk *granularity* turned out
+not to be the variable, and lexical fusion turned out to track dense
+weakness rather than chunk size.
 
-| corpus | chunks/node | agent | mrr | hit@1 | hit@5 | recall@20 |
-|---|---|---|---|---|---|---|
-| vss-control (ada-002) | 1.000 | dense | 0.23057 | 0.1536 | 0.3107 | 0.37878 |
-| vss-control (ada-002) | 1.000 | hybrid | 0.23111 | 0.1643 | 0.3214 | 0.37096 |
-| native-wholedoc | 1.057 | dense | 0.21635 | 0.1357 | 0.3036 | 0.37780 |
-| native-wholedoc | 1.057 | hybrid | 0.21872 | 0.1500 | 0.2964 | 0.36799 |
-| redstring-native | 1.139 | dense | 0.18446 | 0.1214 | 0.2500 | 0.32397 |
-| redstring-native | 1.139 | hybrid | 0.19854 | 0.1357 | 0.2643 | 0.35162 |
-| native-wholedoc | 1.057 | **rerank** | **0.34075** | **0.2857** | **0.4000** | 0.36799 |
+## Results
 
-All seven on complete corpora: 280 queries, 129,375 nodes, both native arms
-carrying the full 8,100,498 edges.
+All twelve retrieval numbers, 2026-08-19. 280 queries against 129,375 nodes;
+metrics from `stark_qa.evaluator.Evaluator` in the 3.11 sidecar.
 
-`rerank` is the top row by a wide margin and is a *reordering* of the
-`native-wholedoc` hybrid row directly above it -- same corpus, same
-candidates, one LLM call per query. See finding 4. For scale, the best
-published entry on this split is GPT-4 reranking at 0.2655 mrr, though at a
-different protocol; the comparison is drawn honestly in finding 4 and is not
-a claim to have beaten it.
+| config | agent | mrr | hit@1 | hit@5 | recall@20 | tool/q | llm/q | run s | chunks/node | ingest s |
+|---|---|---|---|---|---|---|---|---|---|---|
+| native-sliding1k | dense | 0.2125 | 0.1393 | 0.2964 | 0.3373 | 1.00 | 0.00 | 245.6 | 2.238 | 8577.6 |
+| native-sliding1k | hybrid | 0.2211 | 0.1571 | 0.2857 | 0.3422 | 1.00 | 0.00 | 460.4 | 2.238 | 8577.6 |
+| native-sliding1k | lexical | 0.1988 | 0.1464 | 0.2643 | 0.2445 | 1.00 | 0.00 | 219.3 | 2.238 | 8577.6 |
+| native-wholedoc | dense | 0.2163 | 0.1357 | 0.3036 | 0.3778 | 1.00 | 0.00 | 124.0 | 1.057 | 2566.9 |
+| native-wholedoc | hybrid | 0.2187 | 0.1500 | 0.2964 | 0.3680 | 1.00 | 0.00 | 225.7 | 1.057 | 2566.9 |
+| native-wholedoc | lexical | 0.1944 | 0.1464 | 0.2714 | 0.2197 | 1.00 | 0.00 | 123.4 | 1.057 | 2566.9 |
+| redstring-native | dense | 0.1845 | 0.1214 | 0.2500 | 0.3240 | 1.00 | 0.00 | 121.2 | 1.139 | 5066.5 |
+| redstring-native | hybrid | 0.1985 | 0.1357 | 0.2643 | 0.3516 | 1.00 | 0.00 | 245.6 | 1.139 | 5066.5 |
+| redstring-native | lexical | 0.2014 | 0.1429 | 0.2750 | 0.2402 | 1.00 | 0.00 | 123.1 | 1.139 | 5066.5 |
+| vss-control | dense | 0.2306 | 0.1536 | 0.3107 | 0.3788 | 1.00 | 0.00 | 85.7 | 1.000 | 297.0 |
+| vss-control | hybrid | 0.2311 | 0.1643 | 0.3214 | 0.3710 | 1.00 | 0.00 | 176.3 | 1.000 | 297.0 |
+| vss-control | lexical | 0.1848 | 0.1429 | 0.2607 | 0.2139 | 1.00 | 0.00 | 94.4 | 1.000 | 297.0 |
+| native-wholedoc | **rerank** | **0.3408** | **0.2857** | **0.4000** | 0.3680 | 1.00 | 1.00 | 4364.7 | 1.057 | 2566.9 |
 
-### 1. Chunk granularity is the largest effect, and finer is worse
+Reproducibility was checked rather than assumed: `native-wholedoc/dense` was
+re-run four hours after its first scoring and returned
+`0.21634584166375653` both times, digit for digit. Differences below are
+signal, not run-to-run variance.
 
-`native-wholedoc` → `redstring-native` holds the model, the prefixes, the
-table and the graph fixed and varies only the chunker. Dense retrieval
-loses **15% of mrr and 14% of recall@20** going from 1.057 to 1.139
-chunks/node.
+### mrr, arranged so the shape is visible
 
-Both move in the same direction, which rules out a precision/recall
-trade-off and points at retrieval finding less. A mechanism that fits, and
-that `native-sliding1k` at 1.94 chunks/node will test: STaRK scores
-**nodes**, `aggregation: max` takes each node's best chunk, so more chunks
-per node is more draws from the score distribution. A distractor needs one
-spuriously high chunk to outrank the right answer, and finer chunking hands
-every distractor more tickets. That predicts monotone degradation.
+| corpus | chunker | chunks/node | dense | lexical | hybrid |
+|---|---|---|---|---|---|
+| vss-control (ada-002) | whole document | 1.000 | 0.2306 | 0.1848 | **0.2311** |
+| native-wholedoc | capped-whole-5000 | 1.057 | 0.2163 | 0.1944 | 0.2187 |
+| redstring-native | boundary-preference | 1.139 | **0.1845** | 0.2014 | 0.1985 |
+| native-sliding1k | sliding-1000-500 | 2.238 | 0.2125 | 0.1988 | 0.2211 |
+
+### 1. Nothing in *retrieval* beats the published-vector control
+
+`vss-control` -- plain dense retrieval over STaRK's own ada-002 vectors,
+whole documents, no graph -- is the best of the twelve retrieval cells at
+0.2311. The closest any locally-embedded arm comes is
+`native-sliding1k/hybrid` at 0.2211, 4% behind.
+
+**Scope corrected**: this finding read "nothing beats the control" until
+`rerank` scored 0.3408 (finding 6). The claim holds over retrieval and only
+retrieval -- which, given that no amount of retrieval work in this table
+closed a 4% gap and one LLM call opened a 47% one, is the narrower and less
+interesting half of the page.
 
 ### 2. The embedding model costs ranking, not recall
 
-`vss-control` → `native-wholedoc` is the model swap with chunking held
-near-constant. Nemotron-3-Embed-1B loses **6% of mrr** to ada-002 while
-**recall@20 is unchanged** (0.37780 against 0.37878, a quarter of one
-query).
+`vss-control` -> `native-wholedoc` holds chunking near-constant and swaps
+ada-002 for Nemotron-3-Embed-1B. mrr falls 6%; **recall@20 is unchanged**
+(0.3778 against 0.3788, a quarter of one query). The same documents are
+retrieved and ordered worse -- the shape a reranker fixes and a bigger
+bi-encoder may not. Nemotron here is Q4_K_M *with* its task prefixes, so
+this is the model configured at its best rather than a strawman.
 
-It retrieves the same documents and orders them worse. That is a reranking
-problem rather than a retrieval one, and it is the shape a cross-encoder
-fixes and a bigger bi-encoder may not. Note also that Nemotron is running
-at Q4_K_M against ada-002 at full precision, and *with* its task prefixes —
-this is the model at its best-configured, not a strawman.
+### 3. The chunker matters, and granularity does not
 
-### 3. Lexical fusion earns its keep only on finer chunks
+This retracts a claim an earlier version of this file made. With only
+`native-wholedoc` (1.057) and `redstring-native` (1.139) in hand, the 15%
+dense gap between them read as "finer chunking is worse", with a mechanism
+to match: STaRK scores nodes, `aggregation: max` takes each node's best
+chunk, so more chunks per node means more draws and every distractor gets
+more lottery tickets.
 
-| corpus | chunks/node | Δmrr from fusion | Δrecall@20 |
-|---|---|---|---|
-| vss-control | 1.000 | +0.0005 | −0.0078 |
-| native-wholedoc | 1.057 | +0.0024 | −0.0098 |
-| redstring-native | 1.139 | **+0.0141** | **+0.0277** |
+`native-sliding1k` falsified it. **Twice** the granularity of
+`redstring-native` and it scores 15% *better* on dense. The effect is not
+monotonic in chunks/node, so it was never about granularity -- two points
+that differ in both count and strategy cannot separate the two, and this
+file's own caveats section had already warned the low points were closer
+together than intended.
 
-On whole-document corpora BM25 fusion is worth nothing and costs recall. At
-1.139 chunks/node it is worth **+7.6% mrr and +8.6% recall@20** — and is
-the only intervention measured so far that improves both at once.
+What the four points actually show is that **`boundary-preference` is an
+outlier**: last of the three chunkers on dense retrieval, beaten by a
+whole-document cap and by a naive sliding window at double the granularity.
+It is also redstring's own default.
 
-The two effects interact rather than adding: finer chunking hurts dense
-badly, fusion recovers part of it, and the recovery is not enough.
-`redstring-native`'s best (0.19854) still trails `native-wholedoc`'s worst
-(0.21635).
+### 4. Dense swings with the chunker; lexical does not
 
-**This is BM25, not the graph.** `dense` and `hybrid` both call
-`search_chunks` and neither reads a relationship; `hybrid` is redstring's
-rank fusion of the vector and lexical channels. Three findings were
-initially reported here as graph results on the strength of the agent's
-*name*, while the "What each comparison isolates" section below said
-`dense` → `hybrid` was the lexical channel all along. `--agent lexical`
-now exists so the third column is measured rather than subtracted.
+The single most informative column comparison:
 
-### 4. Showing the LLM the document is worth more than everything else combined
+| | range across the four corpora |
+|---|---|
+| dense mrr | 0.1845 - 0.2306 (25% spread) |
+| lexical mrr | 0.1848 - 0.2014 (9% spread) |
 
-`rerank` reorders `hybrid`'s top 20 with one listwise LLM call, on the same
-corpus and the same candidate set:
+BM25 over the *same chunks* barely notices what the chunker did. So the
+text is present and the terms are present -- what degrades on
+`boundary-preference` is specifically the **vector representation** of
+those chunks.
+
+Two mechanisms were tested against that and **both were ruled out**:
+
+- **Not lost content.** All three arms cover all 129,375 nodes, and
+  `redstring-native` stores 3.7% *more* text than `native-wholedoc`
+  (101,616,325 characters against 98,025,525).
+- **Not chunk length.** `native-wholedoc` and `redstring-native` have
+  nearly identical distributions (median 109 vs 129, p90 2292 vs 2751,
+  57.4% vs 53.1% under 200 characters) and the largest dense gap in the
+  table. `native-sliding1k`'s distribution is wildly different (median 774,
+  27.1% short) and it scores like `native-wholedoc`.
+
+So the deficit is real, reproducible, and unexplained by the obvious
+candidates. The remaining one is *where* the splits fall inside long
+documents, which needs a passage-level diagnostic rather than an aggregate.
+It is not claimed here.
+
+### 5. Lexical fusion tracks dense weakness
+
+| corpus | dense | fusion gain over dense |
+|---|---|---|
+| vss-control | 0.2306 | +0.0005 |
+| native-wholedoc | 0.2163 | +0.0024 |
+| redstring-native | **0.1845** | **+0.0141** |
+| native-sliding1k | 0.2125 | +0.0085 |
+
+The largest gain lands on the corpus with the weakest dense channel and the
+smallest on the strongest. On `redstring-native` fusion does not even beat
+its own lexical channel (0.1985 against 0.2014): mixing in a weak vector
+signal *costs* mrr.
+
+This also retracts an earlier claim here that fusion "earns its keep on
+finer chunks". It earns its keep where the embeddings are struggling, and
+on this sweep those two happened to coincide.
+
+The channels are genuinely complementary, though, which is worth separating
+from the above. On `native-wholedoc`, BM25 alone **beats dense at hit@1**
+(0.1464 against 0.1357) while its recall@20 is 42% lower (0.2197 against
+0.3778) -- exact matching nails the obvious cases and misses paraphrase,
+and the vector channel is the reverse. Fusion beats both on mrr there.
+
+### 6. Showing the LLM the document beats every retrieval change combined
+
+`rerank` reorders `native-wholedoc/hybrid`'s top 20 with one listwise LLM
+call:
 
 | metric | hybrid | rerank | Δ |
 |---|---|---|---|
@@ -93,79 +156,82 @@ corpus and the same candidate set:
 | hit@5 | 0.29643 | **0.40000** | +0.10357 |
 | recall@20 | 0.36799 | 0.36799 | ±0.00000 |
 
-**recall@20 identical to five decimals is the control**: recall@20 is a
-property of the candidate *set*, so an unchanged value proves the two arms
-saw the same 20 documents and differ only in order. The metrics were also
-recomputed straight from the persisted predictions without the sidecar and
-agree to five decimals. The gap is 4.6 standard errors (per-query se
-0.0263); the 95% CI is [0.289, 0.392].
+**recall@20 unchanged to five decimals is the control.** recall@20 is a
+property of the candidate *set*, so an identical value proves both arms saw
+the same 20 documents and differ only in order. Metrics were also recomputed
+from the persisted predictions without the sidecar and agree to five
+decimals. The gap is 4.6 standard errors (per-query se 0.0263), 95% CI
+[0.289, 0.392].
 
-This confirms finding 2's prediction. That finding argued the embedding
-model "retrieves the same documents and orders them worse... a reranking
-problem rather than a retrieval one, and the shape a cross-encoder fixes."
-It was written before any reranker existed. The correction is that the fix
-did not need a cross-encoder — a generative model reading the text listwise
-was enough.
+Put against findings 1-5: every retrieval change measured on this page moves
+mrr within 0.1845-0.2311, a band of 0.047. One LLM call moves it 0.122 —
+**two and a half times the entire spread of the retrieval work.**
 
-**What was actually missing was the text.** No agent before this one had
-ever shown the LLM a document. `get_node` returns a name and a type;
-`search_chunks` matched on text and then discarded it. `zero_shot` and
-`deep` were reasoning over identifiers, which is why their numbers sit on
-top of the retrieval they were given. `Toolset.search_passages` returns the
-matched passage, and one prompt does the rest.
+This is finding 2's prediction, which said the embedding model "retrieves the
+same documents and orders them worse -- the shape a reranker fixes and a
+bigger bi-encoder may not." It was written before a reranker existed. The one
+correction: it did not need a cross-encoder. A generative model reading the
+passages listwise was enough.
 
-#### Listwise against STaRK's pointwise, and why ours gains more
+**What was missing was the text.** No agent before this one had shown the LLM
+a document. `get_node` returns a name and a type; `search_chunks` matched on
+text and discarded it. `zero_shot` and `deep` were reasoning over
+identifiers, which is why they never separated from the retrieval they were
+handed. `Toolset.search_passages` returns the matched passage.
 
-STaRK's published GPT-4 reranker tops the PRIME Synthesized(10%) board at
-0.2655 mrr, a gain of about +3.05 over its dense baseline. Ours gains
-+12.20. **That is not "we beat GPT-4"** — it is a different protocol, and
-the comparison worth drawing is mechanical rather than competitive:
+#### Listwise against STaRK's pointwise
+
+The published GPT-4 reranker tops the PRIME Synthesized(10%) board at 0.2655
+mrr, about +3.05 over its dense baseline. Ours gains +12.20. **That is not
+"we beat GPT-4"** — it is a different protocol:
 
 | | STaRK's reranker | ours |
 |---|---|---|
 | shape | pointwise, one call per candidate | listwise, one call per query |
 | calls/query | up to `max_k=100` | 1 |
-| output | one float 0.0–1.0, `max_tokens=5` | 20 scores, 0–100 |
-| candidate text | `add_rel=True` (relations included) | relation-free |
-| prior | `sim_weight=0.1` retrieval-rank blend | retrieval rank as tie-break only |
+| output | one float 0.0-1.0, `max_tokens=5` | 20 scores, 0-100 |
+| candidate text | `add_rel=True` | relation-free |
+| prior | `sim_weight=0.1` rank blend | retrieval rank as tie-break only |
 
-Theirs sees *more* text per candidate and gains *less*. That rules out
-"better documents" as the explanation and points at the comparison itself:
-scoring candidates against each other in one context lets the model use
-relative judgements it cannot make when each candidate is scored blind. It
-is also ~100x cheaper per query.
+Theirs sees *more* text per candidate and gains *less*, which rules out
+"better documents" and points at the comparison itself: scoring candidates
+against each other in one context supports relative judgements that scoring
+each blind cannot. It is also ~100x cheaper per query.
 
-#### Reranking is now near its ceiling, and recall is the constraint
+#### Reranking is near its ceiling; recall is the constraint
 
-hit@20 on this arm is **0.44643** — no reranker can promote a document
-retrieval never surfaced. Against that ceiling:
+hit@20 on this arm is **0.44643**, and no reranker can promote a document
+retrieval never surfaced. Against that ceiling, hit@1 is **64%** of what is
+reachable and hit@5 is **90%**. For 55% of queries the answer is not in the
+candidate set at all.
 
-- hit@1 0.28571 / 0.44643 = **64%** of reachable queries answered first
-- hit@5 0.40000 / 0.44643 = **90%** reachable into the top five
+So the page's working assumption inverts. Ranking was the bottleneck and is
+now largely spent; **retrieval recall is the bottleneck**, and that is where
+the next gain has to come from.
 
-So further reranking effort has little left to win. For 55% of queries the
-answer is not in the candidate set at all, and that is where the next gain
-is. This reverses the page's working assumption: ranking was the bottleneck
-and is now largely solved; retrieval recall is the bottleneck.
+### What is still not measured
 
-### What is not measured
+**The knowledge graph.** `dense`, `lexical` and `hybrid` all call
+`search_chunks` and none of them reads a relationship; `hybrid` is
+redstring's rank fusion of the vector and lexical channels, not traversal.
+Both native arms carry all 8,100,498 edges and **not one query has touched
+them.**
 
-**The knowledge graph.** It is reached only by `deep`, through `neighbors`
-and `get_relationships`, and those arms are phase C. Nothing on this page
-yet says whether building a graph helps retrieval — which is the question
-the benchmark exists to answer.
+The graph is reached only by `deep`, through `neighbors` and
+`get_relationships`. Those arms need the embedding server at `-np 1` with a
+4096-token context so the 27B chat model can be co-resident -- see
+B-CORESIDENCE-1. Until they run, this page says nothing about whether
+building a knowledge graph helps retrieval, which is the question the
+benchmark exists to answer.
 
 ### Confidence
 
-280 queries. Individual metric gaps of ~0.014 are four queries and should
-not be read alone. What carries weight is direction and structure across
-metrics: the granularity effect moves mrr and recall together by ~15%, and
-the fusion effect changes sign between corpora. Single-metric differences
-under about 0.01 are noise at this sample size.
-
-Read `scripts/results_table.py`'s "Suspect cells" output before believing any
-row. It flags all-zero metrics, unbacked cost columns, `deep` against an
-edgeless corpus, and reports written against a config that has since changed.
+280 queries. A gap of 0.014 in mrr is roughly four queries and should not
+be read alone. The findings above rest on direction and structure across
+metrics and corpora -- the chunker effect moves mrr and recall together by
+15%, the lexical band is narrow across a 2.2x granularity range, and the
+fusion gain changes sign in its relationship to dense strength. Single
+metric differences under about 0.01 are noise at this sample size.
 
 ## The benchmark
 

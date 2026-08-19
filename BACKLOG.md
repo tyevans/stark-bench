@@ -396,10 +396,17 @@ Keep expensive-to-recompute artifacts out of the containers.
 against Nemotron's 4096, so it cannot run `capped-whole-5000` -- the server
 rejects chunks over the limit -- and runs `capped-whole-4000` instead.
 
-Finer chunking is the largest single effect measured in RESULTS.md (finding
-1: 1.057 -> 1.139 chunks/node costs 15% of mrr), and it is negative. So the
-comparison now varies the model and the granularity together, in the same
-direction, and a gap cannot be attributed to either.
+The chunker is the second-largest retrieval effect in RESULTS.md (finding 4:
+a 25% spread in dense mrr across four corpora), so the comparison now varies
+the model and the chunking together and a gap cannot be attributed to either.
+
+This entry originally argued the penalty was *negative and monotonic in
+granularity*, citing a RESULTS.md finding that has since been retracted --
+`native-sliding1k` has twice the granularity of `redstring-native` and scores
+15% better. The correct statement is that the direction of the 5000 -> 4000
+change is unknown. That is a weaker claim and still sufficient: an unknown
+effect of unknown sign sitting on top of the model swap is exactly what makes
+the comparison unattributable.
 
 To make it clean, re-run Nemotron at `capped-whole-4000` and compare that to
 `nomic-wholedoc`. Not done here because Nemotron embeds at 18 texts/s against

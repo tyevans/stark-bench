@@ -23,9 +23,10 @@
 # The chunker differs too, and it has to. nomic's hard ceiling is 2048
 # tokens against Nemotron's 4096, so `capped-whole-5000` overruns it -- the
 # server rejects a 2083-token chunk outright. This arm therefore runs
-# `capped-whole-4000`, which is FINER chunking, and finding 1 in RESULTS.md
-# measures finer chunking as the largest single effect on the page and it is
-# negative.
+# `capped-whole-4000`. RESULTS.md finding 4 measures a 25% spread in dense
+# mrr across chunkers, so changing the cap moves a variable that matters --
+# in an unknown direction, since finding 3 retracted the claim that finer is
+# monotonically worse.
 #
 # So `native-wholedoc` minus `nomic-wholedoc` is the model AND the
 # granularity its context limit forces, and a gap cannot be attributed to
