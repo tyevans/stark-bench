@@ -38,10 +38,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 
-from stark_bench.ports import BudgetTracker, Ranked
+from stark_bench.domain import Ranked
+from stark_bench.ports import BudgetTracker
 
 if TYPE_CHECKING:
-    from stark_bench.ports import Query, Toolset
+    from stark_bench.domain import Query
+    from stark_bench.ports import Toolset
 
 #: Characters, not tokens -- estimated at ~4 chars/token (conservative for
 #: English text; a real tokenizer would be model-specific and is not worth

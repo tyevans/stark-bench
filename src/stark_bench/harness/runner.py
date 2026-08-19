@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from stark_bench.ports import Agent, Query, Ranked, Toolset
+    from stark_bench.domain import Query, Ranked
+    from stark_bench.ports import Agent, Toolset
 
 logger = logging.getLogger(__name__)
 

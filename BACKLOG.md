@@ -217,3 +217,35 @@ reduced subset would have produced a number comparable to nothing else here.
 
 Nothing here is blocked on it: the control plus three arms times
 `dense`/`hybrid` is seven of the numbers, and none of them make an LLM call.
+
+## B-EMBED-RETRY-1 — a transient 503 from the embedding server kills a whole ingest
+
+`src/stark_bench/skb/ingest.py` makes embedding calls through redstring's
+`EmbeddingProvider` and lets `EmbeddingProviderError` propagate. Restarting
+llama.cpp mid-run therefore ends the ingest, because the server answers
+`503 {"message": "Loading model"}` for the tens of seconds it takes to load
+weights onto the GPU.
+
+Observed 2026-08-19: a run at 95,277 of 136,772 chunks died on exactly this
+while the server was restarted to change `--ubatch-size`. The log holds
+seven `503`s, so it was retried at the HTTP layer by the OpenAI client and
+still gave up well inside the load window.
+
+Resuming makes this survivable rather than harmless, and that is why it has
+not been fixed: nothing is lost, the run just has to be relaunched by hand,
+and `scripts/sweep.sh` already retries an arm up to `MAX_ATTEMPTS=5`. The
+gap is the *manual* path — a bare `--ingest` invocation has no retry at all,
+which is the path used for every throughput probe.
+
+What to do:
+
+- retry `503` and connection errors with a backoff long enough to cover a
+  model load (tens of seconds, not the OpenAI client's default), and
+  distinguish them from a `400`, which means the batch is too big and
+  retrying it forever is the wrong answer;
+- decide where it belongs. Wrapping it here keeps redstring's adapter
+  honest about what the server said; putting it in redstring means every
+  consumer gets it. The adapter already raises a typed
+  `EmbeddingProviderError`, so a caller *can* distinguish these — it just
+  has to parse the message, which argues for a status code on the error
+  rather than a retry loop in this repo.

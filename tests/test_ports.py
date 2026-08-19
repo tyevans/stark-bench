@@ -1,4 +1,5 @@
-from stark_bench.ports import Agent, Query, Ranked
+from stark_bench.domain import Query, Ranked
+from stark_bench.ports import Agent
 
 
 def test_ranked_is_a_node_id_and_a_score():

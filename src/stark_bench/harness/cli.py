@@ -20,7 +20,6 @@ import asyncio
 import itertools
 import json
 import logging
-import time
 from functools import partial
 from hashlib import blake2b
 from dataclasses import replace
@@ -28,7 +27,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid5
 
-import asyncpg
 from redstring import TenantId
 from redstring.chunks.adapters.postgres import PostgresChunkStore
 from redstring.extraction.chunkers.boundary_preference_chunker import (
@@ -57,7 +55,9 @@ from stark_bench.skb.artifacts import (
 )
 from stark_bench.skb.chunkers import WholeDocumentChunker
 from stark_bench.skb.ids import NAMESPACE_STARK
+from stark_bench.application.ingest_corpus import ingest_corpus
 from stark_bench.skb.ingest import ingest
+from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
 from stark_bench.tools.redstring_tools import RedstringToolset
 
 if TYPE_CHECKING:
@@ -298,26 +298,6 @@ def report_path(config: RunConfig) -> Path:
     return RESULTS_ROOT / f"{config.name}.{config.agent}.json"
 
 
-async def _load_existing_chunk_ids(table: str, tenant_id: TenantId) -> set[str]:
-    """This tenant's chunk ids, in one query -- the resume skip's input.
-
-    A per-node lookup would be ~129k round trips against `PostgresChunkStore`,
-    which has no bulk-id method on the `ChunkStore` port. Querying the table
-    directly, once, up front, is what keeps the skip check in-memory
-    thereafter. `table` is the same value `_table_for` derives -- a slug of
-    `config.embeddings`, never caller input -- so it is safe to interpolate.
-    """
-    connection = await asyncpg.connect(POSTGRES_DSN)
-    try:
-        rows = await connection.fetch(
-            f"SELECT id FROM {table} WHERE tenant_id = $1",  # nosec B608
-            tenant_id,
-        )
-    finally:
-        await connection.close()
-    return {str(row["id"]) for row in rows}
-
-
 async def _do_ingest(
     config: RunConfig,
     *,
@@ -336,8 +316,6 @@ async def _do_ingest(
 
     data_dir = _data_dir(config)
     tenant_id = _tenant_for(config)
-
-    started = time.monotonic()
 
     vector_for = None
     embeddings = None
@@ -363,28 +341,22 @@ async def _do_ingest(
     await chunks.ensure_schema()
     await graph.ensure_schema()
     try:
-        existing_chunk_ids: set[str] = set()
-        existing_ids_load_s = 0.0
-        if resume:
-            load_started = time.monotonic()
-            existing_chunk_ids = await _load_existing_chunk_ids(table, tenant_id)
-            existing_ids_load_s = time.monotonic() - load_started
-            logger.info(
-                "loaded %d existing chunk ids for tenant in %.2fs (resume)",
-                len(existing_chunk_ids),
-                existing_ids_load_s,
-            )
-
         nodes = read_nodes(data_dir / "nodes.jsonl")
         if limit is not None:
             nodes = itertools.islice(nodes, limit)
         edges = read_edges(data_dir / "edges.jsonl") if ingest_edges else iter(())
 
-        report = await ingest(
-            nodes,
-            edges,
-            dataset=config.dataset,
+        # Resuming and holding an index are one decision, so the use case
+        # takes one argument. `None` is "write everything".
+        outcome = await ingest_corpus(
+            engine=ingest,
+            nodes=nodes,
+            edges=edges,
             tenant_id=tenant_id,
+            chunk_index=PostgresChunkIdIndex(POSTGRES_DSN, table) if resume else None,
+            edges_ingested=ingest_edges,
+            config_verbatim=config.raw,
+            dataset=config.dataset,
             graph=graph,
             chunks=chunks,
             chunker=CHUNKERS[config.chunker](),
@@ -392,32 +364,12 @@ async def _do_ingest(
             embeddings=embeddings,
             concurrency=embed_concurrency if embeddings is not None else 1,
             embed_batch=embed_batch,
-            existing_chunk_ids=existing_chunk_ids,
-            resume=resume,
         )
     finally:
         await chunks.close()
         await graph.close()
 
-    elapsed = time.monotonic() - started
-    return {
-        "nodes": report.nodes,
-        "chunks": report.chunks,
-        "skipped": report.skipped,
-        "edges": report.edges,
-        "self_loops_dropped": report.self_loops_dropped,
-        "edges_ingested": ingest_edges,
-        "resume": resume,
-        "existing_ids_load_s": existing_ids_load_s,
-        "wall_time_s": elapsed,
-        # The config that produced this corpus, verbatim, so a later run can
-        # tell whether resuming is safe. A chunk id derives from
-        # (source, text): a changed chunker writes new ids and leaves the old
-        # ones behind as live rows that still answer queries, so resuming
-        # across a chunking change yields a silent mixture of two chunkings
-        # rather than a merely stale corpus. See scripts/resume_is_safe.py.
-        "config_verbatim": config.raw,
-    }
+    return outcome.as_dict()
 
 
 async def _do_run(config: RunConfig) -> None:
@@ -574,9 +526,7 @@ def main() -> None:
             )
         )
         RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-        ingest_report_path(config).write_text(
-            json.dumps(report, indent=2)
-        )
+        ingest_report_path(config).write_text(json.dumps(report, indent=2))
         print(report)  # noqa: T201
 
     if args.run:

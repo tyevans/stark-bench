@@ -14,10 +14,12 @@ in the cases where it says no.
 from __future__ import annotations
 
 import json
+from uuid import UUID
 
 import pytest
 
 from scripts.resume_is_safe import resume_is_safe
+from stark_bench.application.ingest_corpus import ingest_corpus
 
 CONFIG = "name: arm\nchunker: whole-document\n"
 
@@ -31,7 +33,9 @@ def root(tmp_path):
 
 
 def _report(root, **fields) -> None:
-    (root / "results" / "arm.ingest.json").write_text(json.dumps(fields), encoding="utf-8")
+    (root / "results" / "arm.ingest.json").write_text(
+        json.dumps(fields), encoding="utf-8"
+    )
 
 
 def test_an_identical_config_allows_resume(root):
@@ -41,7 +45,9 @@ def test_an_identical_config_allows_resume(root):
 
 def test_a_changed_chunker_refuses(root):
     """The case the guard exists for."""
-    _report(root, nodes=129375, config_verbatim="name: arm\nchunker: sliding-1000-500\n")
+    _report(
+        root, nodes=129375, config_verbatim="name: arm\nchunker: sliding-1000-500\n"
+    )
     assert resume_is_safe("arm", root) is False
 
 
@@ -77,22 +83,39 @@ def test_unreadable_json_refuses(root):
     assert resume_is_safe("arm", root) is False
 
 
-def test_the_ingest_report_actually_records_the_field():
+async def test_the_ingest_report_actually_records_the_field():
     """The guard is inert unless `--ingest` writes what it reads.
 
-    Third time this session that a helper was correct while nothing checked
-    the producer -- see test_ingest_stats_reach_the_report.py. Structural,
-    because writing a real report needs Postgres and an endpoint.
+    This was an AST grep of `cli.py` for the string `"config_verbatim"`,
+    with a docstring explaining that writing a real report needed Postgres
+    and an embedding endpoint. That stopped being true when the ingest
+    became a use case over an injected engine: the producer now runs in a
+    millisecond against a fake, so the guard can assert the actual bytes
+    instead of the presence of a literal.
+
+    The old form would also have passed on a `cli.py` that merely mentioned
+    the name in a comment, and it failed the moment the field moved to a
+    keyword argument -- wrong in both directions, which is what a
+    structural stand-in buys you.
     """
-    import ast
-    from pathlib import Path
 
-    import stark_bench.harness.cli as cli_module
+    class Counts:
+        nodes = edges = chunks = skipped = self_loops_dropped = 0
 
-    source = Path(cli_module.__file__).read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    found = any(
-        isinstance(node, ast.Constant) and node.value == "config_verbatim"
-        for node in ast.walk(tree)
+    async def engine(nodes, edges, /, **kwargs):
+        return Counts()
+
+    outcome = await ingest_corpus(
+        engine=engine,
+        nodes=iter(()),
+        edges=iter(()),
+        tenant_id=UUID("11111111-1111-1111-1111-111111111111"),
+        chunk_index=None,
+        edges_ingested=False,
+        config_verbatim=CONFIG,
     )
-    assert found, "cli.py never writes config_verbatim into the ingest report"
+
+    assert outcome.as_dict()["config_verbatim"] == CONFIG, (
+        "the ingest report must carry the config that produced it, "
+        "or resume_is_safe has nothing to compare against"
+    )

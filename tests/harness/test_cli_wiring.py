@@ -17,7 +17,7 @@ from stark_bench.harness.cli import (
     toolset_for,
 )
 from stark_bench.harness.config import RunConfig
-from stark_bench.ports import Query, Ranked, ToolCall
+from stark_bench.domain import Query, Ranked, ToolCall
 
 
 class _Schema(BaseModel):

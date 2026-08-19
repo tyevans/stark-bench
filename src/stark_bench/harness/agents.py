@@ -35,7 +35,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from stark_bench.harness.config import RunConfig
-    from stark_bench.ports import Agent, Query, Ranked, Toolset
+    from stark_bench.domain import Query, Ranked
+    from stark_bench.ports import Agent, Toolset
 
 #: Per *query*, not per run -- see the module docstring. Sized so a deep run
 #: over the test split cannot cost an order of magnitude more than the

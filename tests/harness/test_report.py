@@ -2,7 +2,7 @@ import json
 
 from stark_bench.harness.config import RunConfig
 from stark_bench.harness.report import summarise_cost, write_report
-from stark_bench.ports import ToolCall
+from stark_bench.domain import ToolCall
 
 
 def test_cost_is_per_query_not_total_calls():

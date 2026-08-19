@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from stark_bench.ports import Ranked
+from stark_bench.domain import Ranked
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

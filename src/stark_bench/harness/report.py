@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from stark_bench.harness.config import RunConfig
-    from stark_bench.ports import ToolCall
+    from stark_bench.domain import ToolCall
 
 
 def summarise_cost(calls: Sequence[ToolCall], queries: int) -> dict[str, float]:

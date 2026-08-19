@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from stark_bench.ports import Query
+from stark_bench.domain import Query
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
