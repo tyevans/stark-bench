@@ -93,7 +93,32 @@ Two hazards, both hit for real:
   `-np 16` and `--ctx-size 32768` each slot gets 2048 tokens, and a longer
   document is rejected with `input (N tokens) is larger than the max context
   size`. For embeddings llama.cpp uses non-causal attention, so
-  `--ubatch-size` must *also* be ≥ the longest sequence. Both have to clear it.
+  `--ubatch-size` must *also* be ≥ the longest sequence. Both have to clear
+  it, and **`--ubatch-size` is the one that is usually forgotten** — it was
+  the binding constraint on three separate occasions here while attention
+  was on `--ctx-size`, and its error says *"increase the physical batch
+  size"* rather than anything about context.
+- **A server flag you edited may not be the one running.** llama-swap
+  launches the embedding peer with its own command line, so edits to
+  `llama-server-embed.service` did nothing until the peer was restarted
+  through llama-swap. Twice this looked like a model limitation: a config
+  reporting `n_ctx: 2048` was diagnosed as "nomic's GGUF declares 2048" and
+  that diagnosis was wrong — a completely different model reported the same
+  2048 an hour later. **Verify a server change against `/props` on the peer
+  port before reasoning about what it means.**
+- **More slots is not more throughput, and here it was less.** Measured over
+  the same 1500 nodes with the same chunker: `-np 32` with the chat model
+  unloaded gave 994 / 1421 / 1449 nodes/min at client concurrency 32 / 64 /
+  128, while `-np 1` with the 27B chat model *also resident* gave 1745 /
+  1792 at concurrency 16 / 64. One slot batching a deep client queue beats
+  32 slots scheduled against each other; splitting the KV cache 32 ways
+  bought nothing and cost VRAM. Client-side concurrency is the knob that
+  matters, and it saturates around 64.
+- **Do not compare two throughput numbers measured on different slices.**
+  The first probes ran on the first 400 nodes of `nodes.jsonl`, which are
+  unusually short — 1801 nodes/min there against 1449 on the first 1500,
+  same server. That looked like a regression from a server change and was
+  entirely the sample. Fix the slice before varying anything else.
 
 Background a long ingest with the harness's own backgrounding, **not `nohup`
 or `setsid`** — those did not survive here, twice, and the second time the
@@ -108,23 +133,35 @@ launcher exited 0 while the real work never started.
 side and nothing on the document side. Most modern embedders are asymmetric
 this way.
 
-redstring's `EmbeddingProvider` port is a single `embed(texts)` with **no
-notion of document versus query** — which is arguably the right shape for the
-port, since the distinction belongs to the model rather than to the act of
-embedding. The consequence is that **the caller must seat the prefixes, and
-this repo is the caller.**
+**This is now solved in the library, not here.** redstring's
+`EmbeddingProvider` port has two sides — `embed(texts)` is the corpus side
+and `embed_query(texts)` is the query side — and
+`LangChainEmbeddingProvider` takes `document_prefix` and `query_prefix`,
+both defaulting to empty. See redstring ADR 0043. The port grew the
+distinction because a rule that every call site must remember to prepend a
+string is a rule that holds only until someone forgets.
 
 An unprefixed run does not fail. The vectors are well-formed, they cluster
 sensibly, and they score plausibly. The only symptom is a retrieval number
 quietly worse than the model can produce — indistinguishable from "this model
 is mediocre", which is the conclusion this project nearly drew about nomic.
 
-`PrefixedEmbeddingProvider` in `harness/providers.py` exists for this. As of
-the last session it was **written and never tested, uncommitted in the working
-tree** — finish it, wire it through the CLI as two instances (corpus prefix at
-ingest, query prefix at retrieval), and put the prefixes in `RunConfig` so they
-land in `config_verbatim` in the report. A prefix that is not recorded is a
-number that cannot be reproduced.
+What this repo does: `RunConfig.document_prefix` and
+`RunConfig.query_prefix` are stated per config, so they land in
+`config_verbatim` in every report — a prefix that is not recorded is a
+number that cannot be reproduced. `_live_embeddings_for` passes them
+through, and `_table_for` folds them into the chunk table name, because
+**a corpus embedded with a prefix and the same corpus embedded without it
+are not comparable vectors**. Two prefixings must never share a table.
+
+`PrefixedEmbeddingProvider`, a wrapper drafted here before the library
+grew the method, has been deleted. Do not reintroduce it.
+
+The current model is `Nemotron-3-Embed-1B`, which wants `passage: ` and
+`query: ` — with the trailing space, no newline, and a prefix on *both*
+sides. Its `1_Pooling/config.json` sets `include_prompt: true`, so the
+prefix tokens belong inside the mean pool, which is what prepending
+client-side gives you.
 
 ## Where the numbers are
 
@@ -189,11 +226,13 @@ empty predictions up front and names the queries and the likely cause.
 
 ## Every real bug in this project has been silent
 
-Four for four. A chunker that inflated its output 3.2×; a corpus that moved
-tables; 280 queries retrieving nothing with no error logged; an embedding model
-running below spec for want of a string. **None raised an exception at the
-point of failure.** Each surfaced only because a number looked wrong, and each
-took real time to trace back.
+Six for six. A chunker that inflated its output 3.2x; a corpus that moved
+tables; 280 queries retrieving nothing with no error logged; an embedding
+model running below spec for want of a string; a model swapped underneath a
+still-advertised model id; a `write_report(ingest={})` that emptied the cost
+column of every report ever written. **None raised an exception at the point
+of failure.** Each surfaced only because a number looked wrong, and each took
+real time to trace back.
 
 The habit that follows: **assert on the data at each step, not on exit codes.**
 A stage that "succeeded" is not evidence it did anything. Check chunks per
@@ -203,6 +242,33 @@ and make the check fail loudly rather than log a warning nobody reads.
 Corollary, learned the same way: **a zero, an empty, and a perfect score are
 the results most in need of suspicion.** "0 failed" and "0 collected" are the
 same exit status.
+
+### Two of the six were "the helper works, nobody calls it"
+
+Worth its own heading because it happened **twice in one session**, hours
+apart, in unrelated code, and both times the tests written specifically to
+prevent it passed:
+
+- `_live_embeddings_for` was reverted by hand to drop both `*_prefix=`
+  arguments — the original prefix defect, restored deliberately. All 39
+  harness tests passed, including four new ones covering the prefix
+  machinery. A table name reacting to a prefix proves the config field is
+  read *somewhere*, not that a byte of it reaches the server.
+- `write_report(...)` was reverted to `ingest={}`. All 45 harness tests
+  passed, including four new ones covering `_ingest_stats` from every
+  angle.
+
+The shape: exhaustive tests of a helper, and nothing asserting the call
+site uses it. No test of a helper can see this, because the helper is
+correct. **When you add a helper that one place is supposed to call, add
+the test that the place calls it** — an AST check on the call site is
+legitimate and cheap when running the caller needs Postgres, Neo4j and an
+endpoint. See `tests/harness/test_ingest_stats_reach_the_report.py` for the
+pattern.
+
+The general habit this project keeps relearning: **break the implementation
+on purpose and watch the suite go red before believing it.** Every one of
+the defects above was found that way and none by reading.
 
 ## The redstring bugs found from here
 
@@ -301,10 +367,22 @@ not the architecture), `B-BUDGET-CAPS-1`, `B-DEEP-EDGES-1`,
 
 ## Before running the deep agent
 
-`B-DEEP-EDGES-1`. Both ingests to date ran **without `--ingest-edges`**, so
-`neighbors` and `relationships` return empty. A low deep-agent score against
-that corpus is a data finding wearing an architecture finding's clothes. Load
-the edges first (Neo4j only, no endpoint time) or do not report the number.
+`B-DEEP-EDGES-1`. An ingest without `--ingest-edges` leaves `neighbors` and
+`relationships` returning empty, and a low deep-agent score against that
+corpus is a data finding wearing an architecture finding's clothes.
+
+Loading them afterwards is **minutes, not a re-ingest**, and the reason is
+worth knowing rather than rediscovering: `skb/ingest.py:162`'s resume path
+returns `None` for the vectors and nothing else — the entity is still built,
+still batched, still added to `known`. So `--ingest --ingest-edges` with
+resume at its default re-upserts entities without embedding a character,
+then loads the edges. The entities being present is also what keeps
+`upsert_relationships` from raising `MissingEntityError` on the first edge.
+
+Check two things afterwards, neither of which the ingest will volunteer:
+`self_loops_dropped` is non-zero (PRIME has them; a zero more likely means
+the loader stopped looking), and `edges` matches `edges.jsonl`'s line count
+minus those drops.
 
 Note also that `runner.run` holds **one agent for the whole query set**. A
 `DeepAgent` carrying a single `Budget` would spend the entire allowance on
@@ -314,14 +392,25 @@ anywhere. `PerQueryDeepAgent` in `harness/agents.py` rebuilds the budget per
 
 ## Still to do
 
-1. Finish and test `PrefixedEmbeddingProvider`; wire it through the CLI.
-2. Re-ingest the three nomic arms with prefixes (~2.5h endpoint time,
-   sequential — they contend for the same server).
-3. Fill the agent × config matrix; `zero_shot` and `deep` are wired but have
-   never been scored.
-4. `RESULTS.md` with accuracy **and cost** per architecture — the cost side is
-   why `ToolCall.tokens` exists (`int | None`, where `None` ≠ 0).
-5. Whole-branch review, then `superpowers:finishing-a-development-branch`.
+1. Fill the agent x config matrix. `dense` and `hybrid` are cheap; `zero_shot`
+   and `deep` are LLM-bound and had never been scored as of this writing.
+2. `RESULTS.md` with accuracy **and cost** per architecture — the cost side is
+   why `ToolCall.tokens` exists (`int | None`, where `None` != 0), and the
+   ingest half now reaches the report via `_ingest_stats`.
+3. Whole-branch review, then `superpowers:finishing-a-development-branch`.
+
+When reading the chunking sweep, hold one caveat: its three points are
+**1.06, 1.14 and 1.94 chunks/node**, and the first two are closer together
+than intended — the whole-document cap had to drop to 5000 characters to fit
+a 2048-token ubatch. A null result between `native-wholedoc` and
+`redstring-native` is therefore weaker evidence than a null result between
+either and `native-sliding1k`.
+
+And hold one about the model: the Nemotron GGUF is **Q4_K_M with no
+importance matrix and no MTEB evaluation**, and NVIDIA's own quantised
+release is NVFP4 with quantisation-aware distillation done specifically to
+recover long-sequence retrieval accuracy. Every Nemotron number here is a
+number for this quantisation, not for the model.
 
 Deferred by explicit decision: the **extraction track** — ingesting raw
 documents through redstring's own extraction pipeline rather than loading
