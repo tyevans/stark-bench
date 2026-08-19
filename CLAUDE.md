@@ -372,7 +372,7 @@ site uses it. No test of a helper can see this, because the helper is
 correct. **When you add a helper that one place is supposed to call, add
 the test that the place calls it** — an AST check on the call site is
 legitimate and cheap when running the caller needs Postgres, Neo4j and an
-endpoint. See `tests/harness/test_ingest_stats_reach_the_report.py` for the
+endpoint. See `tests/composition/test_ingest_stats_reach_the_report.py` for the
 pattern.
 
 The general habit this project keeps relearning: **break the implementation
