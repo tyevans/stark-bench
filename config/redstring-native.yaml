@@ -1,0 +1,9 @@
+name: redstring-native
+dataset: prime
+split: test-0.1
+chunker: boundary-preference
+embeddings: nomic-embed-text
+dimension: 768
+aggregation: max
+agent: hybrid
+k: 20

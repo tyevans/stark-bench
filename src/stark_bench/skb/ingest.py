@@ -34,7 +34,7 @@ from redstring.domain.chunk import StoredChunk, chunk_id
 from stark_bench.skb.ids import STARK_ID_KEY, entity_id_for
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from redstring import EmbeddingProvider, TenantId
 
@@ -78,8 +78,23 @@ async def ingest(
     graph,
     chunks,
     chunker,
-    embeddings: EmbeddingProvider,
+    embeddings: EmbeddingProvider | None = None,
+    vector_for: Callable[[str], list[float]] | None = None,
 ) -> IngestReport:
+    """Load nodes (and their chunks) then edges, in that order.
+
+    Chunk vectors come from exactly one of two sources:
+
+    - `embeddings`: `EmbeddingProvider.embed(texts)`, live embedding.
+    - `vector_for`: a per-node-id lookup (STaRK's precomputed vectors), used
+      as-is with no embedding call at all. `WholeDocumentChunker` makes this a
+      clean 1:1, one chunk per node. A miss is the caller's `vector_for` to
+      raise on -- this function does not catch it.
+
+    Exactly one must be given; both or neither is a caller error.
+    """
+    if (embeddings is None) == (vector_for is None):
+        raise ValueError("ingest needs exactly one of embeddings or vector_for")
     observed_at = datetime.now(UTC)
     known: set[str] = set()
     node_count = chunk_count = 0
@@ -96,8 +111,11 @@ async def ingest(
 
         source_id = SourceId(f"{dataset}:{node.node_id}")
         result = chunker.chunk(node.document)
-        texts = [c.text for c in result.chunks]
-        vectors = await embeddings.embed(texts)
+        if vector_for is not None:
+            vectors = [vector_for(node.node_id) for _ in result.chunks]
+        else:
+            texts = [c.text for c in result.chunks]
+            vectors = await embeddings.embed(texts)
         for piece, vector in zip(result.chunks, vectors, strict=True):
             chunk_batch.append(
                 StoredChunk(

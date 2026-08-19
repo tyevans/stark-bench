@@ -1,0 +1,11 @@
+name: vss-control
+dataset: prime
+split: test-0.1
+# One chunk per node: STaRK's precomputed vectors are one per node document,
+# so the control path must present each document whole for them to apply.
+chunker: whole-document
+embeddings: precomputed-ada002
+dimension: 1536
+aggregation: max
+agent: dense
+k: 20

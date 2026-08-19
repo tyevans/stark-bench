@@ -1,17 +1,21 @@
 services:
-  neo4j:
-    image: neo4j:5.28
-    environment:
-      NEO4J_AUTH: neo4j/password
-    ports:
-      - "7687:7687"
-      - "7474:7474"
-
   postgres:
     image: pgvector/pgvector:pg17
     environment:
-      POSTGRES_USER: stark_bench
-      POSTGRES_PASSWORD: stark_bench
-      POSTGRES_DB: stark_bench
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: stark
+      POSTGRES_PASSWORD: stark
+      POSTGRES_DB: stark
+    ports: ["55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stark"]
+      interval: 5s
+      retries: 20
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/starkbench
+    ports: ["57474:7474", "57687:7687"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 5s
+      retries: 20
