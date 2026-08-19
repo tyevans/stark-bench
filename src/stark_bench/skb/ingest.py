@@ -142,20 +142,42 @@ async def ingest(
 
     ## Which knob wins depends on the endpoint, so keep both
 
-    Everything measured here is against **one llama.cpp process, one slot,
-    one local GPU**, and that setting is unusually kind to batching and
-    unusually unkind to concurrency: there is no per-request network latency
-    worth hiding, and no second slot for a second request to occupy, so
-    concurrent requests fragment work that could have been one large forward
-    pass. On this endpoint `concurrency=1` with a large `embed_batch` was
-    the best configuration observed.
+    **Client concurrency should be at least the server's `-np`.** That is
+    the whole rule, and it took seven measurements and three wrong
+    explanations to arrive at. Against llama.cpp with `-np 4`, over 3000
+    nodes:
 
-    Do not read that as a general rule. Against a hosted API, a multi-slot
-    or multi-replica server, or anything across a real network, round-trip
-    latency dominates and concurrency is the knob that matters -- batching
-    alone would leave most of the throughput unclaimed, and a provider that
-    caps request size may not even permit a large batch. The two are
-    independent and both are exposed for that reason.
+    | concurrency | batch | slots used | nodes/min |
+    |---|---|---|---|
+    | 1 | 128 | 1 of 4 | 1233 |
+    | 2 | 1 | 2 of 4 | 1312 |
+    | 8 | 1 | 4 of 4 | 1368 |
+    | 2 | 16 | 2 of 4 | 1535 |
+    | 2 | 128 | 2 of 4 | 1447 |
+    | 8 | 64 | 4 of 4 | 1612 |
+    | 4 | 128 | 4 of 4 | 1618 |
+
+    A request occupies one slot, so `concurrency=1` leaves three quarters of
+    the server idle no matter how large the batch -- and it was the slowest
+    of the seven despite carrying 128 texts per request. Slots scale
+    sublinearly (1 -> 2 is +17%, 2 -> 4 is +12%), so one slot already
+    partially saturates the device and there is little beyond four.
+
+    Batching raises the per-slot ceiling and is worth about 18% at fixed
+    concurrency; concurrency decides how many slots are working at all.
+    Neither substitutes for the other.
+
+    ## Do not tune against GPU utilisation
+
+    It was the most misleading signal in this investigation. `nvidia-smi`
+    reported its highest number on `1 x 128` -- the slowest configuration
+    measured -- because a kernel is resident whenever any slot is busy, and
+    three idle slots look exactly like none. Utilisation answers "is the
+    device doing something", not "is the device doing as much as it could".
+
+    On a hosted API or a multi-replica server the balance shifts further
+    toward concurrency still, since round-trip latency dominates and a
+    provider may cap request size outright.
 
     `vector_for` does no I/O and ignores both.
 
