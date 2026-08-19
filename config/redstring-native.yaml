@@ -8,10 +8,11 @@ aggregation: max
 agent: hybrid
 k: 20
 
-# nomic-embed-text-v1.5 is asymmetric: it was trained with these exact task
+# Nemotron-3-Embed-1B is asymmetric: it was trained with these exact task
 # prefixes and expects them at inference. Omitting them is silent -- the
 # vectors are well-formed and score plausibly, just worse than the model can
-# do -- which is why every nomic config states them rather than relying on a
-# default.
+# do -- which is why every config states them rather than relying on a
+# default. The archived `nomic-no-prefixes` run is what omitting them looks
+# like: publishable-seeming numbers that understate the model.
 document_prefix: "passage: "
 query_prefix: "query: "
