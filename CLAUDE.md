@@ -156,8 +156,11 @@ during it. That pass used precomputed vectors and touched no GPU, which is
 why it was thought safe to run alongside — and it contends on *Postgres*
 instead, where `hybrid` does lexical search over a 5.7M-row terms table
 while the ingest is writing to the same database. The next interval fell to
-1071/min, a 36% drop. **Nothing else may touch the database while a
-throughput number is being taken**, whatever it does to the GPU.
+1071/min, a 36% drop, and **recovered to 2406/min in the interval after
+that pass finished**. The recovery is what makes this a diagnosis rather
+than a coincidence: 1666 before, 1071 during, 2406 after, with nothing else
+changed. **Nothing else may touch the database while a throughput number is
+being taken**, whatever it does to the GPU.
 
 **Whether `--ubatch-size 8192` beat 4096 is unresolved, and no number in
 this file answers it.** Every 4096 measurement was taken across a resume
