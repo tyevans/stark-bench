@@ -33,7 +33,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ARMS="native-wholedoc redstring-native native-sliding1k"
 EXPECTED_NODES=129375
-CONCURRENCY="${CONCURRENCY:-64}"
+# 16, not 64, and the 48 difference is worth 2.7%. Measured at -np 1:
+# concurrency 16 gives 1745 nodes/min and 64 gives 1792. The embedding peer
+# crashed twice under sustained concurrency-64 load -- `connection refused`,
+# then back up seconds later via systemd `Restart=always` -- with 373 MiB of
+# VRAM headroom while the 27B chat model shares the card. A 2.7% throughput
+# gain is not worth a five-hour run dying on it.
+CONCURRENCY="${CONCURRENCY:-16}"
+# The peer is restarted by hand and has crashed on its own. Over a run this
+# long, three attempts is optimistic.
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
 LOG_DIR="${LOG_DIR:-/tmp/stark-sweep}"
 mkdir -p "$LOG_DIR"
 
@@ -49,7 +58,7 @@ run_cli() {  # run_cli <logfile> <args...>
 
 ingest_arm() {  # ingest_arm <config>
   local cfg="$1" attempt
-  for attempt in 1 2 3; do
+  for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
     local extra=(--no-resume)
     [ "$attempt" -gt 1 ] && extra=()   # retries resume; see header
     echo "=== INGEST $cfg attempt=$attempt $(date -u +%H:%M:%S)"
@@ -58,7 +67,7 @@ ingest_arm() {  # ingest_arm <config>
          "${extra[@]}" --embed-concurrency "$CONCURRENCY"; then
       break
     fi
-    [ "$attempt" -eq 3 ] && { echo "=== ABORT: $cfg ingest failed 3x"; exit 1; }
+    [ "$attempt" -eq "$MAX_ATTEMPTS" ] && { echo "=== ABORT: $cfg ingest failed ${MAX_ATTEMPTS}x"; exit 1; }
     echo "=== retrying $cfg in 60s"; sleep 60
   done
 
