@@ -91,9 +91,21 @@ class RerankAgent:
     k: int = 20
     #: Candidates fetched before reranking. Reranking can only reorder what
     #: retrieval found, so this -- not `k` -- is the ceiling on what the
-    #: architecture can fix, and `recall@20` of the underlying `hybrid` run
-    #: is what it is bounded by.
-    fetch: int = 40
+    #: architecture can fix.
+    #:
+    #: 20, equal to `k`, which makes this a pure ordering experiment: the set
+    #: returned is exactly `hybrid`'s, so `recall@20` is identical to
+    #: `hybrid`'s by construction and every difference lands in MRR and
+    #: Hit@1. Widening it to 40 lets reranking promote from ranks 21-40 and
+    #: also lets it *demote* a marginal hit off the end -- both were observed
+    #: in a 4-query probe (gold 2->1 and 3->1, but one 18->out).
+    #:
+    #: Timing did not decide this and could not: repeated 3-query probes
+    #: against the shared endpoint returned 17.6s and 27.9s per query for the
+    #: *same* settings, and had `fetch=40` beating `fetch=30`. The variance
+    #: swamps the effect at that sample size. Treat any per-query timing here
+    #: as an order of magnitude, not a measurement.
+    fetch: int = 20
     name: str = "rerank"
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
