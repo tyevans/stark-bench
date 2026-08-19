@@ -138,3 +138,45 @@ def test_a_full_corpus_report_is_not_flagged_as_stale(table):
     """
     _write(table, "arm.dense", _good())
     assert not [p for p in table.check(table.load()) if "stale report" in p]
+
+
+def test_granularity_below_one_is_caught(table):
+    """Chunks/node under 1.0 is impossible, so it means broken arithmetic.
+
+    RESULTS.md rendered `0.381` for native-wholedoc on 2026-08-19, from a
+    resumed ingest whose `chunks` counted only what that run wrote. Nothing
+    flagged it, and the number is the one the whole chunking sweep is about.
+    """
+    _write(
+        table,
+        "arm.hybrid",
+        _good(
+            ingest={
+                "nodes": 129375,
+                "chunks": 49280,
+                "skipped": 0,
+                "edges_ingested": True,
+            }
+        ),
+    )
+    problems = table.check(table.load())
+    assert any("below 1.0 is" in p for p in problems), problems
+
+
+def test_a_resumed_ingest_renders_the_corpus_granularity(table):
+    """chunks + skipped, not chunks. The real arm-1 numbers."""
+    _write(
+        table,
+        "arm.hybrid",
+        _good(
+            ingest={
+                "nodes": 129375,
+                "chunks": 49280,
+                "skipped": 87523,
+                "edges_ingested": True,
+            }
+        ),
+    )
+    rendered = table.render(table.load())
+    assert "1.057" in rendered, rendered
+    assert "0.381" not in rendered, rendered

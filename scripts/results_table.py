@@ -78,7 +78,12 @@ def render(rows: list[dict]) -> str:
         cost = d.get("cost") or {}
         ingest = d.get("ingest") or {}
         nodes, chunks = ingest.get("nodes"), ingest.get("chunks")
-        per_node = f"{chunks / nodes:.3f}" if nodes and chunks else "--"
+        # `chunks` counts writes; `skipped` counts ids already present. The
+        # corpus holds both, so a resumed ingest reporting `chunks / nodes`
+        # understates granularity by whatever it skipped -- 0.381 for arm 1,
+        # against a real 1.058.
+        corpus_chunks = (chunks or 0) + (ingest.get("skipped") or 0)
+        per_node = f"{corpus_chunks / nodes:.3f}" if nodes and corpus_chunks else "--"
         out.append(
             f"| {row['config']} | {row['agent']} | "
             + " | ".join(_fmt(metrics.get(m)) for m in METRICS)
@@ -127,6 +132,18 @@ def check(rows: list[dict]) -> list[str]:
                 f"{where}: ingest report describes {ingest['nodes']} nodes, "
                 f"expected {EXPECTED_NODES} -- stale report from a smaller run, "
                 f"so chunks/node and ingest s describe a different corpus"
+            )
+        corpus_chunks = (ingest.get("chunks") or 0) + (ingest.get("skipped") or 0)
+        nodes = ingest.get("nodes")
+        if nodes and corpus_chunks and corpus_chunks < nodes:
+            # Impossible for any chunker here: every node yields at least one
+            # chunk, so chunks/node is >= 1.0 by construction. A value below
+            # it means the arithmetic is wrong, not that the corpus is
+            # unusual -- which is how 0.381 rendered without comment.
+            problems.append(
+                f"{where}: {corpus_chunks} chunks for {nodes} nodes "
+                f"({corpus_chunks / nodes:.3f} per node) -- below 1.0 is "
+                f"impossible; every node yields at least one chunk"
             )
         if d.get("queries") in (0, None):
             problems.append(f"{where}: scored {d.get('queries')!r} queries")
