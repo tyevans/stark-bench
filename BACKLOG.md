@@ -359,3 +359,32 @@ logging per-attempt latency.
 Ingest is resumable (`loaded N existing chunk ids for tenant`), so the cost of
 a crash is the wave in flight, not the run. That is what makes this a backlog
 item and not a blocker.
+
+## B-EPHEMERAL-STORES-1 — the stores had no volumes, and an ingest was lost
+
+`docker-compose.yml` declared no `volumes:` for either service, so Postgres
+and Neo4j wrote to anonymous volumes that are destroyed with their container.
+A `docker compose down`-shaped event at 2026-08-19T22:08:51Z removed both
+containers and the `stark-bench_default` network, taking 589,790 embedded
+chunks across four tenants with them.
+
+Fixed here by adding named volumes (`stark-pgdata`, `stark-neo4jdata`). What
+is still open is the detection gap, which is the part that cost time:
+
+- **Nothing announced the loss.** The next run failed with
+  `ConnectionRefusedError` on 55432, which reads as "the container is down",
+  not as "the corpus is gone". Those need different responses and looked
+  identical.
+- **A surviving container with an empty store would have been worse.** The
+  connection error at least failed loudly; had the stack been restarted first,
+  the queue's ingest gate would have passed on a fresh empty corpus and the
+  arms would have scored low-but-plausible numbers. That is the same silent
+  degradation shape as the stale model id and the three-valued rerank scores.
+
+So the fix worth adding is a preflight that asserts the configured tenant's
+chunk count is non-zero (or that ingest is being asked for), rather than
+letting an empty store look like a bad retriever.
+
+Note what did NOT need recovering: `results/*.json` and the persisted
+predictions are files in the repo, so every scored number survived intact.
+Keep expensive-to-recompute artifacts out of the containers.

@@ -6,6 +6,7 @@ services:
       POSTGRES_PASSWORD: stark
       POSTGRES_DB: stark
     ports: ["55432:5432"]
+    volumes: ["stark-pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stark"]
       interval: 5s
@@ -15,7 +16,23 @@ services:
     environment:
       NEO4J_AUTH: neo4j/starkbench
     ports: ["57474:7474", "57687:7687"]
+    volumes: ["stark-neo4jdata:/data"]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
       interval: 5s
       retries: 20
+
+# Named, so the data outlives the containers.
+#
+# There were no volumes here at all until an ingested corpus was destroyed by
+# a `docker compose down`: both stores wrote to anonymous volumes, which are
+# removed with the container. 589,790 embedded chunks across four tenants
+# went with them, and nothing warned -- the next run simply failed to connect.
+#
+# Scored results were unaffected, because `results/*.json` and the persisted
+# predictions are files in the repo rather than rows in the store. That split
+# is worth preserving: anything expensive enough to hurt when lost should not
+# live only in a container.
+volumes:
+  stark-pgdata:
+  stark-neo4jdata:
