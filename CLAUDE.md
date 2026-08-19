@@ -146,13 +146,21 @@ Two hazards, both hit for real:
 
 ### The only clean number we have
 
-**1,666 chunks/min**, measured 2026-08-19 on `redstring-native` ingesting
-into an **empty** tenant: `--embed-concurrency 4 --embed-batch 64` against
-Nemotron-3-Embed-1B at `--ctx-size 16384 --batch-size 8192 --ubatch-size
-8192 -np 4`. Two consecutive 3-minute intervals gave **1667 and 1666**.
+**2,046 chunks/min**, whole-arm: `redstring-native` wrote 147,329 chunks
+into an **empty** tenant in 72 minutes on 2026-08-19, at
+`--embed-concurrency 4 --embed-batch 64` against Nemotron-3-Embed-1B
+served with `--ctx-size 16384 --batch-size 8192 --ubatch-size 8192 -np 4`.
 
-A third read 1606 and is **not** clean: a `--run` scoring pass was launched
-during it. That pass used precomputed vectors and touched no GPU, which is
+Quote that figure, not an interval. An earlier version of this section said
+**1,666 chunks/min** from two consecutive 3-minute samples early in the same
+run, and it was 19% low: the run's instantaneous rate ranged from 334 to
+6,666 chunks/min depending on document length and flush timing. The tail is
+the slow part -- the longest documents produce the most tokens per batch,
+and request rate fell from 117/min at the start to 9/min at the end while
+the process was entirely healthy.
+
+One interval read 1606 and was **not** clean: a `--run` scoring pass was
+launched during it. That pass used precomputed vectors and touched no GPU, which is
 why it was thought safe to run alongside — and it contends on *Postgres*
 instead, where `hybrid` does lexical search over a 5.7M-row terms table
 while the ingest is writing to the same database. The next interval fell to
