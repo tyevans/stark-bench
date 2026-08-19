@@ -10,5 +10,6 @@ in terms of the values it moves.
 """
 
 from stark_bench.ports.agent import Agent, BudgetTracker, Toolset
+from stark_bench.ports.corpus import ChunkIdIndex
 
-__all__ = ["Agent", "BudgetTracker", "Toolset"]
+__all__ = ["Agent", "BudgetTracker", "ChunkIdIndex", "Toolset"]

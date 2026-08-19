@@ -22,6 +22,7 @@ equal.
 
 from stark_bench.domain.corpus import CorpusIdentity
 from stark_bench.domain.cost import Cost, ToolCall
+from stark_bench.domain.ingest import IngestOutcome
 from stark_bench.domain.query import Query, Ranked
 
-__all__ = ["CorpusIdentity", "Cost", "Query", "Ranked", "ToolCall"]
+__all__ = ["CorpusIdentity", "Cost", "IngestOutcome", "Query", "Ranked", "ToolCall"]

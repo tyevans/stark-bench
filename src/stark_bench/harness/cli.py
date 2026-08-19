@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid5
 
-import asyncpg
 from redstring import TenantId
 from redstring.chunks.adapters.postgres import PostgresChunkStore
 from redstring.extraction.chunkers.boundary_preference_chunker import (
@@ -58,6 +57,7 @@ from stark_bench.skb.artifacts import (
 from stark_bench.skb.chunkers import WholeDocumentChunker
 from stark_bench.skb.ids import NAMESPACE_STARK
 from stark_bench.skb.ingest import ingest
+from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
 from stark_bench.tools.redstring_tools import RedstringToolset
 
 if TYPE_CHECKING:
@@ -298,26 +298,6 @@ def report_path(config: RunConfig) -> Path:
     return RESULTS_ROOT / f"{config.name}.{config.agent}.json"
 
 
-async def _load_existing_chunk_ids(table: str, tenant_id: TenantId) -> set[str]:
-    """This tenant's chunk ids, in one query -- the resume skip's input.
-
-    A per-node lookup would be ~129k round trips against `PostgresChunkStore`,
-    which has no bulk-id method on the `ChunkStore` port. Querying the table
-    directly, once, up front, is what keeps the skip check in-memory
-    thereafter. `table` is the same value `_table_for` derives -- a slug of
-    `config.embeddings`, never caller input -- so it is safe to interpolate.
-    """
-    connection = await asyncpg.connect(POSTGRES_DSN)
-    try:
-        rows = await connection.fetch(
-            f"SELECT id FROM {table} WHERE tenant_id = $1",  # nosec B608
-            tenant_id,
-        )
-    finally:
-        await connection.close()
-    return {str(row["id"]) for row in rows}
-
-
 async def _do_ingest(
     config: RunConfig,
     *,
@@ -367,7 +347,9 @@ async def _do_ingest(
         existing_ids_load_s = 0.0
         if resume:
             load_started = time.monotonic()
-            existing_chunk_ids = await _load_existing_chunk_ids(table, tenant_id)
+            existing_chunk_ids = await PostgresChunkIdIndex(
+                POSTGRES_DSN, table
+            ).ids_for_tenant(tenant_id)
             existing_ids_load_s = time.monotonic() - load_started
             logger.info(
                 "loaded %d existing chunk ids for tenant in %.2fs (resume)",
@@ -574,9 +556,7 @@ def main() -> None:
             )
         )
         RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-        ingest_report_path(config).write_text(
-            json.dumps(report, indent=2)
-        )
+        ingest_report_path(config).write_text(json.dumps(report, indent=2))
         print(report)  # noqa: T201
 
     if args.run:
