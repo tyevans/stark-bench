@@ -32,3 +32,22 @@ class Ranked:
 
     node_id: str
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class Passage:
+    """A retrieved candidate with the text that retrieved it.
+
+    `Ranked` deliberately carries no text: it is what the evaluator consumes,
+    and an id-and-score pair is the whole of that contract. A reranker needs
+    something `Ranked` cannot express -- the evidence, not just the verdict --
+    because an LLM asked to reorder candidates it cannot read is scoring
+    names, and names are what the bi-encoder already ranked on.
+
+    The text costs nothing extra to carry. `search_chunks` already receives
+    it on every match and discards it while folding chunks up to nodes.
+    """
+
+    node_id: str
+    text: str
+    score: float
