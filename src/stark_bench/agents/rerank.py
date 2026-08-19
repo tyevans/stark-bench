@@ -65,10 +65,20 @@ _MAX_PASSAGE_CHARS = 3_000
 
 
 class Relevance(BaseModel):
-    """One candidate's score, on a scale the prompt pins to examples."""
+    """One candidate's score.
+
+    0-100 rather than 0-10, and the prompt asks for a spread rather than
+    naming anchor values. The first version scored 0-10 and described what
+    10, 5 and 0 meant; the model then used *only* those three numbers --
+    a real answer was one 10, one 5, and eighteen 0s. That collapses the
+    reranking into the top two slots, leaves everything below decided by the
+    retrieval-order tie-break, and makes one overconfident 10 enough to
+    demote a correct top hit. Naming example values on a coarse scale is an
+    instruction to quantise to them.
+    """
 
     node_id: str
-    score: float = Field(ge=0.0, le=10.0)
+    score: float = Field(ge=0.0, le=100.0)
 
 
 class Relevances(BaseModel):
@@ -77,11 +87,17 @@ class Relevances(BaseModel):
 
 _PROMPT_TEMPLATE = (
     "You are ranking candidate entities from a biomedical knowledge base "
-    "against a search query. Score every candidate from 0 to 10 for how well "
-    "it answers the query: 10 means it is exactly what the query asks for, 5 "
-    "means it is the right kind of thing but fails one stated condition, 0 "
-    "means it is unrelated. Judge only from the text shown. Return one score "
-    "for every candidate id, and invent no ids.\n\n"
+    "against a search query. Score every candidate from 0 to 100 for how "
+    "well it answers the query.\n\n"
+    "Use the whole range and give close candidates different scores -- the "
+    "scores are used to order the candidates, so two candidates with the "
+    "same score are being called indistinguishable. Reserve the top of the "
+    "range for candidates satisfying every condition in the query, the "
+    "middle for ones satisfying some, and the bottom for unrelated ones, "
+    "but choose intermediate values freely rather than rounding to those "
+    "bands.\n\n"
+    "Judge only from the text shown. Return one score for every candidate "
+    "id, and invent no ids.\n\n"
     "Query: {query}\n\nCandidates:\n{candidates}"
 )
 
