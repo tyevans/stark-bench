@@ -1,6 +1,6 @@
 import pytest
 
-from stark_bench.harness.aggregate import aggregate
+from stark_bench.domain.aggregation import aggregate
 
 
 def test_max_takes_the_best_chunk_of_a_node():

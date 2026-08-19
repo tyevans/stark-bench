@@ -1,6 +1,6 @@
 import pytest
 
-from stark_bench.harness.runner import run
+from stark_bench.application.run_queries import run
 from stark_bench.domain import Query, Ranked, ToolCall
 
 
