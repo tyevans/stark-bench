@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from stark_bench.harness.cli import _ingest_stats, ingest_report_path
+from stark_bench.composition.cli import _ingest_stats, ingest_report_path
 from stark_bench.domain.run_config import RunConfig
 
 
@@ -35,7 +35,7 @@ def config() -> RunConfig:
 
 def test_missing_file_is_empty_rather_than_an_error(config, monkeypatch, tmp_path):
     """Scoring a hand-ingested corpus must not be refused over a cost column."""
-    monkeypatch.setattr("stark_bench.harness.cli.RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr("stark_bench.composition.cli.RESULTS_ROOT", tmp_path)
     assert _ingest_stats(config) == {}
 
 
@@ -45,7 +45,7 @@ def test_the_written_stats_come_back(config, monkeypatch, tmp_path):
     A block of zeroes and `False`s could not distinguish "read the file"
     from "returned a fresh dict of the same shape".
     """
-    monkeypatch.setattr("stark_bench.harness.cli.RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr("stark_bench.composition.cli.RESULTS_ROOT", tmp_path)
     written = {
         "nodes": 129375,
         "chunks": 147329,
@@ -65,7 +65,7 @@ def test_the_written_stats_come_back(config, monkeypatch, tmp_path):
 
 def test_the_path_is_keyed_on_the_config_not_the_agent(config, monkeypatch, tmp_path):
     """One ingest serves all four agents, so four runs read one file."""
-    monkeypatch.setattr("stark_bench.harness.cli.RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr("stark_bench.composition.cli.RESULTS_ROOT", tmp_path)
     from dataclasses import replace
 
     assert ingest_report_path(config) == ingest_report_path(
@@ -80,7 +80,7 @@ def test_a_float_and_a_bool_survive_the_round_trip(config, monkeypatch, tmp_path
     accurate only while the block was always empty -- an exemption that
     matched nothing, and passed for exactly that reason.
     """
-    monkeypatch.setattr("stark_bench.harness.cli.RESULTS_ROOT", tmp_path)
+    monkeypatch.setattr("stark_bench.composition.cli.RESULTS_ROOT", tmp_path)
     ingest_report_path(config).parent.mkdir(parents=True, exist_ok=True)
     ingest_report_path(config).write_text(
         json.dumps({"wall_time_s": 90.55539454508107, "edges_ingested": True}),
@@ -108,7 +108,7 @@ def test_the_run_actually_passes_the_stats_it_read():
     import ast
     from pathlib import Path
 
-    import stark_bench.harness.cli as cli_module
+    import stark_bench.composition.cli as cli_module
 
     tree = ast.parse(Path(cli_module.__file__).read_text(encoding="utf-8"))
     calls = [

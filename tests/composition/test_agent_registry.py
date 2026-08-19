@@ -14,7 +14,7 @@ from stark_bench.composition.agent_registry import (
     PerQueryDeepAgent,
     build_agent,
 )
-from stark_bench.harness.cli import (
+from stark_bench.composition.cli import (
     DEFAULT_CHAT_MODEL,
     _llm_for,
     report_path,

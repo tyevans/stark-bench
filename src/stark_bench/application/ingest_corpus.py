@@ -1,6 +1,6 @@
 """Build one arm's corpus, and say what building it produced.
 
-Lifted out of `harness/cli.py`, where it sat inside a function that also
+Lifted out of `composition/cli.py`, where it sat inside a function that also
 opened two database connections, resolved a data directory, chose an
 embedding provider and closed everything in a `finally`. Those are four
 different jobs and only one of them is this one.

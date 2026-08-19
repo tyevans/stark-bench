@@ -78,11 +78,19 @@ layers = [
     "domain",
 ]
 exhaustive = true
-# Modules still awaiting a home in the hexagon. Each one leaving this list
-# is a slice of the refactor; the list reaching empty is the refactor being
-# done, and it cannot be quietly abandoned because `exhaustive` fails on
-# anything not named here or in `layers`.
-exhaustive_ignores = ["harness"]
+# `exhaustive_ignores` is deliberately ABSENT rather than empty.
+#
+# It listed the modules still awaiting a home; the list reaching empty was
+# the definition of done for the hexagonal refactor, and it is empty now.
+# CLAUDE.md's rule for that moment says to choose between keeping the list
+# empty and deleting it, and that an *exclusion* over an empty set is the
+# one to delete: it excludes nothing, and a staleness guard written over it
+# passes vacuously.
+#
+# So it is gone, and re-adding it is a visible decision in review rather
+# than an edit to an existing list. Every module under `stark_bench` is now
+# placed in `layers` above, and `exhaustive = true` makes a new one a
+# contract failure until someone decides where it sits.
 
 # The contract that actually protects a result. `agents/` holds the subject
 # of the benchmark; everything it can reach, it can be accidentally helped
@@ -107,7 +115,6 @@ forbidden_modules = [
     "stark_bench.application",
     "stark_bench.adapters",
     "stark_bench.composition",
-    "stark_bench.harness",
     "stark_bench.sidecar",
 ]
 

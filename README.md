@@ -38,13 +38,13 @@ docker compose up -d
 ```
 
 Needs an OpenAI-compatible embedding endpoint, and a chat endpoint for the LLM
-agents. Both are configured in `harness/cli.py`.
+agents. Both are configured in `composition/cli.py`.
 
 ## Running
 
 ```
-uv run python -m stark_bench.harness.cli --config config/native-wholedoc.yaml --ingest --ingest-edges
-uv run python -m stark_bench.harness.cli --config config/native-wholedoc.yaml --run
+uv run python -m stark_bench.composition.cli --config config/native-wholedoc.yaml --ingest --ingest-edges
+uv run python -m stark_bench.composition.cli --config config/native-wholedoc.yaml --run
 ```
 
 Ingest is resumable and safe to interrupt: chunk ids are content-addressed

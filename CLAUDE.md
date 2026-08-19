@@ -64,11 +64,11 @@ Never edit dependency tables by hand — `uv add` / `uv remove`.
 
 ```
 # ingest a config's corpus (idempotent; resumes by skipping existing chunks)
-uv run python -m stark_bench.harness.cli --config config/<name>.yaml --ingest \
+uv run python -m stark_bench.composition.cli --config config/<name>.yaml --ingest \
     --embed-concurrency 16
 
 # score one architecture against it
-uv run python -m stark_bench.harness.cli --config config/<name>.yaml --run \
+uv run python -m stark_bench.composition.cli --config config/<name>.yaml --run \
     --agent {dense,hybrid,zero_shot,deep}
 ```
 

@@ -2111,7 +2111,7 @@ git add -A && git commit -m "Acquire STaRK's precomputed ada-002 embeddings, key
 ### Task 11: Real backing, real ingest, and the first STaRK number
 
 **Files:**
-- Create: `docker-compose.yml`, `src/stark_bench/harness/providers.py`, `src/stark_bench/harness/config.py`, `src/stark_bench/harness/report.py`, `config/vss-control.yaml`, `config/redstring-native.yaml`, `src/stark_bench/harness/cli.py`
+- Create: `docker-compose.yml`, `src/stark_bench/harness/providers.py`, `src/stark_bench/harness/config.py`, `src/stark_bench/harness/report.py`, `config/vss-control.yaml`, `config/redstring-native.yaml`, `src/stark_bench/composition/cli.py`
 - Test: `tests/harness/test_config.py`, `tests/harness/test_report.py`
 
 **Interfaces:**
@@ -2373,8 +2373,8 @@ a later reader cannot mistake a graph-less run for a graph one.
 
 ```bash
 docker compose up -d
-uv run python -m stark_bench.harness.cli --config config/vss-control.yaml --ingest
-uv run python -m stark_bench.harness.cli --config config/vss-control.yaml --run
+uv run python -m stark_bench.composition.cli --config config/vss-control.yaml --ingest
+uv run python -m stark_bench.composition.cli --config config/vss-control.yaml --run
 cat results/vss-control.json
 ```
 
@@ -2391,7 +2391,7 @@ git add -A && git commit -m "Real backing, real ingest, and the vss-control numb
 ### Task 12: The `redstring-native` number
 
 **Files:**
-- Modify: `src/stark_bench/harness/cli.py`
+- Modify: `src/stark_bench/composition/cli.py`
 - Test: `tests/harness/test_precomputed_provider.py`
 
 **Interfaces:**
@@ -2433,8 +2433,8 @@ def test_a_miss_raises_and_never_falls_back(provider):
 - [ ] **Step 3: Run the native config**
 
 ```bash
-uv run python -m stark_bench.harness.cli --config config/redstring-native.yaml --ingest
-uv run python -m stark_bench.harness.cli --config config/redstring-native.yaml --run
+uv run python -m stark_bench.composition.cli --config config/redstring-native.yaml --ingest
+uv run python -m stark_bench.composition.cli --config config/redstring-native.yaml --run
 ```
 
 **Ask before this step.** Embedding ~129k nodes' worth of chunks runs against a shared inference endpoint; confirm the slot count and that the endpoint is free.
@@ -2643,9 +2643,9 @@ git add -A && git commit -m "The deep agent, bounded by an explicit budget it re
 
 ```bash
 for agent in dense hybrid zero_shot deep; do
-  uv run python -m stark_bench.harness.cli --config config/redstring-native.yaml --agent "$agent" --run
+  uv run python -m stark_bench.composition.cli --config config/redstring-native.yaml --agent "$agent" --run
 done
-uv run python -m stark_bench.harness.cli --summarise results/ > RESULTS.md
+uv run python -m stark_bench.composition.cli --summarise results/ > RESULTS.md
 ```
 
 `RESULTS.md` reports accuracy **and** cost (tool calls and LLM calls per query) per architecture. A number without its cost beside it is not actionable.
