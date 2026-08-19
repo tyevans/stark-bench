@@ -124,6 +124,36 @@ Background a long ingest with the harness's own backgrounding, **not `nohup`
 or `setsid`** — those did not survive here, twice, and the second time the
 launcher exited 0 while the real work never started.
 
+## Reasoning is off, and the request wins over the server
+
+redstring's `LangChainLlmProvider.openai_compatible` defaults to
+`thinking=False` and sends
+`chat_template_kwargs: {"enable_thinking": false}`. `_llm_for` does not
+override it, so every LLM call from this harness is non-reasoning.
+
+**A server configured the other way does not override it**, which is worth
+knowing because the endpoint here is launched with `--reasoning on` and
+`--chat-template-kwargs '{"reasoning_effort":"low"}'`. Measured against it,
+same prompt, `temperature=0.0`:
+
+| | wall | completion tokens | reasoning chars |
+|---|---|---|---|
+| `enable_thinking: false` (ours) | 6.14s | 375 | **0** |
+| server default | 8.04s | 512 (capped) | 1503 |
+
+Structured extraction through the port is faster still -- **0.7s** per
+`extract` call, three runs, byte-identical output. Budget phase C off that
+number: `deep` at up to 8 LLM calls per query is roughly 2.4h for all three
+configs, not the 6-9h a reasoning model would cost. An estimate built on
+reasoning-on latency will be wrong by an order of magnitude and will tempt
+you into dropping arms you do not need to drop.
+
+Do not turn thinking on to "improve" extraction. Beyond the latency, the
+docstring on `NO_THINKING` records that two thinking-on runs at temperature
+zero disagreed with each other about how many entities a document held,
+while two thinking-off runs did not. Every accuracy number in this
+repository is a difference between two runs.
+
 ## Embedding models need task prefixes, and the port cannot express them
 
 **Read this before trusting any retrieval number.**
