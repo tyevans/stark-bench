@@ -97,6 +97,29 @@ CHUNKERS = {
     "sliding-1000-500": partial(
         SlidingWindowChunker, default_chunk_size=1000, default_overlap=500
     ),
+    #: Whole documents, split only where the embedding server cannot take
+    #: them. nomic-embed-text is served with a 2048-token per-slot context
+    #: (--ctx-size / -np), so a document over ~7000 characters is rejected
+    #: outright: `input (4002 tokens) is larger than the max context size
+    #: (2048 tokens)`.
+    #:
+    #: Zero overlap, so this splits rather than truncates. Truncating would
+    #: have matched what ada-002 does to its own overlong inputs, but ada-002
+    #: truncates 26 documents at its 8191-token ceiling where we would
+    #: truncate 2,677 at 2048 -- so the whole-doc arm would silently hold
+    #: less text than the chunked arms, and the sweep would be measuring
+    #: content loss as well as granularity. Splitting keeps the text
+    #: identical across all three configs and leaves granularity the only
+    #: variable, which is the entire point of the cell.
+    #:
+    #: Costs ~1.03 chunks/node against a true whole-document 1.00 -- still
+    #: unambiguously the low end of the sweep.
+    #:
+    #: Zero overlap also sidesteps B-SLIDING-REDUNDANT-1: the redundant tail
+    #: chunk appears only when the window advances by less than its width.
+    "capped-whole-7000": partial(
+        SlidingWindowChunker, default_chunk_size=7000, default_overlap=0
+    ),
 }
 LIVE_EMBEDDINGS = {"nomic-embed-text"}
 
