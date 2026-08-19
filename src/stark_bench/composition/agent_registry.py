@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 from stark_bench.agents.dense import DenseAgent
 from stark_bench.agents.deep import DeepAgent
 from stark_bench.agents.hybrid import HybridAgent
+from stark_bench.agents.lexical import LexicalAgent
 from stark_bench.agents.zero_shot import ZeroShotAgent
 from stark_bench.domain.budget import Budget
 
@@ -76,6 +77,7 @@ class PerQueryDeepAgent:
 AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     "dense": lambda config: DenseAgent(k=config.k),
     "hybrid": lambda config: HybridAgent(k=config.k),
+    "lexical": lambda config: LexicalAgent(k=config.k),
     "zero_shot": lambda config: ZeroShotAgent(k=config.k),
     "deep": lambda config: PerQueryDeepAgent(k=config.k),
 }
