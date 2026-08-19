@@ -162,6 +162,26 @@ than a coincidence: 1666 before, 1071 during, 2406 after, with nothing else
 changed. **Nothing else may touch the database while a throughput number is
 being taken**, whatever it does to the GPU.
 
+### Sampling this workload is harder than measuring it
+
+Two mistakes, both made on 2026-08-19, both of which produced a confident
+wrong answer:
+
+- **A short interval measures the flush, not the throughput.** Chunks
+  commit in batches (`CHUNK_BATCH = 1000`), so the row count steps rather
+  than climbs. Three-minute samples of one arm gave 1650, 5768, 2000, 333,
+  667 and 5771 chunks/min -- a seventeen-fold spread -- while the running
+  average stayed near 2100. A 333 reading was *exactly one flush*. **Quote
+  the whole-arm average**: total chunks over total wall time, which is the
+  only figure immune to when you happened to look.
+- **Two rates from two different windows are not comparable.** A request
+  rate sampled in one minute (117/min) was divided by a chunk rate from a
+  different interval, implying each request carried a handful of texts
+  against a configured 64 -- and nearly became a filed batching bug.
+  Measured over *one* 90-second window: 91 requests, 5500 chunks, **~60
+  texts per request**. Batching was working the whole time. Sample both
+  sides of a ratio in the same window or do not compute it.
+
 **Whether `--ubatch-size 8192` beat 4096 is unresolved, and no number in
 this file answers it.** Every 4096 measurement was taken across a resume
 skip phase, and the one prior clean figure (1792 nodes/min at
