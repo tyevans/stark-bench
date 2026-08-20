@@ -47,16 +47,46 @@ lost that cost endpoint time to rebuild:
 
 ```toml
 [tool.uv.sources]
-redstring = { path = "../redstring-chunkfix" }
+redstring = { path = "../redstring", editable = true }
 ```
 
-That is a git worktree of redstring's `main`, deliberately separate so the
-user's own redstring checkout can sit on another branch without changing what
-this benchmark measures. **If you repoint it, every existing number becomes
-incomparable** — redstring's chunker behaviour is one of the things under
-measurement, and it has already changed once mid-campaign (see PR #64 below).
-`pyproject.toml` and `uv.lock` are frequently modified in the working tree for
-this reason; do not sweep them into an unrelated commit.
+It points at the user's own checkout, on `main`. It used to point at
+`../redstring-chunkfix`, a worktree kept deliberately separate so that
+checkout could sit on a feature branch without changing what this benchmark
+measures — that worktree still exists, on the older
+`feat/embedding-task-prefixes` branch, and is no longer what is installed.
+
+**What is actually load-bearing is the chunker source, not the directory
+name.** redstring's chunking behaviour is one of the things under
+measurement and it has already changed once mid-campaign (PR #64 below), so
+the check worth running before trusting a cross-arm comparison is the diff
+itself:
+
+```
+diff -rq --exclude=__pycache__ \
+    ../redstring/src/redstring/extraction/chunkers \
+    ../redstring-chunkfix/src/redstring/extraction/chunkers
+```
+
+At the qwen re-ingest (2026-08-19) that came back identical — only `.pyc`
+files differed — which is why the qwen arms are comparable to the nomic and
+Nemotron rows despite the move. Had it come back different, every existing
+number would have been incomparable and the fix would have been to repoint,
+not to reason about it. `.pyc` noise is why `--exclude=__pycache__` is in the
+command rather than left to be rediscovered.
+
+`editable = true` is also load-bearing, for a different reason the inline
+comment in `pyproject.toml` records: installed as a plain path copy, a
+redstring change does not reach this venv until something forces a
+reinstall, which already cost one calibration run.
+
+Check the checkout is clean of *library* source before quoting a number —
+`git -C ../redstring status --porcelain`. Session notes and `bench/*.yaml`
+being dirty is normal and harmless; anything under `src/` means the arm is
+measuring an uncommitted state and is not reproducible.
+
+`pyproject.toml` and `uv.lock` are frequently modified in the working tree
+for this reason; do not sweep them into an unrelated commit.
 
 Never edit dependency tables by hand — `uv add` / `uv remove`.
 
