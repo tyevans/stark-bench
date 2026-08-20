@@ -31,6 +31,7 @@ reranking.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -64,6 +65,37 @@ logger = logging.getLogger(__name__)
 _MAX_PASSAGE_CHARS = 3_000
 
 
+class TerseRelevance(BaseModel):
+    """One candidate's score, addressed by position and scored as an integer.
+
+    Every field here is sized for the *decode* budget, which is a third of
+    this agent's wall time: at a measured 60 tok/s against 1230 tok/s prefill,
+    an output token costs 20x an input token. 40 objects of
+    `{"node_id": "12345", "score": 87.5}` is ~760 tokens and 12.7s;
+    `{"i": 1, "s": 87}` is ~400 and 6.7s.
+
+    **The index is not a token-saving trick alone -- it is what keeps the
+    alignment checkable.** A bare list of 40 numbers would be shorter still,
+    but a model that emitted 40 scores shifted by one would be undetectable
+    and would silently rerank every candidate against its neighbour's text.
+    An index can be validated against the range and a duplicate or invented
+    one dropped, which is the same guarantee `node_id` gave, at a third of
+    the tokens.
+
+    Integer rather than float: `87.5` costs three tokens more than `87` and
+    the extra precision is spent on a value used only for sorting. The 0-100
+    range is kept for the reason the class docstring below records -- a
+    coarse scale with named anchors made the model quantise onto them.
+    """
+
+    i: int
+    s: int = Field(ge=0, le=100)
+
+
+class TerseRelevances(BaseModel):
+    scores: list[TerseRelevance]
+
+
 class Relevance(BaseModel):
     """One candidate's score.
 
@@ -83,6 +115,83 @@ class Relevance(BaseModel):
 
 class Relevances(BaseModel):
     scores: list[Relevance]
+
+
+_RELATIONS_MARKER = "- relations:"
+
+#: Matches one relation line's parenthesised neighbour list, e.g.
+#: `  ppi: {gene/protein: (PI4KA, EIF3I, ...)}`. Deliberately narrow: a line
+#: that does not match is passed through untouched rather than mangled, so a
+#: format change costs tokens instead of correctness.
+_RELATION_LINE = re.compile(r"^(\s*[\w/ ]+: \{[\w/ ]+: )\((.*)\)(\}?.*)$")
+
+
+def lean_document(text: str, query: str, *, cap: int) -> str:
+    """Keep the head whole; cap each relation's neighbour list at `cap` names.
+
+    ## Why cap relations rather than shorten the document
+
+    STaRK puts `- relations:` near the *top* of a PRIME document -- char 778
+    of a 50,192-char hub node -- and everything after it is neighbour names.
+    So a flat character budget does not trade detail for neighbours; it keeps
+    a near-arbitrary prefix of one hub's 500-name `ppi` list and discards
+    every other relation type entirely. Measured over 4,000 documents, 80.7%
+    exceed 3,000 characters and the mean is 4,569.
+
+    Capping instead keeps *every* relation type present at `cap` names each.
+    Mean rendered length falls from 2,852 characters to 1,725 at `cap=10`,
+    a 40% cut in prefill, which at 1230 tok/s is ~9s of a 36s query.
+
+    ## Why the query decides which names survive
+
+    PRIME's queries name related entities verbatim ("a drug that targets X
+    and is indicated for Y"), and that text being present is the whole
+    mechanism behind this project's headline result -- relations moved hybrid
+    +42% while dense barely moved, because the gain is lexical. Dropping the
+    named neighbour to save tokens would remove exactly the evidence the
+    reranker is there to weigh.
+
+    So neighbours the query mentions are kept first, then the list is filled
+    to `cap` in its original order. A truncated list is marked `+N more`
+    rather than silently ended: a model shown five neighbours cannot tell a
+    node with five from a hub with five hundred, and that difference is
+    itself evidence.
+
+    `cap=0` is refused. It removes every neighbour name, which is a 61%
+    saving and destroys the signal this corpus exists to test.
+    """
+    if cap <= 0:
+        raise ValueError("cap must be positive; cap=0 removes the relations signal")
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return text
+    lowered = query.lower()
+    relations = text[marker:]
+    # `splitlines()` drops trailing newlines and `join` does not put them
+    # back, so a document whose relations block needed no capping would come
+    # out one byte shorter than it went in. Caught by the pass-through test,
+    # which is the only one that could see it.
+    trailing = relations[len(relations.rstrip("\n")) :]
+    kept: list[str] = []
+    for line in relations.splitlines():
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            kept.append(line)
+            continue
+        names = [n for n in match.group(2).split(", ") if n]
+        if len(names) <= cap:
+            kept.append(line)
+            continue
+        # Stable: named-in-query first, each group in its original order, so
+        # the rendering is deterministic and two runs of the same arm agree.
+        named = [n for n in names if n.lower() in lowered]
+        rest = [n for n in names if n.lower() not in lowered]
+        shown = (named + rest)[:cap]
+        dropped = len(names) - len(shown)
+        joined = ", ".join(shown)
+        suffix = f", +{dropped} more" if dropped else ""
+        kept.append(f"{match.group(1)}({joined}{suffix}){match.group(3)}")
+    return text[:marker] + "\n".join(kept) + trailing
 
 
 _PROMPT_TEMPLATE = (
@@ -122,6 +231,15 @@ class RerankAgent:
     #: swamps the effect at that sample size. Treat any per-query timing here
     #: as an order of magnitude, not a measurement.
     fetch: int = 20
+    #: Neighbour names shown per relation type, or `None` for the flat
+    #: character budget alone. See `lean_document`. Separate from
+    #: `terse_scores` deliberately: they cut different halves of the cost
+    #: (prefill and decode), and if accuracy moves, one combined knob cannot
+    #: say which did it.
+    relation_cap: int | None = None
+    #: Score by candidate index with integer scores, rather than by node id
+    #: with floats. See `TerseRelevance`.
+    terse_scores: bool = False
     name: str = "rerank"
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
@@ -129,13 +247,28 @@ class RerankAgent:
         if not passages:
             return []
 
+        texts = [
+            lean_document(p.text, query.text, cap=self.relation_cap)
+            if self.relation_cap
+            else p.text
+            for p in passages
+        ]
+        # The label is the whole difference in prompt cost between the two
+        # output modes on the *input* side: a 5-digit node id is ~3 tokens
+        # and an index is 1, times `fetch` candidates.
+        labels = (
+            [str(i) for i in range(1, len(passages) + 1)]
+            if self.terse_scores
+            else [p.node_id for p in passages]
+        )
         rendered = "\n\n".join(
-            f"[{p.node_id}] {p.text[:_MAX_PASSAGE_CHARS]}" for p in passages
+            f"[{label}] {text[:_MAX_PASSAGE_CHARS]}"
+            for label, text in zip(labels, texts, strict=True)
         )
         try:
             judged = await tools.extract(
                 _PROMPT_TEMPLATE.format(query=query.text, candidates=rendered),
-                Relevances,
+                TerseRelevances if self.terse_scores else Relevances,
             )
         except Exception:
             # Logged, not swallowed quietly. A reranker whose every call
@@ -147,11 +280,26 @@ class RerankAgent:
             judged = None
 
         retrieval_rank = {p.node_id: i for i, p in enumerate(passages)}
-        scores = (
-            {r.node_id: r.score for r in judged.scores if r.node_id in retrieval_rank}
-            if judged is not None
-            else {}
-        )
+        # An index is validated against the range rather than trusted. The
+        # index exists to make a misalignment *detectable* -- a bare list of
+        # scores would be shorter and a one-position shift in it would be
+        # invisible, silently scoring every candidate against its
+        # neighbour's text. Out-of-range and duplicate indices are dropped
+        # exactly as invented node ids are, leaving that candidate unscored
+        # rather than mis-scored.
+        scores: dict[str, float] = {}
+        if judged is not None:
+            for r in judged.scores:
+                if self.terse_scores:
+                    if not 1 <= r.i <= len(passages):
+                        continue
+                    node_id = passages[r.i - 1].node_id
+                    score = float(r.s)
+                else:
+                    node_id, score = r.node_id, r.score
+                    if node_id not in retrieval_rank:
+                        continue
+                scores.setdefault(node_id, score)
 
         # Unscored candidates sort below every scored one, in retrieval
         # order. `-1.0` rather than `0.0`: a candidate the model actively
