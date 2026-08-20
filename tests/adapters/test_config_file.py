@@ -23,3 +23,33 @@ def test_a_config_round_trips_verbatim(tmp_path):
     assert config.name == "vss-control"
     assert config.dimension == 1536
     assert "whole-document" in config.raw
+
+
+def test_the_cli_refuses_an_invocation_that_would_do_nothing():
+    """Neither --ingest nor --run must fail, not exit 0 silently.
+
+    A run queue passed `--agent dense` without `--run`. Four arms
+    "completed" in a second each with rc=0 and empty logs, and the queue
+    gated on the return code, so it accepted them and carried on. An exit
+    status is the only thing a shell script can see.
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "stark_bench.composition.cli",
+            "--config",
+            "config/nomic-wholedoc.yaml",
+            "--agent",
+            "dense",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert result.returncode != 0, "a no-op invocation exited 0"
+    assert "nothing to do" in result.stderr

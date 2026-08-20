@@ -660,6 +660,20 @@ def main() -> None:
     if args.agent is not None:
         config = replace(config, agent=args.agent)
 
+    # Neither flag means neither phase runs, and the process exits 0 having
+    # done nothing. That is not hypothetical: a run queue passed
+    # `--agent dense` without `--run`, and four arms "completed" in one
+    # second each with rc=0 and empty logs. The queue's own gate is on the
+    # return code, so it accepted all four and moved on.
+    #
+    # `--agent` in particular reads like an instruction to run something. It
+    # is only an override of the config's agent, and on its own it is inert.
+    if not args.ingest and not args.run:
+        parser.error(
+            "nothing to do: pass --ingest, --run, or both. "
+            "--agent only overrides the configured agent and does not run it."
+        )
+
     if args.ingest:
         report = asyncio.run(
             _do_ingest(
