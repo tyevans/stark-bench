@@ -268,6 +268,26 @@ def _tenant_for(config: RunConfig) -> TenantId:
     return TenantId(uuid5(NAMESPACE_STARK, f"tenant:{config.name}"))
 
 
+def _count_lines(path: Path) -> int | None:
+    """Node count for the ingest progress ETA, or None if it cannot be had.
+
+    Read as bytes and counted with `bytes.count`, which is one pass in C --
+    on MAG's 916 MB nodes.jsonl a Python-level loop is seconds of wall time
+    before the first embedding request goes out.
+
+    Returns None rather than raising: this exists to make a log line say
+    "40%" instead of "?", and an ingest must not fail because a progress
+    figure was unavailable.
+    """
+    try:
+        with path.open("rb") as handle:
+            return sum(
+                block.count(b"\n") for block in iter(lambda: handle.read(1 << 22), b"")
+            )
+    except OSError:
+        return None
+
+
 def _data_dir(config: RunConfig) -> Path:
     return DATA_ROOT / config.dataset
 
@@ -481,6 +501,7 @@ async def _do_ingest(
             embeddings=embeddings,
             concurrency=embed_concurrency if embeddings is not None else 1,
             embed_batch=embed_batch,
+            total_nodes=_count_lines(data_dir / "nodes.jsonl"),
         )
     finally:
         await chunks.close()
