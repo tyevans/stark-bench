@@ -491,3 +491,211 @@ PRIME at 218 chunks/s and ~1h for MAG.
 Note the cap also widens B-NOMIC-CONFOUND-1: nomic now runs at 2400
 characters against Nemotron's 5000, so the two arms differ more in chunking
 than the original swap intended.
+
+## B-QWEN-UNCAPPED-1: qwen's whole-document arm is capped for a reason that is not qwen's
+
+`config/qwen-wholedoc.yaml` runs `capped-whole-2400`. qwen3-embedding-0.6b
+does not need a cap at all -- it is served with `n_ctx 32768` and took a
+40,000-character input whole when probed against the live endpoint, and
+PRIME's longest document is 52,260 characters with a mean of 870. Every
+document but a handful would come through in one chunk.
+
+The cap is nomic's, kept so that `qwen-wholedoc` minus `nomic-wholedoc` is
+the embedding model and nothing else. That is the cleanest single-variable
+model comparison this repo has had, and it is worth the cost -- but the cost
+is real: no arm here measures qwen at the granularity it can actually run.
+
+The follow-up is a `qwen-uncapped` cell at `whole-document` (or a
+10,000-character cap for the 52k outlier), scored against `qwen-wholedoc`.
+That difference is granularity at a fixed model, which is the same question
+the chunking sweep asks and would extend it to a fourth point at 1.00
+chunks/node. Deferred because the four arms already queued are ~6h of
+endpoint time on a single-slot server and this one adds a fifth without
+answering anything the sweep does not already ask.
+
+## B-EDGE-PROGRESS-1: the edge phase reports nothing, after announcing it is done
+
+`ingest_corpus` in `src/stark_bench/adapters/stark_ingest_engine.py` calls
+`_report(final=True)` at line 465 -- which logs `ingest done: 129,375/129,375
+nodes (100%) ... 72m elapsed` -- and only *then* enters the edge loop at line
+471, which has no logging of any kind until the process exits.
+
+On PRIME that is 8,100,498 relationships and, measured, **~33 minutes of
+total silence following a line that says the ingest is done**. The node loop
+already has `_report`; this phase needs the equivalent.
+
+Cost of not having it, paid on 2026-08-19: the qwen-wholedoc ingest was
+diagnosed as hung. The reasoning looked sound at every step -- the log had
+stopped, chunk count was flat over 30s, client CPU time was unchanged over
+20s, and a `/slots` snapshot showed `is_processing: true` with
+`n_prompt_tokens_processed: 0`. Every one of those was a misread of a healthy
+run: chunks commit in `CHUNK_BATCH` steps, an I/O-bound client accrues under
+a second of CPU in 20s, and `processed: 0` is what a slot reports the instant
+it picks up a task. What actually settled it was `id_task` climbing ~13/s
+across three `/slots` samples, and a 3-minute Postgres window showing +5,010
+chunks. **A snapshot cannot distinguish stalled from busy; only a window
+can.**
+
+Two things would each have prevented the detour, and both are worth doing:
+
+  - log progress inside the edge loop, at the same cadence as nodes;
+  - do not print `ingest done` until the ingest is done. Either move
+    `_report(final=True)` after the edge loop, or word the node-phase line as
+    the phase it actually ends.
+
+The second matters more than the first. A message that says the work is
+finished, ~33 minutes before it is, is not a missing feature -- it is the log
+actively asserting something false, and it is the reason the run nearly got
+killed.
+
+## B-PROXY-LIMITS-1: the embedding batch ceiling is the proxy's, not the model's
+
+`--embed-batch 512 --embed-concurrency 2` against whole `prime-rel`
+documents dies with:
+
+```
+openai.InternalServerError: peer proxy error:
+net/http: timeout awaiting response headers
+```
+
+and `--embed-batch 128 --embed-concurrency 4` or `--embed-batch 256` return
+`502 Bad Gateway`. Measured 2026-08-19 against llama-swap in front of
+qwen3-embedding-0.6b. Safe settings for whole documents are **batch 32-128 at
+concurrency 2**; the same 512 was fine on the capped 2,400-char corpus, so the
+ceiling is bytes-per-request, not texts-per-request.
+
+Two things make this worth an entry rather than a note:
+
+**The engine's re-split does not catch it.** `MAX_RESPLIT_ATTEMPTS` fires only
+when `_is_oversize(error)` matches -- an input longer than the context. A
+proxy timeout and a 502 are not oversize errors, so they propagate and kill
+the ingest. The re-split was built for B-TOKEN-CAP-1 and correctly does not
+guess at transport failures, but the result is that the one obvious safety net
+does not cover the failure mode most likely to be hit on a large-document
+corpus. A bounded retry on 502/timeout, halving the batch, would.
+
+**It is a first-batch failure, which is the good case.** Zero rows had landed,
+so there was nothing partial to reason about. A proxy that failed 80% of the
+way in would leave a corpus that resume treats as complete for everything
+already written -- and no stage would report anything wrong.
+
+## B-RATE-UNIT-1: extrapolate ingest time by characters, not documents
+
+A `--limit 3000` calibration on `prime-rel` read 333 nodes/min and implied a
+6.5-hour arm. The real figure is ~2 hours. Both numbers are correct; the
+extrapolation was not.
+
+Two compounding reasons, and the second is the general one:
+
+**The head of the file is not the corpus.** The first 1,024 documents of
+`prime-rel` average **5,278 characters** against the corpus mean of **1,761** --
+they are gene/protein records with long summaries. `native-rel-whole.yaml`
+already records a sample of the first 7,548 nodes implying 3.4x when the truth
+was 1.47x, and this is the same trap in a different measurement. `--limit N`
+always samples the head, so it can calibrate a *rate* but never a *total*.
+
+**The rate is token-bound, so documents are the wrong unit.** Batch 32 and
+batch 128 give 368 and 366 docs/min on the identical slice -- a 4x change in
+requests moves throughput by 0.5%. The stable figure is **~1.94M chars/min**,
+and `227.9M / 1.94M = 117 min` predicted the arm correctly where docs/min was
+out by 3.3x.
+
+So: measure chars/min on whatever slice is convenient, then divide the
+corpus's total characters by it. Quoting nodes/min from a `--limit` run and
+multiplying by the node count is wrong twice over.
+
+**The ingest's own ETA has this bug.** `_report` in
+`src/stark_bench/adapters/stark_ingest_engine.py` extrapolates from nodes
+done against `total_nodes`, so on a corpus with a long document tail it is
+wrong in the alarming direction and gets worse as the run proceeds. Measured
+live on `qwen-rel-whole`, 2026-08-19:
+
+| | engine ETA | measured |
+|---|---|---|
+| 16 min in | 152 min | -- |
+| 22 min in | 180 min | -- |
+| 25 min in | **198 min** | **~66 min** |
+
+At that last point the arm was 11% through its *nodes* and **28.9% through
+its characters**, because the chunks then being embedded averaged 14,241
+characters against the corpus mean of 1,761. The rate was a healthy 2.37M
+chars/min throughout; only the unit was wrong.
+
+An ETA that climbs while the run is healthy trains its reader to ignore it,
+and this one nearly caused a second false hang diagnosis in the same session
+as B-EDGE-PROGRESS-1. The fix is to accumulate `sum(len(text))` alongside the
+chunk counter and extrapolate against the corpus's total characters -- one
+extra pass over `nodes.jsonl` at startup, the same place `_count_lines`
+already reads it.
+
+
+## B-ADA002-PROVENANCE-1: we do not know what STaRK's precomputed vectors were built from
+
+`vss-control` scores `data/prime` text against `doc_emb.npz`, STaRK's
+published ada-002 embeddings. **Nothing here establishes what text those
+embeddings were computed over**, and the answer changes what every comparison
+to that row means.
+
+Checked in `stark_qa` (installed in the 3.11 sidecar) on 2026-08-19:
+
+- `models/multi_vss.py:90` -- `get_doc_info(node_id, add_rel=True, compact=True)`
+- `models/llm_reranker.py:93` -- `get_doc_info(node_id, add_rel=True)`
+- `models/bm25.py:29` -- `get_doc_info(idx)`, i.e. the `add_rel=False` default
+- `models/vss.py` -- loads `candidates_emb_dir` and generates nothing
+
+So the two baselines that build text at run time disagree with each other,
+and the one we replicate does not build text at all. The generation script is
+not in the pip package.
+
+Why it matters: `qwen-wholedoc` dense (0.183) was read against `vss-control`
+dense (0.231) as evidence that qwen3-embedding-0.6b is a weak model, and that
+reading is sound only if both indexed comparable text. If STaRK used
+`add_rel=True`, the gap is largely corpus and the honest comparison is
+against `qwen-rel-whole`. If `add_rel=False`, ada-002 really is better here
+and the model conclusion stands.
+
+Two ways to settle it, in order of cost:
+
+1. Read STaRK's `emb_generate.py` in the GitHub repo (not shipped to PyPI).
+2. Measure it from our side, which is already running: if `qwen-rel-whole`
+   moves substantially above `qwen-wholedoc`, relational text is worth a lot
+   on this benchmark whatever STaRK did -- and if it does not, the question
+   stops mattering for our conclusions.
+
+Until then `RESULTS.md` labels the `vss-control` rows a reference point of
+uncertain provenance, which is the honest framing and not a placeholder for
+one.
+
+
+## B-QUADRATIC-DOCS-1: whole-document embedding cost is superlinear in document length
+
+`qwen-rel-whole` (129,375 documents, 227.9M chars, `whole-document`) is
+running at roughly **0.32% of corpus characters per minute sustained**, or
+~720k chars/min. A probe on a 1,024-document slice averaging 5,278 chars
+measured **1.94M chars/min** -- 2.7x faster per character on shorter
+documents.
+
+Longer documents are more efficient per *request* and much less efficient per
+*character*, because transformer attention is quadratic in sequence length. A
+30k-token document is not 10x a 3k-token one, it is closer to 100x. `prime-rel`
+has 6,162 documents over 8,000 characters (4.8%) and a maximum of 133,778, and
+that tail dominates the arm's wall time.
+
+Consequences worth acting on:
+
+- **A chars/min figure is only valid for the length distribution it was
+  measured on.** B-RATE-UNIT-1 says extrapolate by characters rather than
+  documents, which is right and still not sufficient -- the rate itself moves
+  with document length. Measure on a representative slice, not the head
+  (dense) and not a random 1k (short).
+- **`capped-whole-8000` would likely cost a fraction of `whole-document` on
+  this corpus** while splitting only the 4.8% over that length. Whether that
+  is a good trade depends on where the `- relations:` block falls, since it
+  sits at the END of the document and a cap severs the neighbour names first.
+  That is a real experiment, not an obvious win.
+- The **embedding cache** (shipped today) does not help a first arm at all.
+  It helps the second and third, which is where the sweep cost lives.
+
+Not filed as a defect -- nothing is wrong -- but the cost model this project
+has been reasoning with ("chars/min is a constant") is wrong, and it produced
+two ETAs today that were out by 3x in opposite directions.

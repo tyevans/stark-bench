@@ -49,6 +49,12 @@ class IngestOutcome:
     #: old ones behind as live rows that still answer queries. The result is
     #: not a stale corpus but a silent mixture of two chunkings.
     config_verbatim: str = ""
+    #: Chunk texts served from the embedding cache, and those that had to be
+    #: embedded. A sweep's second arm over the same corpus should be almost
+    #: entirely hits; one that is not is telling you the cache key is wrong,
+    #: and nothing else in the report would show it.
+    cache_hits: int = 0
+    cache_misses: int = 0
 
     @property
     def corpus_chunks(self) -> int:

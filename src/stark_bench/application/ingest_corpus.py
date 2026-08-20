@@ -121,4 +121,6 @@ async def ingest_corpus(
         existing_ids_load_s=existing_ids_load_s,
         wall_time_s=clock() - started,
         config_verbatim=config_verbatim,
+        cache_hits=getattr(counts, "cache_hits", 0),
+        cache_misses=getattr(counts, "cache_misses", 0),
     )

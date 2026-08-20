@@ -1,0 +1,81 @@
+# The prime-rel baseline, and the first arm here that is genuinely
+# comparable to `vss-control`.
+#
+# ## Why this replaces the no-relations arms as the base
+#
+# Every locally-embedded arm before this one -- nomic, Nemotron and
+# `qwen-wholedoc` -- embeds `get_doc_info(node_id, add_rel=False)`: name,
+# type, source, details, and nothing about what the node is connected to.
+# `vss-control`'s precomputed ada-002 vectors are over the `add_rel=True`
+# text, which appends a `- relations:` block naming every neighbour grouped
+# by relation type.
+#
+# PRIME's queries name related entities explicitly ("a gene that interacts
+# with X and is associated with Y"). Those names appear in the answer's own
+# document ONLY in the relations version. So the gap between `vss-control`
+# (0.23057 dense mrr) and every local arm (0.182-0.216) was never a clean
+# model comparison -- ada-002 was reading a richer corpus. The local arms
+# were retrieving against text with the answer's distinguishing features
+# removed.
+#
+# Two pieces of evidence from data already collected, before this arm ran:
+# lexical beats dense on 5 of 9 arms, and the clearest exception is
+# `vss-control` (0.23057 dense against 0.18483 lexical, the largest dense
+# margin in the table). BM25 matches surface terms either way; it is DENSE
+# retrieval that needs the neighbour names. That is the signature of missing
+# relational text rather than a weak embedding model.
+#
+# ## The chunker is `whole-document`, and that is the point
+#
+# `vss-control` is 1.00 chunks/node because STaRK's precomputed vectors are
+# one per document. Matching that is what makes this cell a model comparison
+# instead of a model-and-granularity comparison.
+#
+# It is also what the corpus needs. **The `- relations:` block sits at the
+# END of each document**, so any cap severs the neighbour names first. This
+# corpus is mean 1,761 chars with 19.5% over 2,400 and 8.1% over 5,000 -- a
+# 2,400-char cap would split a fifth of the corpus at exactly the wrong
+# place, fragmenting the signal the relations text was added to provide.
+#
+# qwen3-embedding-0.6b is served with `n_ctx 32768`, which takes ~99.9% of
+# this corpus whole. The single 133,778-character outlier is handled by the
+# engine's re-split (`MAX_RESPLIT_ATTEMPTS`) rather than by a character
+# guess -- the server rejects it, the engine halves and retries. That is why
+# no cap is stated here, and it is the mechanism B-TOKEN-CAP-1 was closed
+# with.
+#
+# This is also why nomic is the wrong model for this corpus despite being
+# ~3x faster: its 2,048-token ceiling forces a ~2,400-char cap, which splits
+# that 19.5%. It would spend its speed undermining the experiment.
+#
+# ## Reading it
+#
+# `qwen-rel-whole` minus `qwen-wholedoc` is the contribution of relational
+# text at a fixed model and a nearly fixed chunker -- `qwen-wholedoc` is
+# 1.169 chunks/node against this arm's ~1.00, which is a real but small
+# difference and the only impurity in the comparison.
+#
+# `vss-control` minus `qwen-rel-whole` is, for the first time, the embedding
+# model and nothing else: same corpus text, same 1.00 chunks/node.
+#
+# Reads `data/prime-rel/`, whose nodes.jsonl is the add_rel export; queries,
+# candidates and edges are symlinks to `data/prime/`, so there is one copy
+# of each and no chance of the two datasets disagreeing about them.
+name: qwen-rel-whole
+dataset: prime-rel
+split: test-0.1
+chunker: whole-document
+embeddings: qwen3-embedding-0.6b
+dimension: 1024
+aggregation: max
+agent: dense
+k: 20
+
+# Qwen3-Embedding is asymmetric in a shape no other model here has: the
+# corpus side takes NO prefix -- the empty string is the correct value, not
+# an omission -- and the query side takes a one-line instruction followed by
+# `Query: `, which is the format the model was trained with. Stated rather
+# than defaulted so it reaches `config_verbatim`; a prefix that is not
+# recorded is a number that cannot be reproduced.
+document_prefix: ""
+query_prefix: "Instruct: Given a query, retrieve relevant documents that answer the query\nQuery: "

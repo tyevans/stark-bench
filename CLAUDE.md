@@ -47,16 +47,46 @@ lost that cost endpoint time to rebuild:
 
 ```toml
 [tool.uv.sources]
-redstring = { path = "../redstring-chunkfix" }
+redstring = { path = "../redstring", editable = true }
 ```
 
-That is a git worktree of redstring's `main`, deliberately separate so the
-user's own redstring checkout can sit on another branch without changing what
-this benchmark measures. **If you repoint it, every existing number becomes
-incomparable** — redstring's chunker behaviour is one of the things under
-measurement, and it has already changed once mid-campaign (see PR #64 below).
-`pyproject.toml` and `uv.lock` are frequently modified in the working tree for
-this reason; do not sweep them into an unrelated commit.
+It points at the user's own checkout, on `main`. It used to point at
+`../redstring-chunkfix`, a worktree kept deliberately separate so that
+checkout could sit on a feature branch without changing what this benchmark
+measures — that worktree still exists, on the older
+`feat/embedding-task-prefixes` branch, and is no longer what is installed.
+
+**What is actually load-bearing is the chunker source, not the directory
+name.** redstring's chunking behaviour is one of the things under
+measurement and it has already changed once mid-campaign (PR #64 below), so
+the check worth running before trusting a cross-arm comparison is the diff
+itself:
+
+```
+diff -rq --exclude=__pycache__ \
+    ../redstring/src/redstring/extraction/chunkers \
+    ../redstring-chunkfix/src/redstring/extraction/chunkers
+```
+
+At the qwen re-ingest (2026-08-19) that came back identical — only `.pyc`
+files differed — which is why the qwen arms are comparable to the nomic and
+Nemotron rows despite the move. Had it come back different, every existing
+number would have been incomparable and the fix would have been to repoint,
+not to reason about it. `.pyc` noise is why `--exclude=__pycache__` is in the
+command rather than left to be rediscovered.
+
+`editable = true` is also load-bearing, for a different reason the inline
+comment in `pyproject.toml` records: installed as a plain path copy, a
+redstring change does not reach this venv until something forces a
+reinstall, which already cost one calibration run.
+
+Check the checkout is clean of *library* source before quoting a number —
+`git -C ../redstring status --porcelain`. Session notes and `bench/*.yaml`
+being dirty is normal and harmless; anything under `src/` means the arm is
+measuring an uncommitted state and is not reproducible.
+
+`pyproject.toml` and `uv.lock` are frequently modified in the working tree
+for this reason; do not sweep them into an unrelated commit.
 
 Never edit dependency tables by hand — `uv add` / `uv remove`.
 
@@ -76,8 +106,70 @@ uv run python -m stark_bench.composition.cli --config config/<name>.yaml --run \
 Reports land in `results/<name>.<agent>.json`.
 
 Useful flags: `--limit N` (throughput calibration only — never for a reported
-number), `--no-resume` (force re-embed; upserts cleanly over existing rows),
-`--ingest-edges` (off by default, see below).
+number, and see B-RATE-UNIT-1 before extrapolating from one), `--no-resume`
+(force re-embed; upserts cleanly over existing rows), `--no-cache` (force a
+cold embed; see below), `--ingest-edges` (off by default, see below).
+
+### Chunk vectors are cached across arms
+
+Live-embedded chunks are cached in `kg_embedding_cache`, content-addressed on
+`(model, document_prefix, sha256(text))`, so text embedded once is never
+embedded again.
+
+**Measured on `prime-mini` (10,000 nodes), 2026-08-20:**
+
+| case | wall | hits | misses | speedup |
+|---|---|---|---|---|
+| cold, empty cache | 293.8 s | 200 | 11,781 | — |
+| **same config again** | **14.1 s** | 11,981 | 0 | **21x** |
+| **different chunker, same corpus** | 409.3 s | 10,860 | 13,424 | **~1.45x** |
+
+Read the third row before planning a sweep. An earlier version of this
+section estimated that a three-chunker sweep would cost "roughly one endpoint
+pass rather than three", and **that was too optimistic**: the cross-chunker
+hit rate is **44.7%**, not ~86%. The document-level intuition is right — most
+documents are short enough to come through whole under any chunker — but a
+finer chunker also emits *more* chunks per document (2.43/node here against
+1.20), and every extra chunk is a guaranteed miss. Hit rate is per chunk, not
+per document.
+
+Where the cache pays enormously is re-running the *same* configuration:
+recovering from a crash, re-scoring after a code change, or re-ingesting a
+tenant. That went from 5 minutes to 14 seconds.
+
+**The key carries the model and the prefix, and that is not optional.** A
+corpus embedded with a prefix and the same corpus embedded without it are not
+comparable vectors (ADR 0002, ADR 0043) — the same reason `_table_for` folds
+both into the chunk table name. A cache keyed on text alone would serve one
+arm's vectors to another, and cosine similarity between them returns a
+perfectly plausible number.
+
+**Correctness is checked, not assumed.** A warm-cache `qwen-mini-wholedoc`
+scores `mrr=0.3590479185937771` — byte-identical to the figure measured
+before the cache existed. Embedding is deterministic, so the cache either
+returns the same vector or a different one; "close" would mean a defect. Redo
+that comparison after any change to the key.
+
+**The key carries the model and the prefix, and that is not optional.** A
+corpus embedded with a prefix and the same corpus embedded without it are not
+comparable vectors (ADR 0002, ADR 0043) — it is the same reason `_table_for`
+folds both into the chunk table name. A cache keyed on text alone would serve
+one arm's vectors to another, and cosine similarity between them returns a
+perfectly plausible number.
+
+This is **not** the resume path. Resume skips chunks already stored *in this
+tenant*; the cache skips embedding text seen in *any* tenant, ever, including
+text whose `chunk_id` differs because another chunker gave it a different
+`start_char`.
+
+Every report carries `cache_hits` and `cache_misses`. A sweep's second arm
+over the same corpus that is **not** almost entirely hits is telling you the
+key is wrong — which nothing else in the report would show. `--no-cache`
+forces a cold run, for the same reason `--no-resume` exists: reusing work is
+exactly the kind of optimisation that can hide a bug.
+
+Nothing evicts. At ~1.2M distinct chunks across these corpora the table is on
+the order of gigabytes; `TRUNCATE kg_embedding_cache` is the reset.
 
 ## The shared inference endpoint
 
@@ -274,16 +366,55 @@ client-side gives you.
 
 ## Where the numbers are
 
-`prime` / `test-0.1` (280 queries), k=20, metrics from the official evaluator:
+**`RESULTS.md` is generated** — `--summarise results/` renders every scored
+arm, grouped by corpus. Regenerate it rather than editing it.
 
-| config | agent | mrr | hit@1 | hit@5 | recall@20 |
-|---|---|---|---|---|---|
-| `vss-control` (ada-002, whole-doc) | dense | 0.23057 | 0.15357 | 0.31071 | 0.37878 |
-| `redstring-native` (nomic, chunked) | dense | 0.19481 | 0.13214 | 0.26429 | 0.31112 |
-| `redstring-native` (nomic, chunked) | hybrid | 0.21961 | 0.14286 | 0.30000 | 0.31512 |
+**`FINDINGS.md` is the narrative**: what the campaign established, what it
+falsified, what it learned about measuring itself, and what is worth doing
+next. Read it before designing an arm. What follows here is the short
+version.
 
-**The nomic rows are a floor, not a measurement** — no task prefixes. Do not
-quote them against `vss-control` until they are re-run.
+### The headline: relational text is worth a lot, through the LEXICAL channel
+
+`prime` / `test-0.1`, 280 queries, k=20, official evaluator. Same model
+(qwen3-embedding-0.6b), same ~1.0 chunks/node, differing only in whether the
+indexed document carries a `- relations:` block naming the node's neighbours:
+
+| agent | `qwen-wholedoc` (no relations) | `qwen-rel-whole` (relations) | change |
+|---|---|---|---|
+| dense | 0.18274 | 0.18664 | **+2%** |
+| lexical | 0.20479 | 0.24913 | **+22%** |
+| hybrid | 0.19870 | **0.28214** | **+42%** |
+
+`qwen-rel-whole` hybrid at **0.28214** is the best figure this project has
+produced — above `vss-control`'s best (0.23111) and above STaRK's published
+ada-002 VSS figure of 0.2350.
+
+**The mechanism is the interesting part.** PRIME's queries name related
+entities verbatim ("a drug that targets X and is indicated for Y"). BM25
+matches those names directly in the relations block; a single dense vector
+compresses them away. So the gain is almost entirely lexical — dense barely
+moves. That also retro-explains an oddity in the older data: lexical beat
+dense on 5 of 9 arms, which looked like noise and was this effect showing
+through weakly on corpora that lacked the text.
+
+### A hypothesis this falsified, recorded because it drove real decisions
+
+`qwen-wholedoc` dense (0.183) against `vss-control` dense (0.231) was read
+here as "ada-002 is reading a richer corpus" — the theory being that STaRK's
+precomputed vectors are over `add_rel=True` documents. That theory redirected
+a day of endpoint time, and **it is wrong**: giving qwen the relational text
+moved dense by 0.004, leaving the gap to ada-002 essentially intact.
+
+So on the dense channel, ada-002 really is better than qwen3-embedding-0.6b
+here, and the earlier caveat stands with one addition — every local number is
+for a **Q8_0 GGUF served by llama.cpp**, not for the model as published.
+B-ADA002-PROVENANCE-1 records what is still unverified about STaRK's own
+embeddings; it no longer changes any conclusion of ours.
+
+The lesson worth keeping: the arm was built to test a hypothesis, the
+hypothesis lost, and the arm produced the project's best result anyway — for
+a reason nobody predicted.
 
 `vss-control` is validated: after a table migration orphaned its corpus, a
 re-ingest reproduced `0.23057383129905376` to every digit. That exact-match is
@@ -480,18 +611,38 @@ not the architecture), `B-BUDGET-CAPS-1`, `B-DEEP-EDGES-1`,
 `relationships` returning empty, and a low deep-agent score against that
 corpus is a data finding wearing an architecture finding's clothes.
 
-Loading them afterwards is **minutes, not a re-ingest**, and the reason is
-worth knowing rather than rediscovering: `skb/ingest.py:162`'s resume path
-returns `None` for the vectors and nothing else — the entity is still built,
-still batched, still added to `known`. So `--ingest --ingest-edges` with
-resume at its default re-upserts entities without embedding a character,
-then loads the edges. The entities being present is also what keeps
-`upsert_relationships` from raising `MissingEntityError` on the first edge.
+Loading them afterwards **skips the embedding, not the edge load**, and the
+reason is worth knowing rather than rediscovering: `skb/ingest.py:162`'s
+resume path returns `None` for the vectors and nothing else — the entity is
+still built, still batched, still added to `known`. So `--ingest
+--ingest-edges` with resume at its default re-upserts entities without
+embedding a character, then loads the edges. The entities being present is
+also what keeps `upsert_relationships` from raising `MissingEntityError` on
+the first edge.
+
+**The edge load itself is not minutes.** PRIME is 8,100,498 relationships and
+takes **~28 minutes** into a fresh graph — measured on 2026-08-19, where it
+was 28.5 of the qwen-wholedoc arm's 100.5-minute total. An earlier version of
+this section said "minutes, not a re-ingest"; that was true of the phase it
+was written about (a resume whose entities already existed) and badly wrong
+as a general claim. Rate is roughly 200-280k relationships/min and eases as
+the graph grows, since Neo4j maintains indexes against a larger set.
+
+Budget for it, and expect **silence** while it runs: the edge loop logs
+nothing, and `ingest done` prints *before* it starts. See B-EDGE-PROGRESS-1,
+filed after that combination produced a confident wrong diagnosis of a hang.
 
 Check two things afterwards, neither of which the ingest will volunteer:
-`self_loops_dropped` is non-zero (PRIME has them; a zero more likely means
-the loader stopped looking), and `edges` matches `edges.jsonl`'s line count
-minus those drops.
+`edges` matches `edges.jsonl`'s line count minus `self_loops_dropped`, and
+the Neo4j relationship count matches it too — **scoped to your arm**, since
+every config's edges share one graph and a bare `count(r)` sums all of them.
+
+`self_loops_dropped` is expected to be **0** on the current PRIME export.
+This section previously said a zero more likely means the loader stopped
+looking; that was checked on 2026-08-19 and is wrong for this data —
+`data/prime/edges.jsonl` contains no self-loops at all across all 8,100,498
+lines. A zero is the correct answer here, and `edges` matching the line count
+exactly is the check that actually has teeth.
 
 Note also that `runner.run` holds **one agent for the whole query set**. A
 `DeepAgent` carrying a single `Budget` would spend the entire allowance on

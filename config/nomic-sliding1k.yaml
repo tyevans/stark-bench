@@ -1,0 +1,25 @@
+# The naive sliding window, on nomic.
+#
+# Replaces `native-sliding1k`, whose corpus was Nemotron and no longer
+# exists. 1000-character window, 500 overlap -- roughly twice the granularity
+# of `boundary-preference` and, on Nemotron, 15% BETTER than it on dense.
+# That inversion is what falsified the original "finer is worse" claim, and
+# it is the specific result this cell re-tests on nomic.
+#
+# 1000 characters is ~417 tokens at the densest ratio measured across these
+# corpora (1.754 chars/token), so this arm never approaches nomic's 2048
+# ceiling and the engine's re-split will not fire. It is the one nomic cell
+# whose chunking is unconstrained by the token limit, which makes it the
+# cleanest comparison against the Nemotron run of the same chunker.
+name: nomic-sliding1k
+dataset: prime
+split: test-0.1
+chunker: sliding-1000-500
+embeddings: nomic-embed-text
+dimension: 768
+aggregation: max
+agent: dense
+k: 20
+
+document_prefix: "search_document: "
+query_prefix: "search_query: "

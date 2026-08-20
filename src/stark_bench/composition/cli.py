@@ -39,6 +39,7 @@ from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvide
 
 from stark_bench.composition.agent_registry import AGENTS, build_agent
 from stark_bench.adapters.config_file import load_config
+from stark_bench.adapters.postgres_embedding_cache import PostgresEmbeddingCache
 from stark_bench.domain.run_config import RunConfig
 from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
@@ -62,6 +63,7 @@ from stark_bench.adapters.stark_artifacts import (
 from stark_bench.adapters.chunkers import WholeDocumentChunker
 from stark_bench.domain.stark_ids import NAMESPACE_STARK
 from stark_bench.application.ingest_corpus import ingest_corpus
+from stark_bench.application.summarise import summarise
 from stark_bench.adapters.stark_ingest_engine import ingest
 from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
 from stark_bench.adapters.redstring_toolset import RedstringToolset
@@ -260,7 +262,13 @@ CHUNKERS = {
 #: `dense`, recall@20 a tie) at 2048 dimensions against 768, which is what
 #: made the swap worth doing. Removing it would make those numbers
 #: unreproducible.
-LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text"}
+#: `qwen3-embedding-0.6b` is the current endpoint model (Q8_0 GGUF, 1024
+#: dimensions, served with `n_ctx 32768` and a physical batch large enough to
+#: take a 40,000-character input in one piece -- probed, not assumed). It is
+#: the first model here whose context is not the binding constraint on the
+#: chunker, so its whole-document arm caps at 5000 characters for parity with
+#: the Nemotron sweep rather than because the server would refuse more.
+LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text", "qwen3-embedding-0.6b"}
 
 
 def _tenant_for(config: RunConfig) -> TenantId:
@@ -443,6 +451,7 @@ async def _do_ingest(
     embed_batch: int = 64,
     limit: int | None = None,
     resume: bool = True,
+    use_cache: bool = True,
 ) -> dict[str, object]:
     if config.embeddings != "precomputed-ada002" and config.embeddings not in (
         LIVE_EMBEDDINGS
@@ -477,6 +486,14 @@ async def _do_ingest(
     graph = Neo4jGraphStore.connect(NEO4J_URI, auth=NEO4J_AUTH)
     await chunks.ensure_schema()
     await graph.ensure_schema()
+
+    # Only for live embedding. A precomputed-vector arm never calls a
+    # provider, so a cache in front of one would be a table that is written
+    # to and never read.
+    embedding_cache = None
+    if embeddings is not None and use_cache:
+        embedding_cache = await PostgresEmbeddingCache.connect(POSTGRES_DSN)
+        await embedding_cache.ensure_schema()
     try:
         nodes = read_nodes(data_dir / "nodes.jsonl")
         if limit is not None:
@@ -502,10 +519,20 @@ async def _do_ingest(
             concurrency=embed_concurrency if embeddings is not None else 1,
             embed_batch=embed_batch,
             total_nodes=_count_lines(data_dir / "nodes.jsonl"),
+            embedding_cache=embedding_cache,
+            # The key's other two fields. `config.embeddings` and
+            # `config.document_prefix` are what `_table_for` already folds
+            # into the table name (ADR 0002, ADR 0043) -- the cache has to
+            # separate exactly the same things, or it serves one arm's
+            # vectors to another.
+            cache_model=config.embeddings,
+            cache_document_prefix=config.document_prefix,
         )
     finally:
         await chunks.close()
         await graph.close()
+        if embedding_cache is not None:
+            await embedding_cache.close()
 
     return outcome.as_dict()
 
@@ -587,7 +614,20 @@ async def _do_run(config: RunConfig) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--config", required=False, type=Path)
+    parser.add_argument(
+        "--summarise",
+        nargs="?",
+        const=Path("results"),
+        type=Path,
+        default=None,
+        help="Render every scored arm under a directory as one markdown "
+        "table on stdout and exit, without --config. Grouped by DATASET, "
+        "which is load-bearing: vss-control embeds STaRK's add_rel=True "
+        "documents and the prime arms do not, so a gap across that line is "
+        "the corpus and not the model -- a conclusion this project drew "
+        "wrongly once already.",
+    )
     parser.add_argument("--ingest", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument(
@@ -654,7 +694,27 @@ def main() -> None:
         "already holds -- the escape hatch, because skipping work is "
         "exactly the kind of optimisation that can hide a bug.",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        default=False,
+        help="Re-embed every chunk instead of reusing vectors this benchmark "
+        "has already computed for the same (model, document_prefix, text). "
+        "The cache is on by default and is what makes a chunking sweep cost "
+        "roughly one endpoint pass rather than three -- ~80%% of these "
+        "corpora are short enough that every chunker emits identical text. "
+        "Pass this to force a cold run, for the same reason --no-resume "
+        "exists: reusing work is exactly the kind of optimisation that can "
+        "hide a bug.",
+    )
     args = parser.parse_args()
+
+    if args.summarise is not None:
+        print(summarise(args.summarise))  # noqa: T201
+        return
+
+    if args.config is None:
+        parser.error("--config is required unless --summarise is given")
 
     config = load_config(args.config)
     if args.agent is not None:
@@ -683,6 +743,7 @@ def main() -> None:
                 embed_batch=args.embed_batch,
                 limit=args.limit,
                 resume=not args.no_resume,
+                use_cache=not args.no_cache,
             )
         )
         RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
