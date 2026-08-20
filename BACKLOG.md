@@ -762,3 +762,33 @@ Not done. The space table needs a `complete(prompt) -> str` on `Toolset`
 and that trades away grammar-constrained decoding for ~0.6s over JSON
 pairs. Judged not worth it while retrieval sits at 8.8s
 (B-RERANK-RETRIEVAL-FLOOR-1). Revisit if that floor drops.
+
+## B-QUERY-CONCURRENCY-1
+
+`application/run_queries.py`, `--query-concurrency`.
+
+The runner can now run N queries in flight (68f8d55), and **it buys nothing
+today**: the chat peer is `-np 1`, confirmed 2026-08-20. Measured on
+`rerank40title`, 90-second windows: concurrency 1 gave 6.2s/query and
+concurrency 4 gave **6.43s** -- 3.7% *worse*, which is four clients
+queuing on one slot.
+
+Left in rather than reverted, because the client capping itself at one
+request is a defect whatever the server does, and `cli.py`'s comment
+justifying the serial loop ("nothing is given up, three of those four
+slots could never be used") was written about the embedding peer's `-np 4`
+and does not describe the chat peer.
+
+Two things to know before turning it up:
+
+- **Verify the peer, do not trust the flag.** llama-swap launches the chat
+  model with its own command line, so a `-np` edit does nothing until the
+  peer restarts through llama-swap. `/props` is not reachable through the
+  proxy path on :8080; check the peer's own port.
+- **`-np 4` may still not help.** Decode on a 27B model is plausibly
+  memory-bandwidth bound, and speculative decoding (413/428 drafts
+  accepted, the reason decode reaches 67 tok/s) degrades under batching.
+  Four slots could split the same throughput four ways. Measure before
+  claiming a speedup.
+
+Default stays 1 so no previously-recorded arm's timing moves.
