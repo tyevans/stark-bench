@@ -81,6 +81,10 @@ def write_report(
                 # config would make the file confidently name the wrong
                 # query set.
                 "split": config.effective_split,
+                # The chat model that RAN, for the same reason as `split`.
+                # `None` means the composition default, which is recorded
+                # in `cost` only if an agent actually made an LLM call.
+                "chat_model": config.effective_chat_model,
                 "queries": queries,
                 "metrics": dict(metrics),
                 "cost": dict(cost),

@@ -359,7 +359,7 @@ def _llm_for(config: RunConfig) -> LlmProvider:
     and the alternative -- deciding per agent whether the toolset gets an
     LLM -- is a second place for the agent name to be interpreted.
     """
-    model = config.chat_model or DEFAULT_CHAT_MODEL
+    model = config.effective_chat_model or DEFAULT_CHAT_MODEL
     require_chat_model(INFERENCE_BASE_URL, model)
     return LangChainLlmProvider.openai_compatible(
         base_url=INFERENCE_BASE_URL,
@@ -421,6 +421,19 @@ def _ingest_stats(config: RunConfig) -> dict[str, object]:
     return dict(json.loads(path.read_text(encoding="utf-8")))
 
 
+def _chat_model_tag(config: RunConfig) -> str:
+    """A filename segment naming an overridden chat model, or nothing.
+
+    Same argument as `_split_tag`: a run against a different model must not
+    overwrite the number it should be compared against. Slashes and colons
+    appear in model ids and are not filename characters.
+    """
+    if not config.chat_model_override:
+        return ""
+    safe = config.chat_model_override.replace("/", "-").replace(":", "-")
+    return f"{safe}."
+
+
 def _split_tag(config: RunConfig) -> str:
     """`"test."` on an overridden run, `""` otherwise -- and the asymmetry matters.
 
@@ -445,8 +458,8 @@ def predictions_path(config: RunConfig) -> Path:
     `scripts/rescore.py` turns the survivor back into a report.
     """
     return (
-        RESULTS_ROOT
-        / f"{config.name}.{_split_tag(config)}{config.agent}.predictions.json"
+        RESULTS_ROOT / f"{config.name}.{_split_tag(config)}{_chat_model_tag(config)}"
+        f"{config.agent}.predictions.json"
     )
 
 
@@ -459,7 +472,10 @@ def report_path(config: RunConfig) -> Path:
     the correct `config_verbatim` for whichever ran last, so nothing in the
     file would reveal the loss.
     """
-    return RESULTS_ROOT / f"{config.name}.{_split_tag(config)}{config.agent}.json"
+    return RESULTS_ROOT / (
+        f"{config.name}.{_split_tag(config)}{_chat_model_tag(config)}"
+        f"{config.agent}.json"
+    )
 
 
 async def _do_ingest(
@@ -694,6 +710,18 @@ def main() -> None:
         "the split that did not run.",
     )
     parser.add_argument(
+        "--chat-model",
+        default=None,
+        help=(
+            "Chat model id, overriding the config's `chat_model:`. The "
+            "report records the model that RAN and its filename is tagged "
+            "with it, because `config_verbatim` is the config FILE's bytes "
+            "and would name the model that did not. Uses the same corpus: "
+            "the tenant is derived from the config NAME, so this does not "
+            "re-ingest anything."
+        ),
+    )
+    parser.add_argument(
         "--query-concurrency",
         type=int,
         default=1,
@@ -787,6 +815,8 @@ def main() -> None:
     config = load_config(args.config)
     if args.agent is not None:
         config = replace(config, agent=args.agent)
+    if args.chat_model is not None and args.chat_model != config.chat_model:
+        config = replace(config, chat_model_override=args.chat_model)
     if args.query_concurrency != config.query_concurrency:
         config = replace(config, query_concurrency=args.query_concurrency)
     if args.split is not None and args.split != config.split:
