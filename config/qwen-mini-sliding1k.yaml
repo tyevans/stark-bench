@@ -1,0 +1,37 @@
+# Pipeline smoke-test cell -- NOT a reportable number.
+#
+# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are
+# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors
+# sampled from the candidate list (seed 20260819). `candidates.json` is
+# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with
+# both endpoints inside the subset, so `upsert_relationships` cannot raise
+# `MissingEntityError`. The query files are symlinks -- there is one copy.
+#
+# ## Read the scores as a floor on nothing and a check on everything
+#
+# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's
+# 129,375, so every metric here is INFLATED against the real arms and the two
+# must never appear in the same table. What this cell is for is the other
+# thing: it exercises prefixes, dimension, table keying, the chunker, the
+# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather
+# than ~90, on a model no arm in this repo has ever run.
+#
+# Every real bug in this project has been silent and surfaced only because a
+# number looked wrong. This is the cheapest place to find the next one.
+#
+# Arm against arm within the mini set is still meaningful -- the three mini
+# configs differ only in chunker, exactly as the full sweep does.
+name: qwen-mini-sliding1k
+dataset: prime-mini
+split: test-0.1
+chunker: sliding-1000-500
+embeddings: qwen3-embedding-0.6b
+dimension: 1024
+aggregation: max
+agent: dense
+k: 20
+
+# See `qwen-wholedoc.yaml` for why the document side is empty and the query
+# side carries an instruction. Every qwen config states both.
+document_prefix: ""
+query_prefix: "Instruct: Given a query, retrieve relevant documents that answer the query\nQuery: "
