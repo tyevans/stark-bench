@@ -101,6 +101,22 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     #: were seen in a 4-query probe. So this can lose, and a loss is a
     #: result about how far reranking can be trusted to reorder.
     "rerank40": lambda config: RerankAgent(k=config.k, fetch=40),
+    #: `rerank40`'s accuracy at roughly half its cost -- or that is the
+    #: hypothesis; it is a separate key because it may not be.
+    #:
+    #: Measured against the endpoint's own rates (1230 tok/s prefill, 60
+    #: tok/s decode), a `rerank40` query is 23.3s of prefill and 12.7s of
+    #: decode, summing to the 36.0s/query actually observed. `relation_cap`
+    #: cuts the first by ~40% and `terse_scores` the second by ~45%,
+    #: predicting ~19s.
+    #:
+    #: Both knobs change what the model sees or says, so this cannot share
+    #: `rerank40`'s filename: the 0.46323 it is being compared against would
+    #: be overwritten by its own comparison. Same reason `rerank40` is not a
+    #: flag on `rerank`.
+    "rerank40lean": lambda config: RerankAgent(
+        k=config.k, fetch=40, relation_cap=10, terse_scores=True
+    ),
 }
 
 

@@ -70,6 +70,7 @@ def test_every_architecture_is_reachable_by_name():
         "deep",
         "rerank",
         "rerank40",
+        "rerank40lean",
     }
 
 
