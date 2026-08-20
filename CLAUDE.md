@@ -510,18 +510,38 @@ not the architecture), `B-BUDGET-CAPS-1`, `B-DEEP-EDGES-1`,
 `relationships` returning empty, and a low deep-agent score against that
 corpus is a data finding wearing an architecture finding's clothes.
 
-Loading them afterwards is **minutes, not a re-ingest**, and the reason is
-worth knowing rather than rediscovering: `skb/ingest.py:162`'s resume path
-returns `None` for the vectors and nothing else — the entity is still built,
-still batched, still added to `known`. So `--ingest --ingest-edges` with
-resume at its default re-upserts entities without embedding a character,
-then loads the edges. The entities being present is also what keeps
-`upsert_relationships` from raising `MissingEntityError` on the first edge.
+Loading them afterwards **skips the embedding, not the edge load**, and the
+reason is worth knowing rather than rediscovering: `skb/ingest.py:162`'s
+resume path returns `None` for the vectors and nothing else — the entity is
+still built, still batched, still added to `known`. So `--ingest
+--ingest-edges` with resume at its default re-upserts entities without
+embedding a character, then loads the edges. The entities being present is
+also what keeps `upsert_relationships` from raising `MissingEntityError` on
+the first edge.
+
+**The edge load itself is not minutes.** PRIME is 8,100,498 relationships and
+takes **~28 minutes** into a fresh graph — measured on 2026-08-19, where it
+was 28.5 of the qwen-wholedoc arm's 100.5-minute total. An earlier version of
+this section said "minutes, not a re-ingest"; that was true of the phase it
+was written about (a resume whose entities already existed) and badly wrong
+as a general claim. Rate is roughly 200-280k relationships/min and eases as
+the graph grows, since Neo4j maintains indexes against a larger set.
+
+Budget for it, and expect **silence** while it runs: the edge loop logs
+nothing, and `ingest done` prints *before* it starts. See B-EDGE-PROGRESS-1,
+filed after that combination produced a confident wrong diagnosis of a hang.
 
 Check two things afterwards, neither of which the ingest will volunteer:
-`self_loops_dropped` is non-zero (PRIME has them; a zero more likely means
-the loader stopped looking), and `edges` matches `edges.jsonl`'s line count
-minus those drops.
+`edges` matches `edges.jsonl`'s line count minus `self_loops_dropped`, and
+the Neo4j relationship count matches it too — **scoped to your arm**, since
+every config's edges share one graph and a bare `count(r)` sums all of them.
+
+`self_loops_dropped` is expected to be **0** on the current PRIME export.
+This section previously said a zero more likely means the loader stopped
+looking; that was checked on 2026-08-19 and is wrong for this data —
+`data/prime/edges.jsonl` contains no self-loops at all across all 8,100,498
+lines. A zero is the correct answer here, and `edges` matching the line count
+exactly is the check that actually has teeth.
 
 Note also that `runner.run` holds **one agent for the whole query set**. A
 `DeepAgent` carrying a single `Budget` would spend the entire allowance on
