@@ -665,3 +665,37 @@ Two ways to settle it, in order of cost:
 Until then `RESULTS.md` labels the `vss-control` rows a reference point of
 uncertain provenance, which is the honest framing and not a placeholder for
 one.
+
+
+## B-QUADRATIC-DOCS-1: whole-document embedding cost is superlinear in document length
+
+`qwen-rel-whole` (129,375 documents, 227.9M chars, `whole-document`) is
+running at roughly **0.32% of corpus characters per minute sustained**, or
+~720k chars/min. A probe on a 1,024-document slice averaging 5,278 chars
+measured **1.94M chars/min** -- 2.7x faster per character on shorter
+documents.
+
+Longer documents are more efficient per *request* and much less efficient per
+*character*, because transformer attention is quadratic in sequence length. A
+30k-token document is not 10x a 3k-token one, it is closer to 100x. `prime-rel`
+has 6,162 documents over 8,000 characters (4.8%) and a maximum of 133,778, and
+that tail dominates the arm's wall time.
+
+Consequences worth acting on:
+
+- **A chars/min figure is only valid for the length distribution it was
+  measured on.** B-RATE-UNIT-1 says extrapolate by characters rather than
+  documents, which is right and still not sufficient -- the rate itself moves
+  with document length. Measure on a representative slice, not the head
+  (dense) and not a random 1k (short).
+- **`capped-whole-8000` would likely cost a fraction of `whole-document` on
+  this corpus** while splitting only the 4.8% over that length. Whether that
+  is a good trade depends on where the `- relations:` block falls, since it
+  sits at the END of the document and a cap severs the neighbour names first.
+  That is a real experiment, not an obvious win.
+- The **embedding cache** (shipped today) does not help a first arm at all.
+  It helps the second and third, which is where the sweep cost lives.
+
+Not filed as a defect -- nothing is wrong -- but the cost model this project
+has been reasoning with ("chars/min is a constant") is wrong, and it produced
+two ETAs today that were out by 3x in opposite directions.
