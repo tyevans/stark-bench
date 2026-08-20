@@ -723,3 +723,42 @@ and one `retrieve_chunks` separately against `qwen-rel-whole`, then re-run
 carries `query_embed_live_calls`, which must read `0` -- a non-zero value
 means the prewarm missed and the wall-clock comparison is measuring something
 else.
+
+## B-RERANK-RETRIEVAL-FLOOR-1
+
+`agents/rerank.py`, and any future work on prompt size.
+
+Measured 2026-08-20 from a raw endpoint response during `rerank40lean`:
+prefill 13,133 tok / 10.56s, decode 627 tok / 9.27s -- **19.8s of LLM
+against 28.6s observed per query**. The residual **~8.8s is retrieval**
+(hybrid = pgvector + BM25 over the 5.7M-row terms table), and nothing in
+any report shows it.
+
+Why this matters before the next lean arm: `rerank40title` cuts prefill
+from 10.6s to ~0.3s, which makes retrieval roughly two-thirds of the
+remaining query. Further prompt work has a hard floor there.
+
+Deferred because measuring it needs the database quiet, and an ingest plus
+a scoring run were in flight. Subsumes the query-embedding half of
+B-QUERY-LATENCY-SPLIT-1, which the prewarm already answered:
+`prewarmed 280 query vectors in 3 requests`.
+
+## B-RERANK-OUTPUT-ENCODING-1
+
+`agents/rerank.py:TerseRelevance`.
+
+Decode is now the larger half of the LLM cost and is 15.7 tok/candidate to
+convey one integer. Measured alternatives, from the observed 627-token
+pretty-printed response at fetch=40:
+
+| encoding | tokens | decode |
+|---|---|---|
+| pretty `{"i": 1, "s": 12}` (current) | 627 | 9.3s |
+| JSON pairs `[[1,12],...]` | 208 | 3.1s |
+| space table `1 12\n` | ~120 | ~1.8s |
+
+Not done. The space table needs a `complete(prompt) -> str` on `Toolset`
+-- neither it nor redstring's `LlmProvider` has a raw-completion method --
+and that trades away grammar-constrained decoding for ~0.6s over JSON
+pairs. Judged not worth it while retrieval sits at 8.8s
+(B-RERANK-RETRIEVAL-FLOOR-1). Revisit if that floor drops.

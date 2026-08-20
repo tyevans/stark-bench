@@ -117,6 +117,19 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     "rerank40lean": lambda config: RerankAgent(
         k=config.k, fetch=40, relation_cap=10, terse_scores=True
     ),
+    # Titles only: name and type, no body, no relations. The leanest thing
+    # that is still a reranker. ~410 prompt tokens at fetch=40 against
+    # `rerank40lean`'s measured 13,133 -- a 32x cut that moves the whole cost
+    # of this architecture onto decode and retrieval.
+    "rerank40title": lambda config: RerankAgent(
+        k=config.k, fetch=40, terse_scores=True, passage_mode="title"
+    ),
+    # The same, plus one neighbour per relation type. Isolates whether the
+    # relations signal survives being sampled down to a single name, which
+    # `rerank40lean` (cap=10) cannot answer.
+    "rerank40titlerel": lambda config: RerankAgent(
+        k=config.k, fetch=40, terse_scores=True, passage_mode="title_rel"
+    ),
 }
 
 

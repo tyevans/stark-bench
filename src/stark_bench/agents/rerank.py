@@ -194,6 +194,77 @@ def lean_document(text: str, query: str, *, cap: int) -> str:
     return text[:marker] + "\n".join(kept) + trailing
 
 
+#: `- name:` and `- type:` as STaRK writes them at the top of every document.
+#: Anchored to the line start so a `name` nested inside a details dict cannot
+#: win: those are database display names, and one of them is the wrong answer
+#: to "what is this entity called".
+_NAME_LINE = re.compile(r"^- name:[ \t]*(.*)$", re.MULTILINE)
+_TYPE_LINE = re.compile(r"^- type:[ \t]*(.*)$", re.MULTILINE)
+
+
+def title_of(text: str) -> str:
+    """The entity's name and type, and nothing else.
+
+    ## Why a title can be enough
+
+    PRIME's queries name the entities they are about ("a drug that targets X
+    and is indicated for Y"), and reranking only has to *order* candidates
+    retrieval already found. Ordering by name and type is a far weaker
+    signal than ordering by the full document -- but the full document costs
+    3,415 characters per candidate against roughly 37 here, and 82% of that
+    is text no query asks about.
+
+    Whether the weaker signal is good enough is exactly the measurement this
+    exists to take. It is a real experiment with a plausible null.
+
+    ## The empty-title hazard
+
+    A document with no `- name:` line would render as `? (?)`, and forty
+    candidates rendering as `? (?)` is a reranker scoring noise -- which
+    looks like "reranking does not help" rather than like a defect. So a
+    document without a name falls back to its first non-empty line, and
+    `render_passages` refuses a batch that came out empty.
+    """
+    name = _NAME_LINE.search(text)
+    kind = _TYPE_LINE.search(text)
+    label = name.group(1).strip() if name else ""
+    if not label:
+        label = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    return f"{label} ({kind.group(1).strip()})" if kind else label
+
+
+def first_relations(text: str, *, per_type: int = 1, max_types: int = 8) -> str:
+    """One neighbour per relation type, flattened onto a single line.
+
+    `per_type` names rather than all of them, because the point of the
+    lean encodings is that a *sample* of a node's neighbourhood identifies
+    it. `max_types` bounds the pathological node: PRIME's hub entities carry
+    dozens of relation types and one of them would otherwise cost more than
+    the whole rest of the prompt.
+
+    Returns `""` for a document with no relations block, which is correct
+    and not an error -- `add_rel=False` corpora have none at all.
+    """
+    if per_type <= 0:
+        raise ValueError("per_type must be positive; 0 removes the relations signal")
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return ""
+    out: list[str] = []
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names = [n for n in match.group(2).split(", ") if n]
+        if not names:
+            continue
+        kind = match.group(1).strip().rstrip(": {").strip()
+        out.append(f"{kind}: {', '.join(names[:per_type])}")
+        if len(out) >= max_types:
+            break
+    return "; ".join(out)
+
+
 _PROMPT_TEMPLATE = (
     "You are ranking candidate entities from a biomedical knowledge base "
     "against a search query. Score every candidate from 0 to 100 for how "
@@ -240,19 +311,55 @@ class RerankAgent:
     #: Score by candidate index with integer scores, rather than by node id
     #: with floats. See `TerseRelevance`.
     terse_scores: bool = False
+    #: How much of each candidate document reaches the prompt.
+    #:
+    #: - `"full"`  -- the document, subject to `relation_cap` and the
+    #:   character budget. What every arm before this one measured.
+    #: - `"title"` -- name and type only. ~37 chars per candidate against
+    #:   ~3,415, because 82% of a document's characters are node details and
+    #:   16.5% of the head is database provenance (`literatureReference`,
+    #:   `orthologousEvent`, `crossReference`) that no STaRK query asks about.
+    #: - `"title_rel"` -- name, type, and one neighbour per relation type.
+    #:
+    #: Separate from `relation_cap` and `terse_scores` for the reason those
+    #: two are separate from each other: they cut different parts of the
+    #: bill, and one combined knob could not say which moved the accuracy.
+    passage_mode: str = "full"
     name: str = "rerank"
+
+    def _render_passage(self, text: str, query: str) -> str:
+        """One candidate's text, at whatever detail `passage_mode` asks for."""
+        if self.passage_mode == "title":
+            return title_of(text)
+        if self.passage_mode == "title_rel":
+            rels = first_relations(text)
+            return f"{title_of(text)} | {rels}" if rels else title_of(text)
+        if self.passage_mode != "full":
+            # Not a warning. An unrecognised mode silently falling back to
+            # `full` would produce a correct-looking run measuring something
+            # other than what its name says.
+            raise ValueError(f"unknown passage_mode {self.passage_mode!r}")
+        return (
+            lean_document(text, query, cap=self.relation_cap)
+            if self.relation_cap
+            else text
+        )
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
         passages = await tools.search_passages(query.text, k=self.fetch, mode="hybrid")
         if not passages:
             return []
 
-        texts = [
-            lean_document(p.text, query.text, cap=self.relation_cap)
-            if self.relation_cap
-            else p.text
-            for p in passages
-        ]
+        texts = [self._render_passage(p.text, query.text) for p in passages]
+        # Every real defect in this project has been silent, and a reranker
+        # handed forty blank passages scores like a slightly-worse `hybrid`
+        # with nothing in the log. A mode that renders nothing is a bug in
+        # the mode, so say so here rather than three hours later in a report.
+        if not any(t.strip() for t in texts):
+            raise ValueError(
+                f"passage_mode={self.passage_mode!r} rendered {len(texts)} "
+                "empty passages; the reranker would be scoring blank text"
+            )
         # The label is the whole difference in prompt cost between the two
         # output modes on the *input* side: a 5-digit node id is ~3 tokens
         # and an index is 1, times `fetch` candidates.
