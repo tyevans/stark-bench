@@ -603,3 +603,27 @@ out by 3.3x.
 So: measure chars/min on whatever slice is convenient, then divide the
 corpus's total characters by it. Quoting nodes/min from a `--limit` run and
 multiplying by the node count is wrong twice over.
+
+**The ingest's own ETA has this bug.** `_report` in
+`src/stark_bench/adapters/stark_ingest_engine.py` extrapolates from nodes
+done against `total_nodes`, so on a corpus with a long document tail it is
+wrong in the alarming direction and gets worse as the run proceeds. Measured
+live on `qwen-rel-whole`, 2026-08-19:
+
+| | engine ETA | measured |
+|---|---|---|
+| 16 min in | 152 min | -- |
+| 22 min in | 180 min | -- |
+| 25 min in | **198 min** | **~66 min** |
+
+At that last point the arm was 11% through its *nodes* and **28.9% through
+its characters**, because the chunks then being embedded averaged 14,241
+characters against the corpus mean of 1,761. The rate was a healthy 2.37M
+chars/min throughout; only the unit was wrong.
+
+An ETA that climbs while the run is healthy trains its reader to ignore it,
+and this one nearly caused a second false hang diagnosis in the same session
+as B-EDGE-PROGRESS-1. The fix is to accumulate `sum(len(text))` alongside the
+chunk counter and extrapolate against the corpus's total characters -- one
+extra pass over `nodes.jsonl` at startup, the same place `_count_lines`
+already reads it.
