@@ -31,7 +31,9 @@ reranking.
 from __future__ import annotations
 
 import logging
+import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -264,6 +266,117 @@ def title_of(text: str) -> str:
     return f"{label} ({kind.group(1).strip()})" if kind else label
 
 
+#: Word characters only, lowercased. Entity names here are things like
+#: `PI5P, PP2A and IER3 Regulate PI3K/AKT Signaling` and `HLA-DRB1`, so the
+#: split has to break on `/` and `-` for a query naming `HLA` to reach the
+#: second one -- while still letting the exact full name score highest,
+#: which it does because every one of its tokens matches.
+_WORD = re.compile(r"[a-z0-9]+")
+
+#: Standard BM25. `k1` controls term-frequency saturation and `b` length
+#: normalisation. These are the usual defaults and are not tuned: the
+#: documents here are entity names of ~21 characters, where term frequency
+#: is almost always 1 and length varies little, so both parameters have far
+#: less to do than they would over prose.
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+
+
+def _tokens(text: str) -> list[str]:
+    return _WORD.findall(text.lower())
+
+
+def rank_names_lexically(query: str, names: Sequence[str], *, top: int) -> list[str]:
+    """The `top` names most lexically relevant to `query`, best first.
+
+    ## Why BM25 rather than the substring test it replaces
+
+    `lean_document` picked names by `name.lower() in query.lower()`. That is
+    all-or-nothing: a query naming `HLA-DRB1` does not match the name
+    `HLA-DRB1 allele`, and among ten names that all match it cannot say
+    which matches better. At `per_type=1` that stops being a rounding error
+    and becomes the entire relations signal, since only one name survives.
+
+    ## Why the idf is computed over this query's candidate set
+
+    Rarity is what makes a neighbour name informative, and rarity is
+    relative to the alternatives being ranked. A name shared by every
+    candidate distinguishes none of them however rare it is in the corpus
+    at large -- and the corpus-wide statistic is not available to an agent
+    anyway, which sees only `ports`.
+
+    Ties break on the original order, so a document whose names are all
+    equally irrelevant renders exactly what `first_relations` would have.
+    """
+    if top <= 0:
+        raise ValueError("top must be positive; 0 removes the relations signal")
+    if not names:
+        return []
+    docs = [_tokens(n) for n in names]
+    terms = set(_tokens(query))
+    if not terms:
+        return list(names[:top])
+    total = len(docs)
+    avg = sum(len(d) for d in docs) / total or 1.0
+    df: dict[str, int] = {}
+    for doc in docs:
+        for term in set(doc) & terms:
+            df[term] = df.get(term, 0) + 1
+
+    scored: list[tuple[float, int, str]] = []
+    for index, (name, doc) in enumerate(zip(names, docs, strict=True)):
+        score = 0.0
+        length = len(doc) or 1
+        for term in terms:
+            freq = doc.count(term)
+            if not freq:
+                continue
+            # +1 inside the log keeps idf positive for a term present in
+            # every document. A term in all N docs would otherwise score
+            # zero or negative and a name matching only that term would
+            # sort below one matching nothing.
+            idf = math.log(1 + (total - df[term] + 0.5) / (df[term] + 0.5))
+            score += idf * (
+                freq
+                * (_BM25_K1 + 1)
+                / (freq + _BM25_K1 * (1 - _BM25_B + _BM25_B * length / avg))
+            )
+        scored.append((-score, index, name))
+    scored.sort()
+    return [name for _, _, name in scored[:top]]
+
+
+def ranked_relations(
+    text: str,
+    query: str,
+    *,
+    per_type: int = 1,
+    max_types: int = 8,
+) -> str:
+    """`first_relations`, but the kept names are the query-relevant ones.
+
+    Identical output shape, so the two are directly comparable in a prompt
+    and the only variable between the arms is *which* names survive.
+    """
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return ""
+    out: list[str] = []
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names = [n for n in match.group(2).split(", ") if n]
+        if not names:
+            continue
+        kind = match.group(1).strip().rstrip(": {").strip()
+        kept = rank_names_lexically(query, names, top=per_type)
+        out.append(f"{kind}: {', '.join(kept)}")
+        if len(out) >= max_types:
+            break
+    return "; ".join(out)
+
+
 def first_relations(text: str, *, per_type: int = 1, max_types: int = 8) -> str:
     """One neighbour per relation type, flattened onto a single line.
 
@@ -394,6 +507,9 @@ class RerankAgent:
             return title_of(text)
         if self.passage_mode == "title_rel":
             rels = first_relations(text)
+            return f"{title_of(text)} | {rels}" if rels else title_of(text)
+        if self.passage_mode == "title_rel_ranked":
+            rels = ranked_relations(text, query)
             return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode != "full":
             # Not a warning. An unrecognised mode silently falling back to

@@ -792,3 +792,55 @@ Two things to know before turning it up:
   claiming a speedup.
 
 Default stays 1 so no previously-recorded arm's timing moves.
+
+## B-LLM-RUN-NOISE-1
+
+**LLM arms are not reproducible run to run, and CLAUDE.md's standing claim
+that "every accuracy number in this repository is a difference between two
+runs" needs a noise floor beside it.**
+
+`rerank40title` on `gemma-4-26b-qat`, same corpus, same tenant, same split,
+`temperature=0.0`, `enable_thinking: false`, run twice within an hour:
+
+| metric | run 1 | run 2 | delta |
+|---|---|---|---|
+| mrr | 0.34100392200052737 | 0.3397480349721653 | 0.00126 |
+| hit@1 | 0.25714285714285712 | 0.25357142857142856 | 0.00357 |
+| hit@5 | 0.43928571428571428 | 0.45 | **0.01071** |
+| recall@20 | 0.46431878718686570 | 0.4720568822829851 | 0.00774 |
+
+Temperature zero does not make a batched server deterministic: with `-np 4`
+and continuous batching, a request's logits depend on which other requests
+share its batch, and floating-point addition is not associative. A handful
+of near-tied argmaxes flip and the ranking moves.
+
+**Consequences.** A difference below ~0.001 mrr between two LLM arms is
+noise. hit@5 is worse, at ~0.011 -- roughly 2.5% relative -- so it should
+not be quoted as a precise figure at all on these arms.
+
+Retrieval-only arms (`dense`, `lexical`, `hybrid`, `vss-control`) are
+unaffected: no LLM, and `vss-control` reproducing 0.23057383129905376 to
+every digit after a re-ingest remains a valid check.
+
+**Unresolved and cheap to settle:** whether `--query-concurrency 1` restores
+determinism. If it does, the cause is confirmed as batch composition and a
+reported number can be made reproducible by paying ~4x wall time for it.
+Two serial runs of the same arm would answer it.
+
+## B-SECONDS-TOTAL-WALL-1
+
+`adapters/report_file.py:39` -- `"seconds_total": sum(c.duration_s for c in calls)`.
+
+That was wall time only while the runner was serial. With
+`--query-concurrency N` the calls overlap, so the sum counts the same
+seconds up to N times: the run above reports **1933s** while actually
+taking ~480s, and `--summarise` renders that in a column headed
+`seconds`.
+
+A cost column whose meaning depends on a flag not shown beside it is the
+silent shape this repo keeps hitting. Two arms run at different
+concurrencies are not comparable in that column today, and nothing says so.
+
+Fix is to record wall time alongside, not to replace: summed call time is
+the right number for "GPU seconds consumed", wall time is the right one for
+"how long did this take". They stopped being the same number in 68f8d55.

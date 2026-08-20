@@ -134,6 +134,17 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
         pair_scores=True,
         passage_mode="title_rel",
     ),
+    # The same, but the single kept neighbour per relation type is chosen by
+    # BM25 against the query rather than by document order. At per_type=1
+    # *which* name survives is the whole relations signal, so the selector
+    # stops being a detail -- `titlerel` vs `titlerelranked` isolates it.
+    "rerank40titlerelranked": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_ranked",
+    ),
 }
 
 
