@@ -63,6 +63,7 @@ from stark_bench.adapters.stark_artifacts import (
 from stark_bench.adapters.chunkers import WholeDocumentChunker
 from stark_bench.domain.stark_ids import NAMESPACE_STARK
 from stark_bench.application.ingest_corpus import ingest_corpus
+from stark_bench.application.summarise import summarise
 from stark_bench.adapters.stark_ingest_engine import ingest
 from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
 from stark_bench.adapters.redstring_toolset import RedstringToolset
@@ -613,7 +614,20 @@ async def _do_run(config: RunConfig) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--config", required=False, type=Path)
+    parser.add_argument(
+        "--summarise",
+        nargs="?",
+        const=Path("results"),
+        type=Path,
+        default=None,
+        help="Render every scored arm under a directory as one markdown "
+        "table on stdout and exit, without --config. Grouped by DATASET, "
+        "which is load-bearing: vss-control embeds STaRK's add_rel=True "
+        "documents and the prime arms do not, so a gap across that line is "
+        "the corpus and not the model -- a conclusion this project drew "
+        "wrongly once already.",
+    )
     parser.add_argument("--ingest", action="store_true")
     parser.add_argument("--run", action="store_true")
     parser.add_argument(
@@ -694,6 +708,13 @@ def main() -> None:
         "hide a bug.",
     )
     args = parser.parse_args()
+
+    if args.summarise is not None:
+        print(summarise(args.summarise))  # noqa: T201
+        return
+
+    if args.config is None:
+        parser.error("--config is required unless --summarise is given")
 
     config = load_config(args.config)
     if args.agent is not None:

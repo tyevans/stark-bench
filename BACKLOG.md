@@ -627,3 +627,41 @@ as B-EDGE-PROGRESS-1. The fix is to accumulate `sum(len(text))` alongside the
 chunk counter and extrapolate against the corpus's total characters -- one
 extra pass over `nodes.jsonl` at startup, the same place `_count_lines`
 already reads it.
+
+
+## B-ADA002-PROVENANCE-1: we do not know what STaRK's precomputed vectors were built from
+
+`vss-control` scores `data/prime` text against `doc_emb.npz`, STaRK's
+published ada-002 embeddings. **Nothing here establishes what text those
+embeddings were computed over**, and the answer changes what every comparison
+to that row means.
+
+Checked in `stark_qa` (installed in the 3.11 sidecar) on 2026-08-19:
+
+- `models/multi_vss.py:90` -- `get_doc_info(node_id, add_rel=True, compact=True)`
+- `models/llm_reranker.py:93` -- `get_doc_info(node_id, add_rel=True)`
+- `models/bm25.py:29` -- `get_doc_info(idx)`, i.e. the `add_rel=False` default
+- `models/vss.py` -- loads `candidates_emb_dir` and generates nothing
+
+So the two baselines that build text at run time disagree with each other,
+and the one we replicate does not build text at all. The generation script is
+not in the pip package.
+
+Why it matters: `qwen-wholedoc` dense (0.183) was read against `vss-control`
+dense (0.231) as evidence that qwen3-embedding-0.6b is a weak model, and that
+reading is sound only if both indexed comparable text. If STaRK used
+`add_rel=True`, the gap is largely corpus and the honest comparison is
+against `qwen-rel-whole`. If `add_rel=False`, ada-002 really is better here
+and the model conclusion stands.
+
+Two ways to settle it, in order of cost:
+
+1. Read STaRK's `emb_generate.py` in the GitHub repo (not shipped to PyPI).
+2. Measure it from our side, which is already running: if `qwen-rel-whole`
+   moves substantially above `qwen-wholedoc`, relational text is worth a lot
+   on this benchmark whatever STaRK did -- and if it does not, the question
+   stops mattering for our conclusions.
+
+Until then `RESULTS.md` labels the `vss-control` rows a reference point of
+uncertain provenance, which is the honest framing and not a placeholder for
+one.
