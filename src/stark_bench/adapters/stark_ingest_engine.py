@@ -36,6 +36,7 @@ from redstring import (
 from redstring.domain.chunk import StoredChunk, chunk_id
 
 from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for
+from stark_bench.ports.embedding_cache import EmbeddingCache, cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,12 @@ class IngestReport:
     self_loops_dropped: int
     chunks: int
     skipped: int = 0
+    #: Chunk texts served from the cache rather than the endpoint, and those
+    #: that had to be embedded. Reported because a sweep's second arm over the
+    #: same corpus should be almost entirely hits -- a run that is not is
+    #: telling you the key is wrong, which is otherwise invisible.
+    cache_hits: int = 0
+    cache_misses: int = 0
 
 
 def _entity(
@@ -131,6 +138,9 @@ async def ingest(
     existing_chunk_ids: AbstractSet[ChunkId] = frozenset(),
     resume: bool = True,
     total_nodes: int | None = None,
+    embedding_cache: EmbeddingCache | None = None,
+    cache_model: str = "",
+    cache_document_prefix: str = "",
 ) -> IngestReport:
     """Load nodes (and their chunks) then edges, in that order.
 
@@ -242,6 +252,7 @@ async def ingest(
     observed_at = datetime.now(UTC)
     known: set[str] = set()
     node_count = chunk_count = skipped_count = 0
+    cache_hits = cache_misses = 0
     started_at = time.monotonic()
     last_report = started_at
 
@@ -300,7 +311,65 @@ async def ingest(
         alignment -- and misaligning vectors with texts is a defect that
         produces a fully-populated store scoring like noise, with nothing
         raising anywhere.
+
+        The cache is consulted HERE rather than around the provider, so that
+        the surviving misses re-batch. Wrapping the provider would leave a
+        32-text request carrying 31 texts the cache already held.
+
+        Duplicate texts within one group are looked up once and fanned back
+        out by position -- `dict.fromkeys` for the query, and the final loop
+        filling every position that holds a hit. A corpus with repeated
+        documents would otherwise embed them once per occurrence.
         """
+        nonlocal cache_hits, cache_misses
+        if not texts:
+            return []
+
+        if embedding_cache is None:
+            return await _embed_uncached(texts)
+
+        keys = [
+            cache_key(
+                model=cache_model,
+                document_prefix=cache_document_prefix,
+                text=text,
+            )
+            for text in texts
+        ]
+        hits = await embedding_cache.get_many(list(dict.fromkeys(keys)))
+        cache_hits += sum(1 for key in keys if key in hits)
+
+        missing_positions = [i for i, key in enumerate(keys) if key not in hits]
+        cache_misses += len(missing_positions)
+
+        fetched: list[list[float]] = []
+        if missing_positions:
+            fetched = await _embed_uncached([texts[i] for i in missing_positions])
+
+        out: list[list[float] | None] = [None] * len(texts)
+        for position, vector in zip(missing_positions, fetched, strict=True):
+            out[position] = vector
+        for i, key in enumerate(keys):
+            if out[i] is None:
+                out[i] = hits[key]
+
+        if missing_positions:
+            await embedding_cache.put_many(
+                {
+                    keys[position]: vector
+                    for position, vector in zip(missing_positions, fetched, strict=True)
+                }
+            )
+
+        if any(vector is None for vector in out):
+            raise ValueError(
+                "a chunk text was neither served from the cache nor embedded; "
+                "this is a cache bug, not a provider one"
+            )
+        return [vector for vector in out if vector is not None]
+
+    async def _embed_uncached(texts: list[str]) -> list[list[float]]:
+        """The provider path: slice into requests, run `concurrency` at once."""
         if not texts:
             return []
         slices = [texts[i : i + embed_batch] for i in range(0, len(texts), embed_batch)]
@@ -497,4 +566,6 @@ async def ingest(
         self_loops_dropped=dropped,
         chunks=chunk_count,
         skipped=skipped_count,
+        cache_hits=cache_hits,
+        cache_misses=cache_misses,
     )
