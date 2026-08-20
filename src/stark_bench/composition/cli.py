@@ -41,6 +41,9 @@ from stark_bench.composition.agent_registry import AGENTS, build_agent
 from stark_bench.adapters.config_file import load_config
 from stark_bench.adapters.postgres_embedding_cache import PostgresEmbeddingCache
 from stark_bench.domain.run_config import RunConfig
+from stark_bench.adapters.prewarmed_query_embeddings import (
+    PrewarmedQueryEmbeddings,
+)
 from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
@@ -564,7 +567,22 @@ async def _do_run(config: RunConfig) -> None:
         )
     else:
         logger.info("embedding queries live against %r", config.embeddings)
-        embeddings = _live_embeddings_for(config)
+        # Wrapped, then prewarmed *before* any store is opened. The live
+        # path embedded one query per HTTP round-trip inside the retrieval
+        # call, serialised by `run`'s bare loop; `dense` spent 78.7s on 280
+        # queries that way, almost none of it compute. See
+        # `PrewarmedQueryEmbeddings` for why this is a wrapper and not
+        # concurrency in the runner.
+        #
+        # The precomputed branch is deliberately left alone: it is already a
+        # dict lookup and never reaches an endpoint, so wrapping it would add
+        # a second layer of counters over a path that makes no requests.
+        embeddings = PrewarmedQueryEmbeddings(_live_embeddings_for(config))
+        # Before `connect`, not after, so a slow prewarm does not sit on a
+        # Postgres connection -- an ingest may be writing to the same
+        # database, and CLAUDE.md records a scoring pass costing an in-flight
+        # ingest 36% of its rate by contending there.
+        await embeddings.prewarm([q.text for q in queries])
 
     chunks = await PostgresChunkStore.connect(
         POSTGRES_DSN, table=_table_for(config), dimension=config.dimension
@@ -595,7 +613,13 @@ async def _do_run(config: RunConfig) -> None:
         candidates_path = data_dir / "candidates.json"
         candidate_ids = [int(c) for c in json.loads(candidates_path.read_text())]
         metrics = score_predictions(predictions, answers, candidate_ids=candidate_ids)
-        cost = summarise_cost(tools.calls, queries=len(queries))
+        cost = dict(summarise_cost(tools.calls, queries=len(queries)))
+        if isinstance(embeddings, PrewarmedQueryEmbeddings):
+            # In the report because "the helper works, nobody calls it" has
+            # happened twice in this repo, hours apart, with green tests both
+            # times. `query_embed_live_calls: 0` on a dense run is the only
+            # artifact that proves a byte of this reached the wire.
+            cost.update(embeddings.stats())
     finally:
         await chunks.close()
         await graph.close()
