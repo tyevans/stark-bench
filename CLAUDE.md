@@ -336,16 +336,51 @@ client-side gives you.
 
 ## Where the numbers are
 
-`prime` / `test-0.1` (280 queries), k=20, metrics from the official evaluator:
+**`RESULTS.md` is generated** — `--summarise results/` renders every scored
+arm, grouped by corpus. Regenerate it rather than editing it. What follows is
+the interpretation, which the table cannot carry.
 
-| config | agent | mrr | hit@1 | hit@5 | recall@20 |
-|---|---|---|---|---|---|
-| `vss-control` (ada-002, whole-doc) | dense | 0.23057 | 0.15357 | 0.31071 | 0.37878 |
-| `redstring-native` (nomic, chunked) | dense | 0.19481 | 0.13214 | 0.26429 | 0.31112 |
-| `redstring-native` (nomic, chunked) | hybrid | 0.21961 | 0.14286 | 0.30000 | 0.31512 |
+### The headline: relational text is worth a lot, through the LEXICAL channel
 
-**The nomic rows are a floor, not a measurement** — no task prefixes. Do not
-quote them against `vss-control` until they are re-run.
+`prime` / `test-0.1`, 280 queries, k=20, official evaluator. Same model
+(qwen3-embedding-0.6b), same ~1.0 chunks/node, differing only in whether the
+indexed document carries a `- relations:` block naming the node's neighbours:
+
+| agent | `qwen-wholedoc` (no relations) | `qwen-rel-whole` (relations) | change |
+|---|---|---|---|
+| dense | 0.18274 | 0.18664 | **+2%** |
+| lexical | 0.20479 | 0.24913 | **+22%** |
+| hybrid | 0.19870 | **0.28214** | **+42%** |
+
+`qwen-rel-whole` hybrid at **0.28214** is the best figure this project has
+produced — above `vss-control`'s best (0.23111) and above STaRK's published
+ada-002 VSS figure of 0.2350.
+
+**The mechanism is the interesting part.** PRIME's queries name related
+entities verbatim ("a drug that targets X and is indicated for Y"). BM25
+matches those names directly in the relations block; a single dense vector
+compresses them away. So the gain is almost entirely lexical — dense barely
+moves. That also retro-explains an oddity in the older data: lexical beat
+dense on 5 of 9 arms, which looked like noise and was this effect showing
+through weakly on corpora that lacked the text.
+
+### A hypothesis this falsified, recorded because it drove real decisions
+
+`qwen-wholedoc` dense (0.183) against `vss-control` dense (0.231) was read
+here as "ada-002 is reading a richer corpus" — the theory being that STaRK's
+precomputed vectors are over `add_rel=True` documents. That theory redirected
+a day of endpoint time, and **it is wrong**: giving qwen the relational text
+moved dense by 0.004, leaving the gap to ada-002 essentially intact.
+
+So on the dense channel, ada-002 really is better than qwen3-embedding-0.6b
+here, and the earlier caveat stands with one addition — every local number is
+for a **Q8_0 GGUF served by llama.cpp**, not for the model as published.
+B-ADA002-PROVENANCE-1 records what is still unverified about STaRK's own
+embeddings; it no longer changes any conclusion of ours.
+
+The lesson worth keeping: the arm was built to test a hypothesis, the
+hypothesis lost, and the arm produced the project's best result anyway — for
+a reason nobody predicted.
 
 `vss-control` is validated: after a table migration orphaned its corpus, a
 re-ingest reproduced `0.23057383129905376` to every digit. That exact-match is

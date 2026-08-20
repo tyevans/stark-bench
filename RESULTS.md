@@ -48,3 +48,11 @@ Arms on `prime` index documents that stop at the node's own details; arms on `pr
 | `qwen-mini-wholedoc` | lexical | qwen3-embedding-0.6b | capped-whole-2400 | 1.198 | 0.36618 | 0.32143 | 0.41786 | 0.41340 | 0.00 | -- | 18.5 |
 | `qwen-mini-wholedoc` | dense | qwen3-embedding-0.6b | capped-whole-2400 | 1.198 | 0.35905 | 0.28929 | 0.43214 | 0.49056 | 0.00 | -- | 37.4 |
 | `qwen-mini-boundary` | dense | qwen3-embedding-0.6b | boundary-preference | 1.164 | 0.35616 | 0.28929 | 0.42500 | 0.49491 | 0.00 | -- | 35.4 |
+
+## `prime-rel`
+
+| config | agent | model | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | seconds |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen-rel-whole` | hybrid | qwen3-embedding-0.6b | whole-document | 1.002 | 0.28214 | 0.16786 | 0.42857 | 0.46508 | 0.00 | -- | 249.1 |
+| `qwen-rel-whole` | lexical | qwen3-embedding-0.6b | whole-document | 1.002 | 0.24913 | 0.18214 | 0.33571 | 0.33724 | 0.00 | -- | 161.1 |
+| `qwen-rel-whole` | dense | qwen3-embedding-0.6b | whole-document | 1.002 | 0.18664 | 0.10357 | 0.28929 | 0.34750 | 0.00 | -- | 78.7 |
