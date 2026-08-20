@@ -42,3 +42,22 @@ class RunConfig:
     #: lands in a different table rather than mixing two vector spaces.
     document_prefix: str = ""
     query_prefix: str = ""
+    #: Set when `--split` overrode the config file's own `split:`, and `None`
+    #: when it did not. Carries the *fact of the override*, not just the
+    #: value, because two things downstream need to tell them apart.
+    #:
+    #: `report_path` appends the split to the filename only when this is set,
+    #: so every result file written before `--split` existed keeps its name.
+    #: A path keyed on the split unconditionally would rename all of them and
+    #: orphan `RESULTS.md`.
+    #:
+    #: And `config_verbatim` is the config file's bytes, so on an overridden
+    #: run it still says `test-0.1` -- it would be a *lie* about which split
+    #: produced the numbers if nothing else recorded the truth. The report's
+    #: own `split` key does.
+    split_override: str | None = None
+
+    @property
+    def effective_split(self) -> str:
+        """The split that actually runs: the override if there was one."""
+        return self.split_override or self.split
