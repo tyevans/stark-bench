@@ -113,12 +113,42 @@ cold embed; see below), `--ingest-edges` (off by default, see below).
 ### Chunk vectors are cached across arms
 
 Live-embedded chunks are cached in `kg_embedding_cache`, content-addressed on
-`(model, document_prefix, sha256(text))`. Arms differ only by chunker and most
-documents are too short for a chunker to touch — **86% of `prime` is under
-1,000 characters and 80.5% of `prime-rel` is under 2,400** — so the same chunk
-text was previously embedded once per arm. A three-chunker sweep now costs
-roughly one endpoint pass rather than three, and re-running an arm after a
-config change costs only what actually changed.
+`(model, document_prefix, sha256(text))`, so text embedded once is never
+embedded again.
+
+**Measured on `prime-mini` (10,000 nodes), 2026-08-20:**
+
+| case | wall | hits | misses | speedup |
+|---|---|---|---|---|
+| cold, empty cache | 293.8 s | 200 | 11,781 | — |
+| **same config again** | **14.1 s** | 11,981 | 0 | **21x** |
+| **different chunker, same corpus** | 409.3 s | 10,860 | 13,424 | **~1.45x** |
+
+Read the third row before planning a sweep. An earlier version of this
+section estimated that a three-chunker sweep would cost "roughly one endpoint
+pass rather than three", and **that was too optimistic**: the cross-chunker
+hit rate is **44.7%**, not ~86%. The document-level intuition is right — most
+documents are short enough to come through whole under any chunker — but a
+finer chunker also emits *more* chunks per document (2.43/node here against
+1.20), and every extra chunk is a guaranteed miss. Hit rate is per chunk, not
+per document.
+
+Where the cache pays enormously is re-running the *same* configuration:
+recovering from a crash, re-scoring after a code change, or re-ingesting a
+tenant. That went from 5 minutes to 14 seconds.
+
+**The key carries the model and the prefix, and that is not optional.** A
+corpus embedded with a prefix and the same corpus embedded without it are not
+comparable vectors (ADR 0002, ADR 0043) — the same reason `_table_for` folds
+both into the chunk table name. A cache keyed on text alone would serve one
+arm's vectors to another, and cosine similarity between them returns a
+perfectly plausible number.
+
+**Correctness is checked, not assumed.** A warm-cache `qwen-mini-wholedoc`
+scores `mrr=0.3590479185937771` — byte-identical to the figure measured
+before the cache existed. Embedding is deterministic, so the cache either
+returns the same vector or a different one; "close" would mean a defect. Redo
+that comparison after any change to the key.
 
 **The key carries the model and the prefix, and that is not optional.** A
 corpus embedded with a prefix and the same corpus embedded without it are not
