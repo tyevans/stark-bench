@@ -14,6 +14,7 @@ from uuid import uuid4
 from stark_bench.adapters.stark_artifacts import SkbEdge, SkbNode
 from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for
 from stark_bench.adapters.stark_ingest_engine import ingest
+from redstring.extraction.chunkers.sliding_window_chunker import SlidingWindowChunker
 from stark_bench.adapters.chunkers import WholeDocumentChunker
 
 
@@ -488,3 +489,89 @@ async def test_progress_survives_an_unknown_node_total(stores, caplog):
     assert len(done) == 1
     assert "1/? nodes" in done[0]
     assert "%" not in done[0], "no percentage is claimable without a total"
+
+
+class RejectsLongTexts:
+    """An embedding provider with a token limit, standing in for llama.cpp.
+
+    Rejects on *characters* because the test needs a deterministic threshold,
+    but raises the message a real server sends so the engine's matching is
+    exercised rather than a test-only sentinel.
+    """
+
+    def __init__(self, inner, limit: int):
+        self._inner = inner
+        self._limit = limit
+        self.rejections = 0
+
+    async def embed(self, texts):
+        for text in texts:
+            if len(text) > self._limit:
+                self.rejections += 1
+                raise RuntimeError(
+                    "the embeddings client raised BadRequestError: Error code: 400 - "
+                    "{'error': {'message': 'input (2088 tokens) is larger than the max "
+                    "context size (2048 tokens). skipping', "
+                    "'type': 'exceed_context_size_error'}}"
+                )
+        return await self._inner.embed(texts)
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_chunk_is_re_chunked_smaller_and_the_ingest_completes(stores):
+    """The cap being wrong must cost a retry, not the run.
+
+    Three ingests were lost to a character cap that did not bound tokens.
+    """
+    graph, chunks = stores
+    provider = RejectsLongTexts(FakeEmbeddingProvider(dimension=8), limit=60)
+    nodes = [SkbNode("1", "drug", "aspirin", "x" * 500)]
+
+    report = await ingest(
+        nodes,
+        [],
+        dataset="prime",
+        tenant_id=TenantId(uuid4()),
+        graph=graph,
+        chunks=chunks,
+        chunker=SlidingWindowChunker(default_chunk_size=400, default_overlap=0),
+        embeddings=provider,
+    )
+
+    assert provider.rejections >= 1, "the oversize path was never exercised"
+    assert report.nodes == 1
+    assert report.chunks > 1, "a 500-char doc under a 60-char limit must split"
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_provider_error_is_not_retried(stores):
+    """Only length rejections re-chunk. Everything else propagates.
+
+    Retrying an auth failure or a dropped connection four times at halved
+    chunk sizes would turn one clear error into four confusing ones.
+    """
+    graph, chunks = stores
+
+    class Broken:
+        def __init__(self):
+            self.calls = 0
+
+        async def embed(self, texts):
+            self.calls += 1
+            raise RuntimeError("Error code: 401 - invalid api key")
+
+    provider = Broken()
+
+    with pytest.raises(RuntimeError, match="401"):
+        await ingest(
+            [SkbNode("1", "drug", "aspirin", "a salicylate")],
+            [],
+            dataset="prime",
+            tenant_id=TenantId(uuid4()),
+            graph=graph,
+            chunks=chunks,
+            chunker=WholeDocumentChunker(),
+            embeddings=provider,
+        )
+
+    assert provider.calls == 1, f"retried a non-length error {provider.calls} times"
