@@ -56,6 +56,11 @@ class RunConfig:
     #: produced the numbers if nothing else recorded the truth. The report's
     #: own `split` key does.
     split_override: str | None = None
+    #: Queries in flight at once. 1 is the historical behaviour and the
+    #: default: a value here would otherwise change the wall time of every
+    #: previously-recorded arm's rerun without changing its accuracy, and a
+    #: cost column that moved for that reason would be misleading.
+    query_concurrency: int = 1
 
     @property
     def effective_split(self) -> str:

@@ -622,6 +622,7 @@ async def _do_run(config: RunConfig) -> None:
             queries,
             tools,
             k=config.k,
+            concurrency=config.query_concurrency,
             checkpoint=partial(write_predictions, preds_path),
         )
         write_predictions(preds_path, predictions)
@@ -691,6 +692,19 @@ def main() -> None:
         "writes the effective split into the report, because "
         "`config_verbatim` is the FILE's bytes and would otherwise name "
         "the split that did not run.",
+    )
+    parser.add_argument(
+        "--query-concurrency",
+        type=int,
+        default=1,
+        help=(
+            "queries in flight at once. A request occupies one server slot, "
+            "so this should be at least the chat model's -np or the extra "
+            "slots sit idle. Does not change accuracy -- queries are "
+            "independent and predictions are keyed by query_id -- but it "
+            "does change what contends on Postgres. Record it with any "
+            "timing you report; the slot count changes mid-session."
+        ),
     )
     parser.add_argument(
         "--ingest-edges",
@@ -773,6 +787,8 @@ def main() -> None:
     config = load_config(args.config)
     if args.agent is not None:
         config = replace(config, agent=args.agent)
+    if args.query_concurrency != config.query_concurrency:
+        config = replace(config, query_concurrency=args.query_concurrency)
     if args.split is not None and args.split != config.split:
         # Only when it differs. `--split test-0.1` on a config that already
         # says `test-0.1` must not tag the filename, or the same run acquires
