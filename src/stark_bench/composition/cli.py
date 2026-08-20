@@ -34,7 +34,7 @@ from redstring.extraction.chunkers.boundary_preference_chunker import (
 )
 from redstring.extraction.chunkers.sliding_window_chunker import SlidingWindowChunker
 from redstring.graph.adapters.neo4j import Neo4jGraphStore
-from redstring.llm.adapters.langchain import LangChainLlmProvider
+from redstring.llm.adapters.langchain import NO_THINKING, LangChainLlmProvider
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
 from stark_bench.composition.agent_registry import AGENTS, build_agent
@@ -361,10 +361,44 @@ def _llm_for(config: RunConfig) -> LlmProvider:
     """
     model = config.effective_chat_model or DEFAULT_CHAT_MODEL
     require_chat_model(INFERENCE_BASE_URL, model)
-    return LangChainLlmProvider.openai_compatible(
-        base_url=INFERENCE_BASE_URL,
+
+    # Built here rather than through `openai_compatible`, which is
+    # deliberately not a passthrough for extra `ChatOpenAI` kwargs and says
+    # so: "a caller needing anything else still builds the chat model
+    # itself". We need one such kwarg.
+    #
+    # ## Why `cache_prompt`
+    #
+    # `rerank`'s prompt opens with 818 characters -- ~221 tokens -- that are
+    # byte-identical on every query: the scoring instructions and the output
+    # instruction, both before `Query:`. Everything after varies, and cannot
+    # be shared: 98.2% of query pairs retrieve zero candidates in common.
+    #
+    # llama.cpp will reuse a slot's KV for a matching prefix, and a measured
+    # response showed `cache_n: 0` -- the request never asked. It matters
+    # more under concurrency, not less: prefill throughput per request falls
+    # to ~500 tok/s with four slots busy, so those 221 tokens are ~0.44s of
+    # every request rather than the ~0.09s a solo-request rate suggests.
+    #
+    # ## Why `extra_body` is spelled out rather than extended
+    #
+    # `openai_compatible` puts `NO_THINKING` in `extra_body`, and that is
+    # load-bearing: this harness is non-reasoning by deliberate measurement
+    # (CLAUDE.md -- two thinking-on runs at temperature zero disagreed with
+    # each other about how many entities a document held). Passing an
+    # `extra_body` that omits it would turn reasoning back on silently,
+    # costing latency and reproducibility at once. So it is merged in, and
+    # a test asserts it survives.
+    from langchain_openai import ChatOpenAI
+
+    chat = ChatOpenAI(  # type: ignore[call-arg]
         model=model,
+        base_url=INFERENCE_BASE_URL,
+        api_key="not-needed",
+        temperature=0.0,
+        extra_body={**dict(NO_THINKING), "cache_prompt": True},
     )
+    return LangChainLlmProvider(chat, model=f"openai-compatible/{model}")
 
 
 def toolset_for(
