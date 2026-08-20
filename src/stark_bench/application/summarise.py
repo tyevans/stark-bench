@@ -37,6 +37,24 @@ are not wrong, and there are real questions that span corpora -- "does the
 reranking gain survive a different corpus" is the reason `mag-wholedoc`
 exists. What must not happen is the comparison being made *by accident*.
 
+## Two seconds columns, because they stopped being the same number
+
+`seconds_total` sums per-call durations; `seconds_wall` measures elapsed
+time around the query set. They were identical while `run_queries.run` was
+serial. Under `--query-concurrency N` the calls overlap and the sum counts
+the same seconds up to N times -- one run reported 1933s while taking ~480s.
+
+Both are kept because they answer different questions. Compute consumed is
+what an arm costs the shared endpoint, and it stays comparable across
+concurrencies precisely because it does not shrink when slots are added.
+Elapsed time is how long before you have the number, and it is NOT
+comparable between arms run at different concurrencies -- so `conc` is
+rendered beside it. A wall-seconds column without it invites exactly the
+comparison it cannot support.
+
+Arms scored before this existed render `--`, which is honest: their wall
+time was not recorded and, being serial, equalled their gpu seconds anyway.
+
 ## Cost sits beside accuracy
 
 The plan this repo was built from asks for accuracy **and** cost per
@@ -201,8 +219,9 @@ def render(rows: Iterable[Row]) -> str:
         out += [f"## `{dataset}`", ""]
         out += [
             "| config | agent | model | chunker | chunks/node | mrr | hit@1 "
-            "| hit@5 | recall@20 | llm calls/query | tokens/query | seconds |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| hit@5 | recall@20 | llm calls/query | tokens/query "
+            "| gpu seconds | wall seconds | conc |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in sorted(
             section, key=lambda r: (-r.metrics.get("mrr", 0.0), r.config, r.agent)
@@ -214,7 +233,9 @@ def render(rows: Iterable[Row]) -> str:
                 + " | ".join(_fmt(row.metrics.get(m)) for m in _METRICS)
                 + f" | {_fmt(row.cost.get('llm_calls_per_query'), 2)} "
                 f"| {_fmt(row.cost.get('tokens_per_query'))} "
-                f"| {_fmt(row.cost.get('seconds_total'), 1)} |"
+                f"| {_fmt(row.cost.get('seconds_total'), 1)} "
+                f"| {_fmt(row.cost.get('seconds_wall'), 1)} "
+                f"| {_fmt(row.cost.get('query_concurrency'))} |"
             )
         out.append("")
     return "\n".join(out)

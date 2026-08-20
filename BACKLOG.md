@@ -826,21 +826,3 @@ every digit after a re-ingest remains a valid check.
 determinism. If it does, the cause is confirmed as batch composition and a
 reported number can be made reproducible by paying ~4x wall time for it.
 Two serial runs of the same arm would answer it.
-
-## B-SECONDS-TOTAL-WALL-1
-
-`adapters/report_file.py:39` -- `"seconds_total": sum(c.duration_s for c in calls)`.
-
-That was wall time only while the runner was serial. With
-`--query-concurrency N` the calls overlap, so the sum counts the same
-seconds up to N times: the run above reports **1933s** while actually
-taking ~480s, and `--summarise` renders that in a column headed
-`seconds`.
-
-A cost column whose meaning depends on a flag not shown beside it is the
-silent shape this repo keeps hitting. Two arms run at different
-concurrencies are not comparable in that column today, and nothing says so.
-
-Fix is to record wall time alongside, not to replace: summed call time is
-the right number for "GPU seconds consumed", wall time is the right one for
-"how long did this take". They stopped being the same number in 68f8d55.

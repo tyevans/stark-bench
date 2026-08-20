@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from time import perf_counter
 import itertools
 import json
 import logging
@@ -667,6 +668,9 @@ async def _do_run(config: RunConfig) -> None:
         agent = build_agent(config)
 
         preds_path = predictions_path(config)
+        # Wall time is measured around the whole query set rather than
+        # derived from the calls, which overlap under concurrency.
+        run_started = perf_counter()
         predictions = await run(
             agent,
             queries,
@@ -675,12 +679,20 @@ async def _do_run(config: RunConfig) -> None:
             concurrency=config.query_concurrency,
             checkpoint=partial(write_predictions, preds_path),
         )
+        run_wall_s = perf_counter() - run_started
         write_predictions(preds_path, predictions)
 
         candidates_path = data_dir / "candidates.json"
         candidate_ids = [int(c) for c in json.loads(candidates_path.read_text())]
         metrics = score_predictions(predictions, answers, candidate_ids=candidate_ids)
-        cost = dict(summarise_cost(tools.calls, queries=len(queries)))
+        cost = dict(
+            summarise_cost(
+                tools.calls,
+                queries=len(queries),
+                wall_s=run_wall_s,
+                concurrency=config.query_concurrency,
+            )
+        )
         if isinstance(embeddings, PrewarmedQueryEmbeddings):
             # In the report because "the helper works, nobody calls it" has
             # happened twice in this repo, hours apart, with green tests both
