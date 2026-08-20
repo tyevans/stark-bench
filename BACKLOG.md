@@ -547,3 +547,59 @@ The second matters more than the first. A message that says the work is
 finished, ~33 minutes before it is, is not a missing feature -- it is the log
 actively asserting something false, and it is the reason the run nearly got
 killed.
+
+## B-PROXY-LIMITS-1: the embedding batch ceiling is the proxy's, not the model's
+
+`--embed-batch 512 --embed-concurrency 2` against whole `prime-rel`
+documents dies with:
+
+```
+openai.InternalServerError: peer proxy error:
+net/http: timeout awaiting response headers
+```
+
+and `--embed-batch 128 --embed-concurrency 4` or `--embed-batch 256` return
+`502 Bad Gateway`. Measured 2026-08-19 against llama-swap in front of
+qwen3-embedding-0.6b. Safe settings for whole documents are **batch 32-128 at
+concurrency 2**; the same 512 was fine on the capped 2,400-char corpus, so the
+ceiling is bytes-per-request, not texts-per-request.
+
+Two things make this worth an entry rather than a note:
+
+**The engine's re-split does not catch it.** `MAX_RESPLIT_ATTEMPTS` fires only
+when `_is_oversize(error)` matches -- an input longer than the context. A
+proxy timeout and a 502 are not oversize errors, so they propagate and kill
+the ingest. The re-split was built for B-TOKEN-CAP-1 and correctly does not
+guess at transport failures, but the result is that the one obvious safety net
+does not cover the failure mode most likely to be hit on a large-document
+corpus. A bounded retry on 502/timeout, halving the batch, would.
+
+**It is a first-batch failure, which is the good case.** Zero rows had landed,
+so there was nothing partial to reason about. A proxy that failed 80% of the
+way in would leave a corpus that resume treats as complete for everything
+already written -- and no stage would report anything wrong.
+
+## B-RATE-UNIT-1: extrapolate ingest time by characters, not documents
+
+A `--limit 3000` calibration on `prime-rel` read 333 nodes/min and implied a
+6.5-hour arm. The real figure is ~2 hours. Both numbers are correct; the
+extrapolation was not.
+
+Two compounding reasons, and the second is the general one:
+
+**The head of the file is not the corpus.** The first 1,024 documents of
+`prime-rel` average **5,278 characters** against the corpus mean of **1,761** --
+they are gene/protein records with long summaries. `native-rel-whole.yaml`
+already records a sample of the first 7,548 nodes implying 3.4x when the truth
+was 1.47x, and this is the same trap in a different measurement. `--limit N`
+always samples the head, so it can calibrate a *rate* but never a *total*.
+
+**The rate is token-bound, so documents are the wrong unit.** Batch 32 and
+batch 128 give 368 and 366 docs/min on the identical slice -- a 4x change in
+requests moves throughput by 0.5%. The stable figure is **~1.94M chars/min**,
+and `227.9M / 1.94M = 117 min` predicted the arm correctly where docs/min was
+out by 3.3x.
+
+So: measure chars/min on whatever slice is convenient, then divide the
+corpus's total characters by it. Quoting nodes/min from a `--limit` run and
+multiplying by the node count is wrong twice over.
