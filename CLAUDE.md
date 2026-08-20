@@ -367,8 +367,12 @@ client-side gives you.
 ## Where the numbers are
 
 **`RESULTS.md` is generated** — `--summarise results/` renders every scored
-arm, grouped by corpus. Regenerate it rather than editing it. What follows is
-the interpretation, which the table cannot carry.
+arm, grouped by corpus. Regenerate it rather than editing it.
+
+**`FINDINGS.md` is the narrative**: what the campaign established, what it
+falsified, what it learned about measuring itself, and what is worth doing
+next. Read it before designing an arm. What follows here is the short
+version.
 
 ### The headline: relational text is worth a lot, through the LEXICAL channel
 
