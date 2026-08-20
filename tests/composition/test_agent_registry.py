@@ -69,6 +69,7 @@ def test_every_architecture_is_reachable_by_name():
         "zero_shot",
         "deep",
         "rerank",
+        "rerank40",
     }
 
 
@@ -95,6 +96,40 @@ def test_it_builds_the_llm_agents_with_the_configured_k(agent, expected):
     built = build_agent(replace(CONFIG, agent=agent, k=5))
     assert isinstance(built, expected)
     assert built.k == 5
+
+
+def test_the_two_rerank_widths_are_separate_arms():
+    """`fetch` is the reranker's ceiling, and it lives in neither the config
+    nor the report body -- only in the agent key.
+
+    So this is the only thing standing between "two settings, two files,
+    both reproducible" and "one file whose provenance nobody can recover".
+    A single `rerank` entry with a flag would have overwritten
+    `qwen-rel-whole.rerank.json` in place, and the surviving number would
+    not have said which width produced it.
+    """
+    narrow = build_agent(replace(CONFIG, agent="rerank"))
+    wide = build_agent(replace(CONFIG, agent="rerank40"))
+
+    assert narrow.fetch == 20, "rerank must stay a pure ordering experiment"
+    assert wide.fetch == 40, "rerank40 must widen the retrieval window"
+
+    # Both are the same architecture at the same k -- the ONLY difference
+    # is the ceiling. If k differed too, the pair would measure two things.
+    assert narrow.k == wide.k == CONFIG.k
+    assert type(narrow) is type(wide)
+
+    assert (
+        report_path(replace(CONFIG, agent="rerank")).name
+        != report_path(replace(CONFIG, agent="rerank40")).name
+    )
+
+
+def test_a_wider_rerank_still_takes_k_from_the_config():
+    """`fetch` is fixed at 40 by the registry; `k` must not be."""
+    built = build_agent(replace(CONFIG, agent="rerank40", k=5))
+    assert built.k == 5
+    assert built.fetch == 40
 
 
 def test_an_unknown_agent_is_refused_rather_than_defaulted():
