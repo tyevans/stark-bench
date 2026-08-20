@@ -307,10 +307,36 @@ _PROMPT_TEMPLATE = (
     "middle for ones satisfying some, and the bottom for unrelated ones, "
     "but choose intermediate values freely rather than rounding to those "
     "bands.\n\n"
-    "Judge only from the text shown. Return one score for every candidate "
-    "id, and invent no ids.\n\n"
+    "Judge only from the text shown.\n\n"
+    "{output}\n\n"
     "Query: {query}\n\nCandidates:\n{candidates}"
 )
+
+#: What to return, per output encoding. Kept in the prompt rather than left
+#: to the JSON schema for a reason measured on 2026-08-20: with the schema
+#: reduced to a bare `list[list[int]]` and the prompt still saying "return
+#: one score for every candidate id", the model returned `{"scores": []}` --
+#: an empty array, in 1.55s with no decode at all. That scores *identically*
+#: to `hybrid`, and `run_queries` still logs `0 empty`, because retrieval
+#: order is a perfectly well-formed answer.
+#:
+#: A schema constrains shape. It does not say what to put in it, and the
+#: instruction that used to carry that meaning named `id`s the model can no
+#: longer see.
+_OUTPUT_INSTRUCTION = {
+    "pairs": (
+        "Return one [index, score] pair for EVERY candidate below, using "
+        "the bracketed index exactly as shown: [[1, 90], [2, 15], ...]. "
+        "Return as many pairs as there are candidates. Do not return an "
+        "empty list."
+    ),
+    "terse": (
+        'Return one {"i": index, "s": score} object for EVERY '
+        "candidate below, using the bracketed index exactly as shown. Do "
+        "not return an empty list."
+    ),
+    "verbose": ("Return one score for every candidate id, and invent no ids."),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,7 +435,15 @@ class RerankAgent:
         )
         try:
             judged = await tools.extract(
-                _PROMPT_TEMPLATE.format(query=query.text, candidates=rendered),
+                _PROMPT_TEMPLATE.format(
+                    query=query.text,
+                    candidates=rendered,
+                    output=_OUTPUT_INSTRUCTION[
+                        "pairs"
+                        if self.pair_scores
+                        else ("terse" if self.terse_scores else "verbose")
+                    ],
+                ),
                 PairRelevances
                 if self.pair_scores
                 else (TerseRelevances if self.terse_scores else Relevances),
@@ -422,6 +456,16 @@ class RerankAgent:
             # separates "reranking did not help" from "reranking did not run".
             logger.warning("rerank: extract failed for query %s", query.query_id)
             judged = None
+
+        if judged is not None and not judged.scores:
+            # Not an exception: one bad response should not lose the run.
+            # But it MUST be greppable, because the fallback below is
+            # retrieval order, which scores exactly `hybrid`.
+            logger.warning(
+                "rerank: empty scores for query %s -- falling back to "
+                "retrieval order, which scores as hybrid",
+                query.query_id,
+            )
 
         retrieval_rank = {p.node_id: i for i, p in enumerate(passages)}
         # An index is validated against the range rather than trusted. The
