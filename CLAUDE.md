@@ -106,8 +106,40 @@ uv run python -m stark_bench.composition.cli --config config/<name>.yaml --run \
 Reports land in `results/<name>.<agent>.json`.
 
 Useful flags: `--limit N` (throughput calibration only — never for a reported
-number), `--no-resume` (force re-embed; upserts cleanly over existing rows),
-`--ingest-edges` (off by default, see below).
+number, and see B-RATE-UNIT-1 before extrapolating from one), `--no-resume`
+(force re-embed; upserts cleanly over existing rows), `--no-cache` (force a
+cold embed; see below), `--ingest-edges` (off by default, see below).
+
+### Chunk vectors are cached across arms
+
+Live-embedded chunks are cached in `kg_embedding_cache`, content-addressed on
+`(model, document_prefix, sha256(text))`. Arms differ only by chunker and most
+documents are too short for a chunker to touch — **86% of `prime` is under
+1,000 characters and 80.5% of `prime-rel` is under 2,400** — so the same chunk
+text was previously embedded once per arm. A three-chunker sweep now costs
+roughly one endpoint pass rather than three, and re-running an arm after a
+config change costs only what actually changed.
+
+**The key carries the model and the prefix, and that is not optional.** A
+corpus embedded with a prefix and the same corpus embedded without it are not
+comparable vectors (ADR 0002, ADR 0043) — it is the same reason `_table_for`
+folds both into the chunk table name. A cache keyed on text alone would serve
+one arm's vectors to another, and cosine similarity between them returns a
+perfectly plausible number.
+
+This is **not** the resume path. Resume skips chunks already stored *in this
+tenant*; the cache skips embedding text seen in *any* tenant, ever, including
+text whose `chunk_id` differs because another chunker gave it a different
+`start_char`.
+
+Every report carries `cache_hits` and `cache_misses`. A sweep's second arm
+over the same corpus that is **not** almost entirely hits is telling you the
+key is wrong — which nothing else in the report would show. `--no-cache`
+forces a cold run, for the same reason `--no-resume` exists: reusing work is
+exactly the kind of optimisation that can hide a bug.
+
+Nothing evicts. At ~1.2M distinct chunks across these corpora the table is on
+the order of gigabytes; `TRUNCATE kg_embedding_cache` is the reset.
 
 ## The shared inference endpoint
 
