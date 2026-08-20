@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from redstring import (
     FakeEmbeddingProvider,
@@ -422,3 +424,67 @@ async def test_chunk_batch_is_flushed_independently_of_entity_batch(stores):
     assert report.chunks == 10 * chunks_per_node
     assert chunks.call_sizes, "upsert_many was never called"
     assert all(size <= CHUNK_BATCH for size in chunks.call_sizes), chunks.call_sizes
+
+
+@pytest.mark.asyncio
+async def test_it_reports_a_final_progress_line_with_the_counts(stores, caplog):
+    """The summary line must carry the numbers, not just say it finished.
+
+    A log line that says "ingest done" and nothing else is what this
+    replaced: it cannot answer whether the corpus is complete, which is the
+    one question asked of it.
+    """
+    graph, chunks = stores
+    nodes = [SkbNode(str(i), "drug", f"d{i}", f"doc {i}") for i in range(3)]
+
+    with caplog.at_level(
+        logging.INFO, logger="stark_bench.adapters.stark_ingest_engine"
+    ):
+        await ingest(
+            nodes,
+            [],
+            dataset="prime",
+            tenant_id=TenantId(uuid4()),
+            graph=graph,
+            chunks=chunks,
+            chunker=WholeDocumentChunker(),
+            embeddings=FakeEmbeddingProvider(dimension=8),
+            total_nodes=3,
+        )
+
+    done = [r.getMessage() for r in caplog.records if "ingest done" in r.getMessage()]
+    assert len(done) == 1, f"expected exactly one summary line, got {done}"
+    assert "3/3 nodes" in done[0]
+    assert "3 chunks" in done[0]
+
+
+@pytest.mark.asyncio
+async def test_progress_survives_an_unknown_node_total(stores, caplog):
+    """`total_nodes=None` must log, not raise.
+
+    The count comes from reading nodes.jsonl, which is allowed to fail --
+    the whole point of returning None there is that a cosmetic figure can
+    never take down an ingest. If the formatting divided by the total this
+    would be a ZeroDivisionError on the happy path of a degraded read.
+    """
+    graph, chunks = stores
+
+    with caplog.at_level(
+        logging.INFO, logger="stark_bench.adapters.stark_ingest_engine"
+    ):
+        await ingest(
+            [SkbNode("1", "drug", "aspirin", "a salicylate")],
+            [],
+            dataset="prime",
+            tenant_id=TenantId(uuid4()),
+            graph=graph,
+            chunks=chunks,
+            chunker=WholeDocumentChunker(),
+            embeddings=FakeEmbeddingProvider(dimension=8),
+            total_nodes=None,
+        )
+
+    done = [r.getMessage() for r in caplog.records if "ingest done" in r.getMessage()]
+    assert len(done) == 1
+    assert "1/? nodes" in done[0]
+    assert "%" not in done[0], "no percentage is claimable without a total"
