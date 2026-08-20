@@ -409,6 +409,7 @@ async def ingest(
         This runs only on rejection, so a correct cap costs nothing.
         """
         size = None
+        previous_longest: int | None = None
         for attempt in range(MAX_RESPLIT_ATTEMPTS + 1):
             flat = [p.text for _, pieces, wanted in planned if wanted for p in pieces]
             try:
@@ -429,6 +430,20 @@ async def ingest(
                 # chunker attribute: neither chunker here exposes its cap, and
                 # reading one would have raised AttributeError on the first
                 # re-split -- the only path this code exists for.
+                if previous_longest is not None and longest >= previous_longest:
+                    # Halving the cap did not shrink the longest piece, so the
+                    # chunker is ignoring `max_chunk_size` and every remaining
+                    # attempt will fail identically. `WholeDocumentChunker` did
+                    # exactly this and cost a 46-minute ingest, failing with the
+                    # provider's error rather than the real one.
+                    raise RuntimeError(
+                        f"re-split is a no-op: {chunker!r} returned a "
+                        f"{longest}-character piece at max_chunk_size={size}, "
+                        f"unchanged from the previous attempt. The chunker is "
+                        f"ignoring the cap, so the provider's length error "
+                        f"below can never be resolved by retrying."
+                    ) from error
+                previous_longest = longest
                 size = min(size or longest, longest) // 2
                 if size < 1:
                     raise
