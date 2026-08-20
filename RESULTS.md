@@ -53,6 +53,7 @@ Arms on `prime` index documents that stop at the node's own details; arms on `pr
 
 | config | agent | model | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | seconds |
 |---|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | whole-document | 1.002 | 0.46323 | 0.40000 | 0.53929 | 0.53693 | 1.00 | -- | 10079.1 |
 | `qwen-rel-whole` | rerank | qwen3-embedding-0.6b | whole-document | 1.002 | 0.41948 | 0.35357 | 0.50357 | 0.46508 | 1.00 | -- | 5162.1 |
 | `qwen-rel-whole` | hybrid | qwen3-embedding-0.6b | whole-document | 1.002 | 0.28214 | 0.16786 | 0.42857 | 0.46508 | 0.00 | -- | 249.1 |
 | `qwen-rel-whole` | lexical | qwen3-embedding-0.6b | whole-document | 1.002 | 0.24913 | 0.18214 | 0.33571 | 0.33724 | 0.00 | -- | 161.1 |

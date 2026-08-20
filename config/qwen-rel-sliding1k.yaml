@@ -1,0 +1,75 @@
+# The cell FINDINGS.md §7 asks for first: redstring's chunking, on the
+# corpus that actually matters.
+#
+# ## Why this arm exists
+#
+# Everything measured on `prime-rel` so far is `whole-document`, chosen
+# deliberately so the relations result would be a statement about the
+# corpus and not about granularity. That choice worked -- and it means the
+# best number this project has (`qwen-rel-whole` + rerank, 0.41948) says
+# almost nothing about redstring, because redstring's chunker was switched
+# off for it.
+#
+# This arm turns it back on. `qwen-rel-sliding1k` minus `qwen-rel-whole`,
+# at a fixed model and a fixed corpus, is the cost or benefit of chunking
+# the relations text.
+#
+# ## Why `sliding-1000-500` rather than `boundary-preference`
+#
+# `boundary-preference` came last on dense retrieval on Nemotron, on nomic,
+# and on qwen's mini set -- three models, same ordering (FINDINGS §3).
+# Re-testing a three-time loser on the good corpus is worth less than
+# measuring the chunker that has beaten it every time. If sliding wins here
+# too, that is a fourth data point and the diagnostic FINDINGS §3 asks for
+# gets built instead of a fifth arm.
+#
+# ## The prediction worth writing down before the number exists
+#
+# The `- relations:` block sits at the END of each document, and the
+# relations finding is that those neighbour names are what the lexical
+# channel matches. A 1000-character window with 500 overlap therefore does
+# something specific to this corpus that it did not do to `prime`: it
+# **isolates the relations block into its own chunk** for the 19.5% of
+# documents over 2,400 characters.
+#
+# Two outcomes are plausible and they point opposite ways:
+#
+# - Dense may IMPROVE. `qwen-rel-whole` dense moved only +0.004 over
+#   no-relations, which was read as "a single vector compresses the
+#   neighbour names away". If that reading is right, giving the names their
+#   own vector should recover some of it -- and `aggregation: max` means
+#   one strong chunk carries the node.
+# - Lexical may DEGRADE, or not move. BM25 already sees every term in the
+#   document whether it is one chunk or four; what changes is the length
+#   normalisation and the per-chunk idf, not what is visible.
+#
+# If dense rises and lexical holds, chunking is worth its cost on this
+# corpus and the §3 diagnostic has its mechanism. If dense does not move,
+# the +0.004 has a different explanation and the compression story is
+# wrong. Either way this is a cell whose result is informative, which is
+# the bar an arm has to clear.
+#
+# ## Cost
+#
+# The embedding cache pays here for the first time on a real arm. Every
+# document under 1000 characters yields a single chunk byte-identical to
+# its `whole-document` chunk, so it is a guaranteed hit on the vectors
+# `qwen-rel-whole` already paid for. Documents above the window are all
+# misses. Measured cross-chunker hit rate on `prime-mini` was 44.7%
+# (CLAUDE.md), and that is the number to check this run against -- an arm
+# with near-zero hits is telling you the cache key is wrong, which nothing
+# else in the report would show.
+name: qwen-rel-sliding1k
+dataset: prime-rel
+split: test-0.1
+chunker: sliding-1000-500
+embeddings: qwen3-embedding-0.6b
+dimension: 1024
+aggregation: max
+agent: dense
+k: 20
+
+# See `qwen-rel-whole.yaml`. The document side being empty is the correct
+# value for Qwen3-Embedding, not an omission.
+document_prefix: ""
+query_prefix: "Instruct: Given a query, retrieve relevant documents that answer the query\nQuery: "

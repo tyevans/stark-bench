@@ -82,6 +82,25 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     "zero_shot": lambda config: ZeroShotAgent(k=config.k),
     "deep": lambda config: PerQueryDeepAgent(k=config.k),
     "rerank": lambda config: RerankAgent(k=config.k),
+    #: The same architecture with a wider retrieval window, registered as a
+    #: separate agent rather than as a flag on `rerank`.
+    #:
+    #: Two reasons, both about the record rather than about taste. Reports
+    #: are named `<config>.<agent>.json`, so a flag would have overwritten
+    #: the `fetch=20` number with the `fetch=40` one and left no way to see
+    #: the pair -- and the pair IS the experiment. And `fetch` is not in
+    #: `config_verbatim`, so with a flag the surviving file would not say
+    #: which setting produced it; the agent key does say.
+    #:
+    #: What it buys: `rerank` fetches exactly `k`, which makes it a pure
+    #: ordering experiment whose ceiling is `hybrid`'s recall@20 -- 0.46508
+    #: on `qwen-rel-whole`, against which reranking returned 0.41948 mrr.
+    #: That is efficient enough that the ceiling, not the ordering, is the
+    #: binding constraint. Fetching 40 lets the model promote a gold answer
+    #: from ranks 21-40, and equally lets it demote one off the end: both
+    #: were seen in a 4-query probe. So this can lose, and a loss is a
+    #: result about how far reranking can be trusted to reorder.
+    "rerank40": lambda config: RerankAgent(k=config.k, fetch=40),
 }
 
 

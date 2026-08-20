@@ -41,6 +41,9 @@ from stark_bench.composition.agent_registry import AGENTS, build_agent
 from stark_bench.adapters.config_file import load_config
 from stark_bench.adapters.postgres_embedding_cache import PostgresEmbeddingCache
 from stark_bench.domain.run_config import RunConfig
+from stark_bench.adapters.prewarmed_query_embeddings import (
+    PrewarmedQueryEmbeddings,
+)
 from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
@@ -418,6 +421,19 @@ def _ingest_stats(config: RunConfig) -> dict[str, object]:
     return dict(json.loads(path.read_text(encoding="utf-8")))
 
 
+def _split_tag(config: RunConfig) -> str:
+    """`"test."` on an overridden run, `""` otherwise -- and the asymmetry matters.
+
+    Every result file written before `--split` existed is named
+    `<config>.<agent>.json`. Tagging unconditionally would rename all of them,
+    orphaning `RESULTS.md` and every path quoted in `FINDINGS.md`, to record
+    something that did not vary. Tagging only an override keeps the default
+    split's filenames stable and stops a 2,801-query run from silently
+    overwriting the 280-query number it should be compared against.
+    """
+    return f"{config.split_override}." if config.split_override else ""
+
+
 def predictions_path(config: RunConfig) -> Path:
     """Where this run's raw rankings land, written before anything scores them.
 
@@ -428,7 +444,10 @@ def predictions_path(config: RunConfig) -> Path:
     once, to `redstring-native/deep`. Persist first, score second, and
     `scripts/rescore.py` turns the survivor back into a report.
     """
-    return RESULTS_ROOT / f"{config.name}.{config.agent}.predictions.json"
+    return (
+        RESULTS_ROOT
+        / f"{config.name}.{_split_tag(config)}{config.agent}.predictions.json"
+    )
 
 
 def report_path(config: RunConfig) -> Path:
@@ -440,7 +459,7 @@ def report_path(config: RunConfig) -> Path:
     the correct `config_verbatim` for whichever ran last, so nothing in the
     file would reveal the loss.
     """
-    return RESULTS_ROOT / f"{config.name}.{config.agent}.json"
+    return RESULTS_ROOT / f"{config.name}.{_split_tag(config)}{config.agent}.json"
 
 
 async def _do_ingest(
@@ -545,7 +564,7 @@ async def _do_run(config: RunConfig) -> None:
     data_dir = _data_dir(config)
     tenant_id = _tenant_for(config)
 
-    pairs = list(read_queries(data_dir / f"queries.{config.split}.jsonl"))
+    pairs = list(read_queries(data_dir / f"queries.{config.effective_split}.jsonl"))
     queries = [q for q, _ in pairs]
     answers = {q.query_id: a for q, a in pairs}
 
@@ -564,7 +583,22 @@ async def _do_run(config: RunConfig) -> None:
         )
     else:
         logger.info("embedding queries live against %r", config.embeddings)
-        embeddings = _live_embeddings_for(config)
+        # Wrapped, then prewarmed *before* any store is opened. The live
+        # path embedded one query per HTTP round-trip inside the retrieval
+        # call, serialised by `run`'s bare loop; `dense` spent 78.7s on 280
+        # queries that way, almost none of it compute. See
+        # `PrewarmedQueryEmbeddings` for why this is a wrapper and not
+        # concurrency in the runner.
+        #
+        # The precomputed branch is deliberately left alone: it is already a
+        # dict lookup and never reaches an endpoint, so wrapping it would add
+        # a second layer of counters over a path that makes no requests.
+        embeddings = PrewarmedQueryEmbeddings(_live_embeddings_for(config))
+        # Before `connect`, not after, so a slow prewarm does not sit on a
+        # Postgres connection -- an ingest may be writing to the same
+        # database, and CLAUDE.md records a scoring pass costing an in-flight
+        # ingest 36% of its rate by contending there.
+        await embeddings.prewarm([q.text for q in queries])
 
     chunks = await PostgresChunkStore.connect(
         POSTGRES_DSN, table=_table_for(config), dimension=config.dimension
@@ -595,7 +629,13 @@ async def _do_run(config: RunConfig) -> None:
         candidates_path = data_dir / "candidates.json"
         candidate_ids = [int(c) for c in json.loads(candidates_path.read_text())]
         metrics = score_predictions(predictions, answers, candidate_ids=candidate_ids)
-        cost = summarise_cost(tools.calls, queries=len(queries))
+        cost = dict(summarise_cost(tools.calls, queries=len(queries)))
+        if isinstance(embeddings, PrewarmedQueryEmbeddings):
+            # In the report because "the helper works, nobody calls it" has
+            # happened twice in this repo, hours apart, with green tests both
+            # times. `query_embed_live_calls: 0` on a dense run is the only
+            # artifact that proves a byte of this reached the wire.
+            cost.update(embeddings.stats())
     finally:
         await chunks.close()
         await graph.close()
@@ -637,6 +677,20 @@ def main() -> None:
         help="Override the config's `agent:` for this invocation, so one "
         "config file serves all four architectures. The report filename "
         "carries the agent, so the four runs do not overwrite each other.",
+    )
+    parser.add_argument(
+        "--split",
+        default=None,
+        help="Override the config's `split:` for this invocation, e.g. "
+        "`--split test` for PRIME's full 2,801 queries instead of the 280 "
+        "of `test-0.1`. The corpus is unaffected -- the tenant is a uuid5 "
+        "of the config NAME, so both splits read the same ingested store "
+        "and no re-ingest is needed. Only the query set changes. An "
+        "overridden run tags its report filename with the split so it "
+        "cannot overwrite the number it should be compared against, and "
+        "writes the effective split into the report, because "
+        "`config_verbatim` is the FILE's bytes and would otherwise name "
+        "the split that did not run.",
     )
     parser.add_argument(
         "--ingest-edges",
@@ -719,6 +773,11 @@ def main() -> None:
     config = load_config(args.config)
     if args.agent is not None:
         config = replace(config, agent=args.agent)
+    if args.split is not None and args.split != config.split:
+        # Only when it differs. `--split test-0.1` on a config that already
+        # says `test-0.1` must not tag the filename, or the same run acquires
+        # two names depending on how it was invoked.
+        config = replace(config, split_override=args.split)
 
     # Neither flag means neither phase runs, and the process exits 0 having
     # done nothing. That is not hypothetical: a run queue passed

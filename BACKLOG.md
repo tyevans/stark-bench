@@ -699,3 +699,27 @@ Consequences worth acting on:
 Not filed as a defect -- nothing is wrong -- but the cost model this project
 has been reasoning with ("chars/min is a constant") is wrong, and it produced
 two ETAs today that were out by 3x in opposite directions.
+
+## B-QUERY-LATENCY-SPLIT-1 -- how much of a query's 0.28s was the embed?
+
+`PrewarmedQueryEmbeddings` removes one HTTP round-trip per query, and the
+round-trip was demonstrably there: `run_queries.run:47` is a serial loop and
+`ChunkRetriever.retrieve_chunks` embedded inside it. What is **not** measured
+is how the 0.28s/query `dense` was paying divides between that round-trip and
+the pgvector search it precedes (`k*4` = 80 chunks overfetched, then folded).
+
+If pgvector is the larger half, this change buys less than it looks like it
+should, and the next lever is the index or the overfetch -- not the endpoint.
+
+Deliberately not measured when written: the `qwen-rel-sliding1k` ingest was
+running, and both halves of the probe contend with it. CLAUDE.md records a
+scoring pass costing an in-flight ingest 36% of its rate by touching
+Postgres, so a number taken now would be wrong in the direction that flatters
+the change.
+
+The measurement, once the stores are quiet: time `embed_query` for one query
+and one `retrieve_chunks` separately against `qwen-rel-whole`, then re-run
+`dense` and compare wall time against the recorded 78.66s. The report now
+carries `query_embed_live_calls`, which must read `0` -- a non-zero value
+means the prewarm missed and the wall-clock comparison is measuring something
+else.

@@ -20,11 +20,13 @@ a `- relations:` block naming the node's neighbours:
 | dense | 0.18274 | 0.18664 | **+2%** |
 | lexical | 0.20479 | 0.24913 | **+22%** |
 | hybrid | 0.19870 | **0.28214** | **+42%** |
-| rerank | not run | **0.41948** | — |
+| rerank (fetch=20) | not run | 0.41948 | — |
+| rerank40 (fetch=40) | not run | **0.46323** | — |
 
-`qwen-rel-whole` + `rerank` at **0.41948 mrr / 0.35357 hit@1** is the best
-figure this project has produced — against `vss-control`'s best of 0.23111
-and STaRK's published ada-002 VSS figure of 0.2350.
+`qwen-rel-whole` + `rerank40` at **0.46323 mrr / 0.40000 hit@1** is the best
+figure this project has produced — nearly double both `vss-control`'s best of
+0.23111 and STaRK's published ada-002 VSS figure of 0.2350. See §1a for what
+the width actually bought.
 
 **The mechanism, which was not predicted.** PRIME's queries name related
 entities verbatim: *"a drug that targets X and is indicated for Y"*. Those
@@ -43,6 +45,74 @@ more as *text in the index* than as a traversal at query time, at least on
 this benchmark, and worth most to the retrievers that can match a name
 exactly. That is a result about how to use a graph, not about how good the
 graph is.
+
+---
+
+## 1a. The reranker's ceiling was the binding constraint, and it broke
+
+`rerank` fetches exactly `k`, so the set it returns is `hybrid`'s **by
+construction** and `recall@20` cannot move. That makes it a pure ordering
+experiment, and it was a good one: 0.28214 → 0.41948 mrr from reordering
+alone. But it also meant every gold answer hybrid ranked 21st or worse was
+permanently unreachable, whatever the model did.
+
+Fetching 40 and returning 20 lifts that:
+
+| | fetch=20 | fetch=40 | change |
+|---|---|---|---|
+| mrr | 0.41948 | **0.46323** | **+10.4%** |
+| hit@1 | 0.35357 | **0.40000** | **+13.1%** |
+| hit@5 | 0.50357 | 0.53929 | +7.1% |
+| **recall@20** | 0.46508 | **0.53693** | **+15.4%** |
+| seconds | 5,162 | 10,079 | +95% |
+
+**recall@20 moving is the whole result.** It was frozen at hybrid's 0.46508;
+the reranker promoted enough real answers out of ranks 21-40 to add 15.4%
+more gold to the returned set. On **69.2%** of queries the returned set
+differs from hybrid's, so the wider window is used heavily rather than
+decoratively.
+
+**The predicted downside is real and was outvoted, not absent.** A wider
+fetch lets the model demote a marginal hit off the end as well as promote one
+up, and a 4-query probe had shown exactly that — a gold answer at rank 18
+pushed out. Demotions still happen here; they are simply outnumbered. Do not
+read this as "wider is always better": at `fetch=60` the balance could
+invert, and the experiment that would say so has not been run.
+
+**Cost is the caveat.** Doubling the window cost ~95% more wall time — 35.9
+against ~18.4 seconds per query — and against `hybrid` it is **40x the wall
+time for +64% mrr**. Prompt cost is not linear in candidate count, so a third
+doubling should be costed before it is scheduled rather than assumed.
+
+### Two measurement errors from this run, both of which produced wrong answers
+
+- **`checkpoint_every = 25` makes the predictions file a step function.** A
+  4-minute window landed entirely between two flushes and read *zero*
+  progress, which looked like a hang. This is the same defect CLAUDE.md
+  documents for `CHUNK_BATCH`, in a different unit, and it was walked into
+  anyway.
+- **A window must outlast the variance it samples — "use a window" is not
+  sufficient advice.** One 25-query step timed **8.8 s/query**; the whole-run
+  average was **35.9 s/query**. The short window was 4x optimistic and was
+  believed precisely *because* it was a window rather than an
+  elapsed-over-total. Per-query cost swings with candidate document length —
+  40 candidates at up to 2,000 characters is an 80,000-character prompt on a
+  dense node — so 25 queries is a sample, not a measurement. A 100-query
+  window agreed with the whole-run average to within 2%.
+
+### A failure check that did not need the log
+
+This run's stderr was piped into `tail -40` and lost. The failure that
+matters — every `extract` call failing, which makes the agent return
+retrieval order and therefore score *identically to `hybrid`* — was still
+detectable, because `qwen-rel-whole.hybrid.predictions.json` was on disk:
+**3 of 250 queries (1.2%)** had a top-20 order identical to hybrid's, and
+none were empty.
+
+Comparing against a sibling arm's predictions catches the defect by its
+**effect**. The log line catches it only if the exception was raised, caught
+and logged as expected. The first is the stronger check, and it costs
+nothing.
 
 ---
 
@@ -214,10 +284,11 @@ Finding these is a legitimate output of this project.
    chunking — so it measures the *model* and almost nothing about redstring.
    This is the cell that measures redstring's chunker on the corpus that
    matters.
-2. **`rerank` at `fetch=40`.** It currently fetches exactly `k`, making it a
-   pure ordering experiment whose ceiling is hybrid's recall@20 of 0.46508 —
-   and it converted that into 0.41948 mrr, which is efficient enough to
-   suggest the ceiling is now the binding constraint.
+2. ~~**`rerank` at `fetch=40`.**~~ **Done — see §1a.** It won on every metric
+   and broke the recall ceiling it had been pinned to. The question it leaves
+   open is whether `fetch=60` continues the trend or inverts it, and that
+   should be costed before it is scheduled: width is ~5x wall time for 2x
+   candidates, not 2x.
 3. **MAG**, the corpus-generalisation cell. ~849M chars, ~7h locally; this is
    the case where renting GPUs actually pays, and only the embedding call
    needs to move — chunking, Postgres, Neo4j and scoring are all local and

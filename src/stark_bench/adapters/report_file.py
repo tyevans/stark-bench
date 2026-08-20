@@ -75,6 +75,12 @@ def write_report(
             {
                 "config_name": config.name,
                 "config_verbatim": config.raw,
+                # The split that RAN, which `config_verbatim` cannot express:
+                # it is the config file's own bytes, so on a `--split test`
+                # run it still reads `test-0.1`. Recording only the verbatim
+                # config would make the file confidently name the wrong
+                # query set.
+                "split": config.effective_split,
                 "queries": queries,
                 "metrics": dict(metrics),
                 "cost": dict(cost),
