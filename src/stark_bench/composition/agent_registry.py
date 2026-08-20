@@ -122,13 +122,17 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # `rerank40lean`'s measured 13,133 -- a 32x cut that moves the whole cost
     # of this architecture onto decode and retrieval.
     "rerank40title": lambda config: RerankAgent(
-        k=config.k, fetch=40, terse_scores=True, passage_mode="title"
+        k=config.k, fetch=40, terse_scores=True, pair_scores=True, passage_mode="title"
     ),
     # The same, plus one neighbour per relation type. Isolates whether the
     # relations signal survives being sampled down to a single name, which
     # `rerank40lean` (cap=10) cannot answer.
     "rerank40titlerel": lambda config: RerankAgent(
-        k=config.k, fetch=40, terse_scores=True, passage_mode="title_rel"
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel",
     ),
 }
 

@@ -65,28 +65,28 @@ logger = logging.getLogger(__name__)
 _MAX_PASSAGE_CHARS = 3_000
 
 
+#: One candidate's score, addressed by position and scored as an integer.
+#:
+#:     Every field here is sized for the *decode* budget, which is a third of
+#:     this agent's wall time: at a measured 60 tok/s against 1230 tok/s prefill,
+#:     an output token costs 20x an input token. 40 objects of
+#:     `{"node_id": "12345", "score": 87.5}` is ~760 tokens and 12.7s;
+#:     `{"i": 1, "s": 87}` is ~400 and 6.7s.
+#:
+#:     **The index is not a token-saving trick alone -- it is what keeps the
+#:     alignment checkable.** A bare list of 40 numbers would be shorter still,
+#:     but a model that emitted 40 scores shifted by one would be undetectable
+#:     and would silently rerank every candidate against its neighbour's text.
+#:     An index can be validated against the range and a duplicate or invented
+#:     one dropped, which is the same guarantee `node_id` gave, at a third of
+#:     the tokens.
+#:
+#:     Integer rather than float: `87.5` costs three tokens more than `87` and
+#:     the extra precision is spent on a value used only for sorting. The 0-100
+#:     range is kept for the reason the class docstring below records -- a
+#:     coarse scale with named anchors made the model quantise onto them.
 class TerseRelevance(BaseModel):
-    """One candidate's score, addressed by position and scored as an integer.
-
-    Every field here is sized for the *decode* budget, which is a third of
-    this agent's wall time: at a measured 60 tok/s against 1230 tok/s prefill,
-    an output token costs 20x an input token. 40 objects of
-    `{"node_id": "12345", "score": 87.5}` is ~760 tokens and 12.7s;
-    `{"i": 1, "s": 87}` is ~400 and 6.7s.
-
-    **The index is not a token-saving trick alone -- it is what keeps the
-    alignment checkable.** A bare list of 40 numbers would be shorter still,
-    but a model that emitted 40 scores shifted by one would be undetectable
-    and would silently rerank every candidate against its neighbour's text.
-    An index can be validated against the range and a duplicate or invented
-    one dropped, which is the same guarantee `node_id` gave, at a third of
-    the tokens.
-
-    Integer rather than float: `87.5` costs three tokens more than `87` and
-    the extra precision is spent on a value used only for sorting. The 0-100
-    range is kept for the reason the class docstring below records -- a
-    coarse scale with named anchors made the model quantise onto them.
-    """
+    """One candidate's score, addressed by position."""
 
     i: int
     s: int = Field(ge=0, le=100)
@@ -96,18 +96,49 @@ class TerseRelevances(BaseModel):
     scores: list[TerseRelevance]
 
 
-class Relevance(BaseModel):
-    """One candidate's score.
+#: The same `(index, score)` payload, as bare pairs instead of objects.
+#:
+#:     `{"i": 1, "s": 45}` spends its tokens on the field names, and it pays
+#:     them 40 times: measured on a real response, 627 completion tokens for 40
+#:     candidates -- 15.7 tokens to convey one integer. `[1, 45]` carries the
+#:     identical information for roughly half that.
+#:
+#:     **The index survives the change on purpose.** A bare `[45, 98, 60, ...]`
+#:     would be cheaper again, and it is the encoding this class deliberately
+#:     does not use: a model that emits 39 scores instead of 40 shifts every
+#:     candidate against its neighbour's text, and nothing downstream can see
+#:     it. The pair keeps the alignment checkable at a cost of one token per
+#:     candidate, which is the same trade `TerseRelevance` made against
+#:     `node_id` and for the same reason.
+#:
+#:     Validated as a length-2 pair rather than `tuple[int, int]` so a
+#:     malformed row is *rejected by name* here rather than raising a
+#:     confusing shape error inside the model layer.
+#:
+#:     Not minified: whether the model pretty-prints is the model's choice and
+#:     the schema cannot forbid it. The saving is real either way -- the field
+#:     names go regardless -- but it is ~2x rather than the ~3x a minified
+#:     comparison suggests.
+class PairRelevances(BaseModel):
+    """One [index, score] pair per candidate."""
 
-    0-100 rather than 0-10, and the prompt asks for a spread rather than
-    naming anchor values. The first version scored 0-10 and described what
-    10, 5 and 0 meant; the model then used *only* those three numbers --
-    a real answer was one 10, one 5, and eighteen 0s. That collapses the
-    reranking into the top two slots, leaves everything below decided by the
-    retrieval-order tie-break, and makes one overconfident 10 enough to
-    demote a correct top hit. Naming example values on a coarse scale is an
-    instruction to quantise to them.
-    """
+    scores: list[list[int]] = Field(
+        description="One [index, score] pair per candidate, index starting at 1"
+    )
+
+
+#: One candidate's score.
+#:
+#:     0-100 rather than 0-10, and the prompt asks for a spread rather than
+#:     naming anchor values. The first version scored 0-10 and described what
+#:     10, 5 and 0 meant; the model then used *only* those three numbers --
+#:     a real answer was one 10, one 5, and eighteen 0s. That collapses the
+#:     reranking into the top two slots, leaves everything below decided by the
+#:     retrieval-order tie-break, and makes one overconfident 10 enough to
+#:     demote a correct top hit. Naming example values on a coarse scale is an
+#:     instruction to quantise to them.
+class Relevance(BaseModel):
+    """One candidate's score."""
 
     node_id: str
     score: float = Field(ge=0.0, le=100.0)
@@ -324,6 +355,10 @@ class RerankAgent:
     #: Separate from `relation_cap` and `terse_scores` for the reason those
     #: two are separate from each other: they cut different parts of the
     #: bill, and one combined knob could not say which moved the accuracy.
+    #: Return `[[1, 45], [2, 98]]` rather than `[{"i": 1, "s": 45}, ...]`.
+    #: Implies index addressing, so it subsumes `terse_scores` on the output
+    #: side while leaving the input-side label choice to that flag.
+    pair_scores: bool = False
     passage_mode: str = "full"
     name: str = "rerank"
 
@@ -375,7 +410,9 @@ class RerankAgent:
         try:
             judged = await tools.extract(
                 _PROMPT_TEMPLATE.format(query=query.text, candidates=rendered),
-                TerseRelevances if self.terse_scores else Relevances,
+                PairRelevances
+                if self.pair_scores
+                else (TerseRelevances if self.terse_scores else Relevances),
             )
         except Exception:
             # Logged, not swallowed quietly. A reranker whose every call
@@ -397,7 +434,18 @@ class RerankAgent:
         scores: dict[str, float] = {}
         if judged is not None:
             for r in judged.scores:
-                if self.terse_scores:
+                if self.pair_scores:
+                    # A row that is not exactly [index, score] is dropped,
+                    # not guessed at. Guessing which element was which is
+                    # how a reranker silently scores candidates by index.
+                    if not isinstance(r, list) or len(r) != 2:
+                        continue
+                    index, raw = r
+                    if not 1 <= index <= len(passages):
+                        continue
+                    node_id = passages[index - 1].node_id
+                    score = float(max(0, min(100, raw)))
+                elif self.terse_scores:
                     if not 1 <= r.i <= len(passages):
                         continue
                     node_id = passages[r.i - 1].node_id
