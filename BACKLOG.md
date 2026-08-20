@@ -512,3 +512,38 @@ the chunking sweep asks and would extend it to a fourth point at 1.00
 chunks/node. Deferred because the four arms already queued are ~6h of
 endpoint time on a single-slot server and this one adds a fifth without
 answering anything the sweep does not already ask.
+
+## B-EDGE-PROGRESS-1: the edge phase reports nothing, after announcing it is done
+
+`ingest_corpus` in `src/stark_bench/adapters/stark_ingest_engine.py` calls
+`_report(final=True)` at line 465 -- which logs `ingest done: 129,375/129,375
+nodes (100%) ... 72m elapsed` -- and only *then* enters the edge loop at line
+471, which has no logging of any kind until the process exits.
+
+On PRIME that is 8,100,498 relationships and, measured, **~33 minutes of
+total silence following a line that says the ingest is done**. The node loop
+already has `_report`; this phase needs the equivalent.
+
+Cost of not having it, paid on 2026-08-19: the qwen-wholedoc ingest was
+diagnosed as hung. The reasoning looked sound at every step -- the log had
+stopped, chunk count was flat over 30s, client CPU time was unchanged over
+20s, and a `/slots` snapshot showed `is_processing: true` with
+`n_prompt_tokens_processed: 0`. Every one of those was a misread of a healthy
+run: chunks commit in `CHUNK_BATCH` steps, an I/O-bound client accrues under
+a second of CPU in 20s, and `processed: 0` is what a slot reports the instant
+it picks up a task. What actually settled it was `id_task` climbing ~13/s
+across three `/slots` samples, and a 3-minute Postgres window showing +5,010
+chunks. **A snapshot cannot distinguish stalled from busy; only a window
+can.**
+
+Two things would each have prevented the detour, and both are worth doing:
+
+  - log progress inside the edge loop, at the same cadence as nodes;
+  - do not print `ingest done` until the ingest is done. Either move
+    `_report(final=True)` after the edge loop, or word the node-phase line as
+    the phase it actually ends.
+
+The second matters more than the first. A message that says the work is
+finished, ~33 minutes before it is, is not a missing feature -- it is the log
+actively asserting something false, and it is the reason the run nearly got
+killed.
