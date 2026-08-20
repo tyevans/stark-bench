@@ -434,7 +434,31 @@ What is NOT confounded, and is the reason the MAG run exists: PRIME against
 MAG, both on nomic at `capped-whole-2400`. That comparison holds the model
 and the chunker fixed and varies only the corpus.
 
-## B-TOKEN-CAP-1 — the chunk cap is guessed in characters against a token limit
+## B-TOKEN-CAP-1 — RESOLVED by catch-and-re-split
+
+**Resolved 2026-08-20.** The cap is no longer required to be right. When the
+provider rejects a text for length, `stark_ingest_engine` re-chunks that
+group at half the size and retries, up to `MAX_RESPLIT_ATTEMPTS`. A correct
+cap costs nothing, because the path only runs on rejection.
+
+Option 1 from the original entry (cap by tokens with nomic's vocabulary) was
+NOT taken, and the reason is worth keeping: it needs a `tokenizers`
+dependency and a downloaded vocabulary, and it would put a *second* estimate
+of the model's tokenization next to the server's real one. `all-MiniLM-L6-v2`
+is in the local HF cache and shares BERT WordPiece, so it was available as a
+stand-in -- and using it would have been the same "close enough" reasoning
+that produced the three wrong caps. The server's own 400 is the only oracle
+that cannot disagree with the server.
+
+`/tokenize` was probed first and is not routed by llama-swap; only the
+`/v1/*` surface is reachable.
+
+Still worth doing eventually: the cap now sits at 2400 characters, which is
+67% of the ceiling at the measured worst ratio, so every document pays a
+granularity cost for a tail of a few hundred. Token-exact chunking would
+recover that. It is an optimisation now rather than a correctness fix.
+
+### Original entry
 
 `CHUNKERS["capped-whole-2400"]` exists because nomic-embed-text rejects
 anything over 2048 tokens and the chunker measures characters. The conversion

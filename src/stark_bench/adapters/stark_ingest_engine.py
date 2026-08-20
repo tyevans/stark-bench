@@ -46,6 +46,21 @@ logger = logging.getLogger(__name__)
 #: exactly when someone is watching.
 PROGRESS_EVERY_SECONDS = 30.0
 
+#: Substrings that identify "this input had too many tokens" in the provider
+#: error. Matched on the message because `EmbeddingProviderError` flattens the
+#: client exception into text -- the structured `n_prompt_tokens` the server
+#: sends is not reachable from here.
+#:
+#: Both spellings are listed because llama.cpp emits the `type` field and
+#: OpenAI-compatible servers vary in the prose; matching either is cheap and
+#: matching neither means a real error propagates, which is the safe default.
+_OVERSIZE_MARKERS = ("exceed_context_size_error", "larger than the max context size")
+
+#: How many times a group may be re-chunked at half the size before giving up.
+#: Four halvings take a 2400-character cap to 150, which is below any sane
+#: floor -- if the text still does not fit by then the problem is not the cap.
+MAX_RESPLIT_ATTEMPTS = 4
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
     from collections.abc import Set as AbstractSet
@@ -257,13 +272,19 @@ async def ingest(
     batch: list[Entity] = []
     chunk_batch: list[StoredChunk] = []
 
-    def _plan(node: SkbNode) -> tuple[SkbNode, list, bool]:
+    def _plan(
+        node: SkbNode, max_chunk_size: int | None = None
+    ) -> tuple[SkbNode, list, bool]:
         """Chunk a node and decide whether it needs vectors. No I/O.
 
         Split out from the embedding so that a whole group's texts can go
         into one request -- see the `embed_batch` note in the docstring.
+
+        `max_chunk_size` overrides the chunker's own cap. It is only passed by
+        the re-split path below, which re-chunks a whole group smaller after
+        the provider rejected one of its texts for length.
         """
-        result = chunker.chunk(node.document)
+        result = chunker.chunk(node.document, max_chunk_size=max_chunk_size)
         source_id = SourceId(f"{dataset}:{node.node_id}")
         ids = [chunk_id(source_id, piece.text) for piece in result.chunks]
         wanted = not (resume and ids and all(i in existing_chunk_ids for i in ids))
@@ -295,6 +316,64 @@ async def ingest(
             )
         return out
 
+    def _is_oversize(error: Exception) -> bool:
+        text = str(error)
+        return any(marker in text for marker in _OVERSIZE_MARKERS)
+
+    async def _embed_planned(group, planned):
+        """Embed a planned group, re-chunking smaller if the provider says no.
+
+        The chunker caps **characters**; the provider caps **tokens**. That
+        conversion is a per-corpus, per-tokenizer property nothing here can
+        know, and estimating it went wrong three times on this benchmark --
+        5000 characters, then 4000, then 2400, each from a defensible ratio
+        and each rejected at ~2080 tokens. Every failure cost a full re-ingest.
+
+        So the cap is no longer required to be right. When the provider
+        rejects a text for length, the whole group is re-chunked at half the
+        size and retried. Re-chunking the *group* rather than the offending
+        text keeps chunk boundaries a pure function of the chunker and the
+        document -- splitting one text in place would produce pieces whose
+        `start_char`/`chunk_index` did not come from the chunker, and those
+        offsets are what `chunk_id` is built from.
+
+        This runs only on rejection, so a correct cap costs nothing.
+        """
+        size = None
+        for attempt in range(MAX_RESPLIT_ATTEMPTS + 1):
+            flat = [p.text for _, pieces, wanted in planned if wanted for p in pieces]
+            try:
+                return planned, await _embed_group(flat)
+            except Exception as error:
+                if not _is_oversize(error) or attempt == MAX_RESPLIT_ATTEMPTS:
+                    raise
+                longest = max(
+                    (
+                        len(p.text)
+                        for _, pieces, wanted in planned
+                        if wanted
+                        for p in pieces
+                    ),
+                    default=0,
+                )
+                # Seeded from the longest piece actually produced, not from a
+                # chunker attribute: neither chunker here exposes its cap, and
+                # reading one would have raised AttributeError on the first
+                # re-split -- the only path this code exists for.
+                size = min(size or longest, longest) // 2
+                if size < 1:
+                    raise
+                logger.warning(
+                    "embed rejected a chunk as too long; re-chunking this group "
+                    "at %s characters (attempt %s of %s): %s",
+                    size,
+                    attempt + 1,
+                    MAX_RESPLIT_ATTEMPTS,
+                    error,
+                )
+                planned = [_plan(node, max_chunk_size=size) for node in group]
+        raise AssertionError("unreachable: the loop returns or raises")
+
     group_size = concurrency * embed_batch if embeddings is not None else 1
     node_iter = iter(nodes)
     while True:
@@ -314,8 +393,7 @@ async def ingest(
                 for node, pieces, wanted in planned
             ]
         else:
-            flat = [p.text for _, pieces, wanted in planned if wanted for p in pieces]
-            vectors = await _embed_group(flat)
+            planned, vectors = await _embed_planned(group, planned)
             cursor = 0
             processed = []
             for node, pieces, wanted in planned:
