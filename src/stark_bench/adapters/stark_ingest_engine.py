@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -34,6 +36,15 @@ from redstring import (
 from redstring.domain.chunk import StoredChunk, chunk_id
 
 from stark_bench.domain.stark_ids import STARK_ID_KEY, entity_id_for
+
+logger = logging.getLogger(__name__)
+
+#: Seconds between progress lines. Time-based rather than every-N-nodes
+#: because node cost varies by two orders of magnitude across these corpora
+#: -- a MAG author is one short chunk and a PRIME pathway is dozens -- so a
+#: node counter goes quiet for minutes on the expensive stretches, which is
+#: exactly when someone is watching.
+PROGRESS_EVERY_SECONDS = 30.0
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -104,6 +115,7 @@ async def ingest(
     embed_batch: int = 64,
     existing_chunk_ids: AbstractSet[ChunkId] = frozenset(),
     resume: bool = True,
+    total_nodes: int | None = None,
 ) -> IngestReport:
     """Load nodes (and their chunks) then edges, in that order.
 
@@ -215,6 +227,32 @@ async def ingest(
     observed_at = datetime.now(UTC)
     known: set[str] = set()
     node_count = chunk_count = skipped_count = 0
+    started_at = time.monotonic()
+    last_report = started_at
+
+    def _report(final: bool = False) -> None:
+        elapsed = time.monotonic() - started_at
+        rate = chunk_count / elapsed if elapsed > 0 else 0.0
+        node_rate = node_count / elapsed if elapsed > 0 else 0.0
+        eta = ""
+        if total_nodes and node_rate > 0 and not final:
+            remaining = (total_nodes - node_count) / node_rate
+            eta = f" eta {remaining / 60:.0f}m"
+        pct = f" ({node_count / total_nodes:.0%})" if total_nodes else ""
+        logger.info(
+            "ingest %s: %s/%s nodes%s, %s chunks (%s skipped), "
+            "%.0f chunks/s, %.0f nodes/s, %.0fm elapsed%s",
+            "done" if final else "progress",
+            f"{node_count:,}",
+            f"{total_nodes:,}" if total_nodes else "?",
+            pct,
+            f"{chunk_count:,}",
+            f"{skipped_count:,}",
+            rate,
+            node_rate,
+            elapsed / 60,
+            eta,
+        )
 
     batch: list[Entity] = []
     chunk_batch: list[StoredChunk] = []
@@ -335,10 +373,19 @@ async def ingest(
                 await chunks.upsert_many(chunk_batch)
                 batch, chunk_batch = [], []
 
+        # Outside the per-node loop but inside the group loop: one check per
+        # group rather than per node, and it still fires on schedule because
+        # a group is bounded by concurrency * embed_batch.
+        if time.monotonic() - last_report >= PROGRESS_EVERY_SECONDS:
+            _report()
+            last_report = time.monotonic()
+
     if batch:
         await graph.upsert_entities(batch)
     if chunk_batch:
         await chunks.upsert_many(chunk_batch)
+
+    _report(final=True)
 
     dropped = 0
     edge_count = 0
