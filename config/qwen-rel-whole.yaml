@@ -1,0 +1,39 @@
+# The relational-text cell, on qwen3-embedding-0.6b.
+#
+# Every other config embeds `get_doc_info(node_id, add_rel=False)` -- name,
+# type, source and details, and nothing about what the node is connected to.
+# STaRK's own `multi_vss` and LLM-reranker baselines use `add_rel=True`, which
+# appends a `- relations:` block naming every neighbour grouped by relation
+# type. PRIME's queries name related entities explicitly ("a drug that targets
+# X and is indicated for Y"), so with relations included the answer's own
+# document contains those names verbatim. Without them, the text the queries
+# were written against is simply absent from the index.
+#
+# That makes this the single-variable test of the largest suspected gap:
+# `qwen-rel-whole` minus `qwen-wholedoc` is the contribution of relational
+# text and nothing else, because the chunker and model are held at
+# `qwen-wholedoc`'s values.
+#
+# The corpus is 129,375 nodes, mean 1,761 chars against the base corpus's
+# 1,204 -- 1.47x, measured rather than assumed. Reads `data/prime-rel/`,
+# whose nodes.jsonl is the add_rel export; queries, candidates and edges are
+# symlinks to `data/prime/`, so there is one copy of each and no chance of
+# the two datasets disagreeing about them.
+#
+# Shares the chunk table with the other qwen configs -- same model, same
+# dimension, same prefixes, so ADR 0002 and 0043 are satisfied -- and is
+# isolated by tenant_id, which is derived from `name`.
+name: qwen-rel-whole
+dataset: prime-rel
+split: test-0.1
+chunker: capped-whole-2400
+embeddings: qwen3-embedding-0.6b
+dimension: 1024
+aggregation: max
+agent: dense
+k: 20
+
+# See `qwen-wholedoc.yaml` for why the document side is empty and the query
+# side carries an instruction. Every qwen config states both.
+document_prefix: ""
+query_prefix: "Instruct: Given a query, retrieve relevant documents that answer the query\nQuery: "

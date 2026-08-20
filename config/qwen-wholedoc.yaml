@@ -1,0 +1,44 @@
+# The PRIME re-baseline on qwen3-embedding-0.6b.
+#
+# Exists because the embedder changed again. Every PRIME arm in `results/` is
+# either Nemotron-3-Embed-1B or nomic-embed-text, and comparing a qwen number
+# against either requires that nothing else moved.
+#
+# ## The chunker is `capped-whole-2400` and that is deliberate
+#
+# qwen does NOT need the cap. It is served with `n_ctx 32768` and a physical
+# batch that took a 40,000-character input in one piece -- probed against the
+# live endpoint before this config was written, not inferred from the GGUF.
+# The whole corpus would come through whole; PRIME's longest document is
+# 52,260 characters and the mean is 870.
+#
+# The cap is kept anyway, at nomic's value, because `nomic-wholedoc` is the
+# arm this is compared against and nomic could not exceed 2400. Lifting it
+# here would vary the model AND the granularity at once -- exactly the
+# confound `nomic-wholedoc.yaml` documents regretting when it inherited
+# Nemotron's 5000-character cap. RESULTS.md finding 4 measures a 25% spread
+# in dense mrr across chunkers, so the cap is not a free variable.
+#
+# `qwen-wholedoc` minus `nomic-wholedoc` is therefore the embedding model and
+# nothing else. That is the one clean single-variable model comparison this
+# repository has ever had, and it is worth giving up an unconstrained
+# whole-document arm to get. Running qwen uncapped is a legitimate follow-up
+# cell, not this one -- see B-QWEN-UNCAPPED-1.
+name: qwen-wholedoc
+dataset: prime
+split: test-0.1
+chunker: capped-whole-2400
+embeddings: qwen3-embedding-0.6b
+dimension: 1024
+aggregation: max
+agent: dense
+k: 20
+
+# Qwen3-Embedding is asymmetric in a different shape from every other model
+# here. The corpus side takes NO prefix -- the empty string is the correct
+# value, not an omission -- and the query side takes a one-line instruction
+# followed by `Query: `, which is the format the model was trained with.
+# Getting this wrong is silent in the usual way: the vectors stay well-formed
+# and score plausibly, just below what the model can do.
+document_prefix: ""
+query_prefix: "Instruct: Given a query, retrieve relevant documents that answer the query\nQuery: "

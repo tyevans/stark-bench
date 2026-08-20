@@ -1,0 +1,36 @@
+# redstring's own default chunker, on nomic.
+#
+# Replaces `redstring-native`, whose corpus was Nemotron and no longer
+# exists. Every locally-embedded arm is nomic now; `vss-control` stays as the
+# published-vector reference and is the only non-nomic row kept.
+#
+# ## What this cell is for
+#
+# RESULTS.md finding 3 retracted "finer chunking is worse" and replaced it
+# with something sharper: `boundary-preference` is an OUTLIER. It came last
+# of three chunkers on dense retrieval, beaten by a whole-document cap and by
+# a naive sliding window at double the granularity -- and finding 4 ruled out
+# both obvious explanations (not lost content, not chunk length).
+#
+# That result was measured entirely on Nemotron. This re-tests it on nomic.
+# If boundary-preference is last again, the deficit is a property of the
+# chunker and worth chasing to a passage-level diagnostic. If it is not, the
+# original finding was about an interaction with one embedding model, which
+# would be a different and also interesting answer.
+#
+# No cap is set: `boundary-preference` picks its own boundaries. Chunks over
+# nomic's 2048-token limit are handled by the engine's re-split rather than
+# by a character guess -- see MAX_RESPLIT_ATTEMPTS in the ingest engine and
+# B-TOKEN-CAP-1, which that resolved.
+name: nomic-boundary
+dataset: prime
+split: test-0.1
+chunker: boundary-preference
+embeddings: nomic-embed-text
+dimension: 768
+aggregation: max
+agent: dense
+k: 20
+
+document_prefix: "search_document: "
+query_prefix: "search_query: "

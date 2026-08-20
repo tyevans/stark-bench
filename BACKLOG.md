@@ -491,3 +491,24 @@ PRIME at 218 chunks/s and ~1h for MAG.
 Note the cap also widens B-NOMIC-CONFOUND-1: nomic now runs at 2400
 characters against Nemotron's 5000, so the two arms differ more in chunking
 than the original swap intended.
+
+## B-QWEN-UNCAPPED-1: qwen's whole-document arm is capped for a reason that is not qwen's
+
+`config/qwen-wholedoc.yaml` runs `capped-whole-2400`. qwen3-embedding-0.6b
+does not need a cap at all -- it is served with `n_ctx 32768` and took a
+40,000-character input whole when probed against the live endpoint, and
+PRIME's longest document is 52,260 characters with a mean of 870. Every
+document but a handful would come through in one chunk.
+
+The cap is nomic's, kept so that `qwen-wholedoc` minus `nomic-wholedoc` is
+the embedding model and nothing else. That is the cleanest single-variable
+model comparison this repo has had, and it is worth the cost -- but the cost
+is real: no arm here measures qwen at the granularity it can actually run.
+
+The follow-up is a `qwen-uncapped` cell at `whole-document` (or a
+10,000-character cap for the 52k outlier), scored against `qwen-wholedoc`.
+That difference is granularity at a fixed model, which is the same question
+the chunking sweep asks and would extend it to a fourth point at 1.00
+chunks/node. Deferred because the four arms already queued are ~6h of
+endpoint time on a single-slot server and this one adds a fifth without
+answering anything the sweep does not already ask.

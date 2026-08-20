@@ -260,7 +260,13 @@ CHUNKERS = {
 #: `dense`, recall@20 a tie) at 2048 dimensions against 768, which is what
 #: made the swap worth doing. Removing it would make those numbers
 #: unreproducible.
-LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text"}
+#: `qwen3-embedding-0.6b` is the current endpoint model (Q8_0 GGUF, 1024
+#: dimensions, served with `n_ctx 32768` and a physical batch large enough to
+#: take a 40,000-character input in one piece -- probed, not assumed). It is
+#: the first model here whose context is not the binding constraint on the
+#: chunker, so its whole-document arm caps at 5000 characters for parity with
+#: the Nemotron sweep rather than because the server would refuse more.
+LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text", "qwen3-embedding-0.6b"}
 
 
 def _tenant_for(config: RunConfig) -> TenantId:

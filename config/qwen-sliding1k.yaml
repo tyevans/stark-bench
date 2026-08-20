@@ -1,0 +1,28 @@
+# The naive sliding window, on qwen3-embedding-0.6b.
+#
+# 1000-character window, 500 overlap -- roughly twice `boundary-preference`'s
+# granularity and, on Nemotron, 15% BETTER than it on dense. That inversion
+# is what falsified the original "finer chunking is worse" claim, and it is
+# the specific result this cell re-tests on a third model.
+#
+# Read its chunk COUNT with the known caveat: SlidingWindowChunker emits one
+# fully-redundant tail chunk per document longer than the window whenever
+# overlap > 0 (B-SLIDING-REDUNDANT-1). The text is real, so this is waste and
+# not corruption, but the count overstates distinct coverage by about 7%.
+#
+# 86% of PRIME is under 1000 characters and comes through whole under all
+# three chunkers, so the sweep can only move the 14% long tail.
+name: qwen-sliding1k
+dataset: prime
+split: test-0.1
+chunker: sliding-1000-500
+embeddings: qwen3-embedding-0.6b
+dimension: 1024
+aggregation: max
+agent: dense
+k: 20
+
+# See `qwen-wholedoc.yaml` for why the document side is empty and the query
+# side carries an instruction. Every qwen config states both.
+document_prefix: ""
+query_prefix: "Instruct: Given a query, retrieve relevant documents that answer the query\nQuery: "
