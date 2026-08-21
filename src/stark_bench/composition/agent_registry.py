@@ -117,6 +117,52 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     "rerank40lean": lambda config: RerankAgent(
         k=config.k, fetch=40, relation_cap=10, terse_scores=True
     ),
+    # Titles only: name and type, no body, no relations. The leanest thing
+    # that is still a reranker. ~410 prompt tokens at fetch=40 against
+    # `rerank40lean`'s measured 13,133 -- a 32x cut that moves the whole cost
+    # of this architecture onto decode and retrieval.
+    "rerank40title": lambda config: RerankAgent(
+        k=config.k, fetch=40, terse_scores=True, pair_scores=True, passage_mode="title"
+    ),
+    # The same, plus one neighbour per relation type. Isolates whether the
+    # relations signal survives being sampled down to a single name, which
+    # `rerank40lean` (cap=10) cannot answer.
+    "rerank40titlerel": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel",
+    ),
+    # The same, but the single kept neighbour per relation type is chosen by
+    # BM25 against the query rather than by document order. At per_type=1
+    # *which* name survives is the whole relations signal, so the selector
+    # stops being a detail -- `titlerel` vs `titlerelranked` isolates it.
+    "rerank40titlerelranked": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_ranked",
+    ),
+    # Twice the candidates, on the encoding that made them affordable.
+    #
+    # `fetch` is the ceiling on what reranking can fix -- it can only
+    # reorder what retrieval found -- and the measured curve has not
+    # flattened: recall@20 was 0.4651 at fetch=20 (identical to `hybrid`, by
+    # construction: same 20 candidates, k=20, so only the order changes),
+    # and 0.5369 at fetch=40 on full documents.
+    #
+    # Doubling used to mean doubling a 13,133-token prompt. On titles it is
+    # ~350 extra prefill tokens, well under a second at aggregate rates.
+    # Decode roughly doubles, which is the real bill.
+    "rerank80titlerelranked": lambda config: RerankAgent(
+        k=config.k,
+        fetch=80,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_ranked",
+    ),
 }
 
 

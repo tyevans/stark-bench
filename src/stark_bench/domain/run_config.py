@@ -56,6 +56,25 @@ class RunConfig:
     #: produced the numbers if nothing else recorded the truth. The report's
     #: own `split` key does.
     split_override: str | None = None
+    #: A chat model named on the command line, overriding `chat_model:`.
+    #: Separate from `chat_model` for the same reason `split_override` is
+    #: separate from `split`: `raw` is the config FILE's bytes, so an
+    #: overridden run's `config_verbatim` names the model that did not run.
+    chat_model_override: str | None = None
+    #: Queries in flight at once. 1 is the historical behaviour and the
+    #: default: a value here would otherwise change the wall time of every
+    #: previously-recorded arm's rerun without changing its accuracy, and a
+    #: cost column that moved for that reason would be misleading.
+    query_concurrency: int = 1
+
+    @property
+    def effective_chat_model(self) -> str | None:
+        """The chat model that actually runs: the override if there was one.
+
+        `None` still means "whatever `DEFAULT_CHAT_MODEL` is", which only
+        `composition` knows -- the domain does not name an endpoint's models.
+        """
+        return self.chat_model_override or self.chat_model
 
     @property
     def effective_split(self) -> str:

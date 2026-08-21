@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from time import perf_counter
 import itertools
 import json
 import logging
@@ -34,7 +35,7 @@ from redstring.extraction.chunkers.boundary_preference_chunker import (
 )
 from redstring.extraction.chunkers.sliding_window_chunker import SlidingWindowChunker
 from redstring.graph.adapters.neo4j import Neo4jGraphStore
-from redstring.llm.adapters.langchain import LangChainLlmProvider
+from redstring.llm.adapters.langchain import NO_THINKING, LangChainLlmProvider
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
 from stark_bench.composition.agent_registry import AGENTS, build_agent
@@ -359,12 +360,46 @@ def _llm_for(config: RunConfig) -> LlmProvider:
     and the alternative -- deciding per agent whether the toolset gets an
     LLM -- is a second place for the agent name to be interpreted.
     """
-    model = config.chat_model or DEFAULT_CHAT_MODEL
+    model = config.effective_chat_model or DEFAULT_CHAT_MODEL
     require_chat_model(INFERENCE_BASE_URL, model)
-    return LangChainLlmProvider.openai_compatible(
-        base_url=INFERENCE_BASE_URL,
+
+    # Built here rather than through `openai_compatible`, which is
+    # deliberately not a passthrough for extra `ChatOpenAI` kwargs and says
+    # so: "a caller needing anything else still builds the chat model
+    # itself". We need one such kwarg.
+    #
+    # ## Why `cache_prompt`
+    #
+    # `rerank`'s prompt opens with 818 characters -- ~221 tokens -- that are
+    # byte-identical on every query: the scoring instructions and the output
+    # instruction, both before `Query:`. Everything after varies, and cannot
+    # be shared: 98.2% of query pairs retrieve zero candidates in common.
+    #
+    # llama.cpp will reuse a slot's KV for a matching prefix, and a measured
+    # response showed `cache_n: 0` -- the request never asked. It matters
+    # more under concurrency, not less: prefill throughput per request falls
+    # to ~500 tok/s with four slots busy, so those 221 tokens are ~0.44s of
+    # every request rather than the ~0.09s a solo-request rate suggests.
+    #
+    # ## Why `extra_body` is spelled out rather than extended
+    #
+    # `openai_compatible` puts `NO_THINKING` in `extra_body`, and that is
+    # load-bearing: this harness is non-reasoning by deliberate measurement
+    # (CLAUDE.md -- two thinking-on runs at temperature zero disagreed with
+    # each other about how many entities a document held). Passing an
+    # `extra_body` that omits it would turn reasoning back on silently,
+    # costing latency and reproducibility at once. So it is merged in, and
+    # a test asserts it survives.
+    from langchain_openai import ChatOpenAI
+
+    chat = ChatOpenAI(  # type: ignore[call-arg]
         model=model,
+        base_url=INFERENCE_BASE_URL,
+        api_key="not-needed",
+        temperature=0.0,
+        extra_body={**dict(NO_THINKING), "cache_prompt": True},
     )
+    return LangChainLlmProvider(chat, model=f"openai-compatible/{model}")
 
 
 def toolset_for(
@@ -421,6 +456,19 @@ def _ingest_stats(config: RunConfig) -> dict[str, object]:
     return dict(json.loads(path.read_text(encoding="utf-8")))
 
 
+def _chat_model_tag(config: RunConfig) -> str:
+    """A filename segment naming an overridden chat model, or nothing.
+
+    Same argument as `_split_tag`: a run against a different model must not
+    overwrite the number it should be compared against. Slashes and colons
+    appear in model ids and are not filename characters.
+    """
+    if not config.chat_model_override:
+        return ""
+    safe = config.chat_model_override.replace("/", "-").replace(":", "-")
+    return f"{safe}."
+
+
 def _split_tag(config: RunConfig) -> str:
     """`"test."` on an overridden run, `""` otherwise -- and the asymmetry matters.
 
@@ -445,8 +493,8 @@ def predictions_path(config: RunConfig) -> Path:
     `scripts/rescore.py` turns the survivor back into a report.
     """
     return (
-        RESULTS_ROOT
-        / f"{config.name}.{_split_tag(config)}{config.agent}.predictions.json"
+        RESULTS_ROOT / f"{config.name}.{_split_tag(config)}{_chat_model_tag(config)}"
+        f"{config.agent}.predictions.json"
     )
 
 
@@ -459,7 +507,10 @@ def report_path(config: RunConfig) -> Path:
     the correct `config_verbatim` for whichever ran last, so nothing in the
     file would reveal the loss.
     """
-    return RESULTS_ROOT / f"{config.name}.{_split_tag(config)}{config.agent}.json"
+    return RESULTS_ROOT / (
+        f"{config.name}.{_split_tag(config)}{_chat_model_tag(config)}"
+        f"{config.agent}.json"
+    )
 
 
 async def _do_ingest(
@@ -617,19 +668,31 @@ async def _do_run(config: RunConfig) -> None:
         agent = build_agent(config)
 
         preds_path = predictions_path(config)
+        # Wall time is measured around the whole query set rather than
+        # derived from the calls, which overlap under concurrency.
+        run_started = perf_counter()
         predictions = await run(
             agent,
             queries,
             tools,
             k=config.k,
+            concurrency=config.query_concurrency,
             checkpoint=partial(write_predictions, preds_path),
         )
+        run_wall_s = perf_counter() - run_started
         write_predictions(preds_path, predictions)
 
         candidates_path = data_dir / "candidates.json"
         candidate_ids = [int(c) for c in json.loads(candidates_path.read_text())]
         metrics = score_predictions(predictions, answers, candidate_ids=candidate_ids)
-        cost = dict(summarise_cost(tools.calls, queries=len(queries)))
+        cost = dict(
+            summarise_cost(
+                tools.calls,
+                queries=len(queries),
+                wall_s=run_wall_s,
+                concurrency=config.query_concurrency,
+            )
+        )
         if isinstance(embeddings, PrewarmedQueryEmbeddings):
             # In the report because "the helper works, nobody calls it" has
             # happened twice in this repo, hours apart, with green tests both
@@ -691,6 +754,31 @@ def main() -> None:
         "writes the effective split into the report, because "
         "`config_verbatim` is the FILE's bytes and would otherwise name "
         "the split that did not run.",
+    )
+    parser.add_argument(
+        "--chat-model",
+        default=None,
+        help=(
+            "Chat model id, overriding the config's `chat_model:`. The "
+            "report records the model that RAN and its filename is tagged "
+            "with it, because `config_verbatim` is the config FILE's bytes "
+            "and would name the model that did not. Uses the same corpus: "
+            "the tenant is derived from the config NAME, so this does not "
+            "re-ingest anything."
+        ),
+    )
+    parser.add_argument(
+        "--query-concurrency",
+        type=int,
+        default=1,
+        help=(
+            "queries in flight at once. A request occupies one server slot, "
+            "so this should be at least the chat model's -np or the extra "
+            "slots sit idle. Does not change accuracy -- queries are "
+            "independent and predictions are keyed by query_id -- but it "
+            "does change what contends on Postgres. Record it with any "
+            "timing you report; the slot count changes mid-session."
+        ),
     )
     parser.add_argument(
         "--ingest-edges",
@@ -773,6 +861,10 @@ def main() -> None:
     config = load_config(args.config)
     if args.agent is not None:
         config = replace(config, agent=args.agent)
+    if args.chat_model is not None and args.chat_model != config.chat_model:
+        config = replace(config, chat_model_override=args.chat_model)
+    if args.query_concurrency != config.query_concurrency:
+        config = replace(config, query_concurrency=args.query_concurrency)
     if args.split is not None and args.split != config.split:
         # Only when it differs. `--split test-0.1` on a config that already
         # says `test-0.1` must not tag the filename, or the same run acquires

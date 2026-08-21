@@ -31,7 +31,9 @@ reranking.
 from __future__ import annotations
 
 import logging
+import math
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -65,28 +67,28 @@ logger = logging.getLogger(__name__)
 _MAX_PASSAGE_CHARS = 3_000
 
 
+#: One candidate's score, addressed by position and scored as an integer.
+#:
+#:     Every field here is sized for the *decode* budget, which is a third of
+#:     this agent's wall time: at a measured 60 tok/s against 1230 tok/s prefill,
+#:     an output token costs 20x an input token. 40 objects of
+#:     `{"node_id": "12345", "score": 87.5}` is ~760 tokens and 12.7s;
+#:     `{"i": 1, "s": 87}` is ~400 and 6.7s.
+#:
+#:     **The index is not a token-saving trick alone -- it is what keeps the
+#:     alignment checkable.** A bare list of 40 numbers would be shorter still,
+#:     but a model that emitted 40 scores shifted by one would be undetectable
+#:     and would silently rerank every candidate against its neighbour's text.
+#:     An index can be validated against the range and a duplicate or invented
+#:     one dropped, which is the same guarantee `node_id` gave, at a third of
+#:     the tokens.
+#:
+#:     Integer rather than float: `87.5` costs three tokens more than `87` and
+#:     the extra precision is spent on a value used only for sorting. The 0-100
+#:     range is kept for the reason the class docstring below records -- a
+#:     coarse scale with named anchors made the model quantise onto them.
 class TerseRelevance(BaseModel):
-    """One candidate's score, addressed by position and scored as an integer.
-
-    Every field here is sized for the *decode* budget, which is a third of
-    this agent's wall time: at a measured 60 tok/s against 1230 tok/s prefill,
-    an output token costs 20x an input token. 40 objects of
-    `{"node_id": "12345", "score": 87.5}` is ~760 tokens and 12.7s;
-    `{"i": 1, "s": 87}` is ~400 and 6.7s.
-
-    **The index is not a token-saving trick alone -- it is what keeps the
-    alignment checkable.** A bare list of 40 numbers would be shorter still,
-    but a model that emitted 40 scores shifted by one would be undetectable
-    and would silently rerank every candidate against its neighbour's text.
-    An index can be validated against the range and a duplicate or invented
-    one dropped, which is the same guarantee `node_id` gave, at a third of
-    the tokens.
-
-    Integer rather than float: `87.5` costs three tokens more than `87` and
-    the extra precision is spent on a value used only for sorting. The 0-100
-    range is kept for the reason the class docstring below records -- a
-    coarse scale with named anchors made the model quantise onto them.
-    """
+    """One candidate's score, addressed by position."""
 
     i: int
     s: int = Field(ge=0, le=100)
@@ -96,18 +98,49 @@ class TerseRelevances(BaseModel):
     scores: list[TerseRelevance]
 
 
-class Relevance(BaseModel):
-    """One candidate's score.
+#: The same `(index, score)` payload, as bare pairs instead of objects.
+#:
+#:     `{"i": 1, "s": 45}` spends its tokens on the field names, and it pays
+#:     them 40 times: measured on a real response, 627 completion tokens for 40
+#:     candidates -- 15.7 tokens to convey one integer. `[1, 45]` carries the
+#:     identical information for roughly half that.
+#:
+#:     **The index survives the change on purpose.** A bare `[45, 98, 60, ...]`
+#:     would be cheaper again, and it is the encoding this class deliberately
+#:     does not use: a model that emits 39 scores instead of 40 shifts every
+#:     candidate against its neighbour's text, and nothing downstream can see
+#:     it. The pair keeps the alignment checkable at a cost of one token per
+#:     candidate, which is the same trade `TerseRelevance` made against
+#:     `node_id` and for the same reason.
+#:
+#:     Validated as a length-2 pair rather than `tuple[int, int]` so a
+#:     malformed row is *rejected by name* here rather than raising a
+#:     confusing shape error inside the model layer.
+#:
+#:     Not minified: whether the model pretty-prints is the model's choice and
+#:     the schema cannot forbid it. The saving is real either way -- the field
+#:     names go regardless -- but it is ~2x rather than the ~3x a minified
+#:     comparison suggests.
+class PairRelevances(BaseModel):
+    """One [index, score] pair per candidate."""
 
-    0-100 rather than 0-10, and the prompt asks for a spread rather than
-    naming anchor values. The first version scored 0-10 and described what
-    10, 5 and 0 meant; the model then used *only* those three numbers --
-    a real answer was one 10, one 5, and eighteen 0s. That collapses the
-    reranking into the top two slots, leaves everything below decided by the
-    retrieval-order tie-break, and makes one overconfident 10 enough to
-    demote a correct top hit. Naming example values on a coarse scale is an
-    instruction to quantise to them.
-    """
+    scores: list[list[int]] = Field(
+        description="One [index, score] pair per candidate, index starting at 1"
+    )
+
+
+#: One candidate's score.
+#:
+#:     0-100 rather than 0-10, and the prompt asks for a spread rather than
+#:     naming anchor values. The first version scored 0-10 and described what
+#:     10, 5 and 0 meant; the model then used *only* those three numbers --
+#:     a real answer was one 10, one 5, and eighteen 0s. That collapses the
+#:     reranking into the top two slots, leaves everything below decided by the
+#:     retrieval-order tie-break, and makes one overconfident 10 enough to
+#:     demote a correct top hit. Naming example values on a coarse scale is an
+#:     instruction to quantise to them.
+class Relevance(BaseModel):
+    """One candidate's score."""
 
     node_id: str
     score: float = Field(ge=0.0, le=100.0)
@@ -194,6 +227,188 @@ def lean_document(text: str, query: str, *, cap: int) -> str:
     return text[:marker] + "\n".join(kept) + trailing
 
 
+#: `- name:` and `- type:` as STaRK writes them at the top of every document.
+#: Anchored to the line start so a `name` nested inside a details dict cannot
+#: win: those are database display names, and one of them is the wrong answer
+#: to "what is this entity called".
+_NAME_LINE = re.compile(r"^- name:[ \t]*(.*)$", re.MULTILINE)
+_TYPE_LINE = re.compile(r"^- type:[ \t]*(.*)$", re.MULTILINE)
+
+
+def title_of(text: str) -> str:
+    """The entity's name and type, and nothing else.
+
+    ## Why a title can be enough
+
+    PRIME's queries name the entities they are about ("a drug that targets X
+    and is indicated for Y"), and reranking only has to *order* candidates
+    retrieval already found. Ordering by name and type is a far weaker
+    signal than ordering by the full document -- but the full document costs
+    3,415 characters per candidate against roughly 37 here, and 82% of that
+    is text no query asks about.
+
+    Whether the weaker signal is good enough is exactly the measurement this
+    exists to take. It is a real experiment with a plausible null.
+
+    ## The empty-title hazard
+
+    A document with no `- name:` line would render as `? (?)`, and forty
+    candidates rendering as `? (?)` is a reranker scoring noise -- which
+    looks like "reranking does not help" rather than like a defect. So a
+    document without a name falls back to its first non-empty line, and
+    `render_passages` refuses a batch that came out empty.
+    """
+    name = _NAME_LINE.search(text)
+    kind = _TYPE_LINE.search(text)
+    label = name.group(1).strip() if name else ""
+    if not label:
+        label = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    return f"{label} ({kind.group(1).strip()})" if kind else label
+
+
+#: Word characters only, lowercased. Entity names here are things like
+#: `PI5P, PP2A and IER3 Regulate PI3K/AKT Signaling` and `HLA-DRB1`, so the
+#: split has to break on `/` and `-` for a query naming `HLA` to reach the
+#: second one -- while still letting the exact full name score highest,
+#: which it does because every one of its tokens matches.
+_WORD = re.compile(r"[a-z0-9]+")
+
+#: Standard BM25. `k1` controls term-frequency saturation and `b` length
+#: normalisation. These are the usual defaults and are not tuned: the
+#: documents here are entity names of ~21 characters, where term frequency
+#: is almost always 1 and length varies little, so both parameters have far
+#: less to do than they would over prose.
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+
+
+def _tokens(text: str) -> list[str]:
+    return _WORD.findall(text.lower())
+
+
+def rank_names_lexically(query: str, names: Sequence[str], *, top: int) -> list[str]:
+    """The `top` names most lexically relevant to `query`, best first.
+
+    ## Why BM25 rather than the substring test it replaces
+
+    `lean_document` picked names by `name.lower() in query.lower()`. That is
+    all-or-nothing: a query naming `HLA-DRB1` does not match the name
+    `HLA-DRB1 allele`, and among ten names that all match it cannot say
+    which matches better. At `per_type=1` that stops being a rounding error
+    and becomes the entire relations signal, since only one name survives.
+
+    ## Why the idf is computed over this query's candidate set
+
+    Rarity is what makes a neighbour name informative, and rarity is
+    relative to the alternatives being ranked. A name shared by every
+    candidate distinguishes none of them however rare it is in the corpus
+    at large -- and the corpus-wide statistic is not available to an agent
+    anyway, which sees only `ports`.
+
+    Ties break on the original order, so a document whose names are all
+    equally irrelevant renders exactly what `first_relations` would have.
+    """
+    if top <= 0:
+        raise ValueError("top must be positive; 0 removes the relations signal")
+    if not names:
+        return []
+    docs = [_tokens(n) for n in names]
+    terms = set(_tokens(query))
+    if not terms:
+        return list(names[:top])
+    total = len(docs)
+    avg = sum(len(d) for d in docs) / total or 1.0
+    df: dict[str, int] = {}
+    for doc in docs:
+        for term in set(doc) & terms:
+            df[term] = df.get(term, 0) + 1
+
+    scored: list[tuple[float, int, str]] = []
+    for index, (name, doc) in enumerate(zip(names, docs, strict=True)):
+        score = 0.0
+        length = len(doc) or 1
+        for term in terms:
+            freq = doc.count(term)
+            if not freq:
+                continue
+            # +1 inside the log keeps idf positive for a term present in
+            # every document. A term in all N docs would otherwise score
+            # zero or negative and a name matching only that term would
+            # sort below one matching nothing.
+            idf = math.log(1 + (total - df[term] + 0.5) / (df[term] + 0.5))
+            score += idf * (
+                freq
+                * (_BM25_K1 + 1)
+                / (freq + _BM25_K1 * (1 - _BM25_B + _BM25_B * length / avg))
+            )
+        scored.append((-score, index, name))
+    scored.sort()
+    return [name for _, _, name in scored[:top]]
+
+
+def ranked_relations(
+    text: str,
+    query: str,
+    *,
+    per_type: int = 1,
+    max_types: int = 8,
+) -> str:
+    """`first_relations`, but the kept names are the query-relevant ones.
+
+    Identical output shape, so the two are directly comparable in a prompt
+    and the only variable between the arms is *which* names survive.
+    """
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return ""
+    out: list[str] = []
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names = [n for n in match.group(2).split(", ") if n]
+        if not names:
+            continue
+        kind = match.group(1).strip().rstrip(": {").strip()
+        kept = rank_names_lexically(query, names, top=per_type)
+        out.append(f"{kind}: {', '.join(kept)}")
+        if len(out) >= max_types:
+            break
+    return "; ".join(out)
+
+
+def first_relations(text: str, *, per_type: int = 1, max_types: int = 8) -> str:
+    """One neighbour per relation type, flattened onto a single line.
+
+    `per_type` names rather than all of them, because the point of the
+    lean encodings is that a *sample* of a node's neighbourhood identifies
+    it. `max_types` bounds the pathological node: PRIME's hub entities carry
+    dozens of relation types and one of them would otherwise cost more than
+    the whole rest of the prompt.
+
+    Returns `""` for a document with no relations block, which is correct
+    and not an error -- `add_rel=False` corpora have none at all.
+    """
+    if per_type <= 0:
+        raise ValueError("per_type must be positive; 0 removes the relations signal")
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return ""
+    out: list[str] = []
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names = [n for n in match.group(2).split(", ") if n]
+        if not names:
+            continue
+        kind = match.group(1).strip().rstrip(": {").strip()
+        out.append(f"{kind}: {', '.join(names[:per_type])}")
+        if len(out) >= max_types:
+            break
+    return "; ".join(out)
+
+
 _PROMPT_TEMPLATE = (
     "You are ranking candidate entities from a biomedical knowledge base "
     "against a search query. Score every candidate from 0 to 100 for how "
@@ -205,10 +420,36 @@ _PROMPT_TEMPLATE = (
     "middle for ones satisfying some, and the bottom for unrelated ones, "
     "but choose intermediate values freely rather than rounding to those "
     "bands.\n\n"
-    "Judge only from the text shown. Return one score for every candidate "
-    "id, and invent no ids.\n\n"
+    "Judge only from the text shown.\n\n"
+    "{output}\n\n"
     "Query: {query}\n\nCandidates:\n{candidates}"
 )
+
+#: What to return, per output encoding. Kept in the prompt rather than left
+#: to the JSON schema for a reason measured on 2026-08-20: with the schema
+#: reduced to a bare `list[list[int]]` and the prompt still saying "return
+#: one score for every candidate id", the model returned `{"scores": []}` --
+#: an empty array, in 1.55s with no decode at all. That scores *identically*
+#: to `hybrid`, and `run_queries` still logs `0 empty`, because retrieval
+#: order is a perfectly well-formed answer.
+#:
+#: A schema constrains shape. It does not say what to put in it, and the
+#: instruction that used to carry that meaning named `id`s the model can no
+#: longer see.
+_OUTPUT_INSTRUCTION = {
+    "pairs": (
+        "Return one [index, score] pair for EVERY candidate below, using "
+        "the bracketed index exactly as shown: [[1, 90], [2, 15], ...]. "
+        "Return as many pairs as there are candidates. Do not return an "
+        "empty list."
+    ),
+    "terse": (
+        'Return one {"i": index, "s": score} object for EVERY '
+        "candidate below, using the bracketed index exactly as shown. Do "
+        "not return an empty list."
+    ),
+    "verbose": ("Return one score for every candidate id, and invent no ids."),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,19 +481,62 @@ class RerankAgent:
     #: Score by candidate index with integer scores, rather than by node id
     #: with floats. See `TerseRelevance`.
     terse_scores: bool = False
+    #: How much of each candidate document reaches the prompt.
+    #:
+    #: - `"full"`  -- the document, subject to `relation_cap` and the
+    #:   character budget. What every arm before this one measured.
+    #: - `"title"` -- name and type only. ~37 chars per candidate against
+    #:   ~3,415, because 82% of a document's characters are node details and
+    #:   16.5% of the head is database provenance (`literatureReference`,
+    #:   `orthologousEvent`, `crossReference`) that no STaRK query asks about.
+    #: - `"title_rel"` -- name, type, and one neighbour per relation type.
+    #:
+    #: Separate from `relation_cap` and `terse_scores` for the reason those
+    #: two are separate from each other: they cut different parts of the
+    #: bill, and one combined knob could not say which moved the accuracy.
+    #: Return `[[1, 45], [2, 98]]` rather than `[{"i": 1, "s": 45}, ...]`.
+    #: Implies index addressing, so it subsumes `terse_scores` on the output
+    #: side while leaving the input-side label choice to that flag.
+    pair_scores: bool = False
+    passage_mode: str = "full"
     name: str = "rerank"
+
+    def _render_passage(self, text: str, query: str) -> str:
+        """One candidate's text, at whatever detail `passage_mode` asks for."""
+        if self.passage_mode == "title":
+            return title_of(text)
+        if self.passage_mode == "title_rel":
+            rels = first_relations(text)
+            return f"{title_of(text)} | {rels}" if rels else title_of(text)
+        if self.passage_mode == "title_rel_ranked":
+            rels = ranked_relations(text, query)
+            return f"{title_of(text)} | {rels}" if rels else title_of(text)
+        if self.passage_mode != "full":
+            # Not a warning. An unrecognised mode silently falling back to
+            # `full` would produce a correct-looking run measuring something
+            # other than what its name says.
+            raise ValueError(f"unknown passage_mode {self.passage_mode!r}")
+        return (
+            lean_document(text, query, cap=self.relation_cap)
+            if self.relation_cap
+            else text
+        )
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
         passages = await tools.search_passages(query.text, k=self.fetch, mode="hybrid")
         if not passages:
             return []
 
-        texts = [
-            lean_document(p.text, query.text, cap=self.relation_cap)
-            if self.relation_cap
-            else p.text
-            for p in passages
-        ]
+        texts = [self._render_passage(p.text, query.text) for p in passages]
+        # Every real defect in this project has been silent, and a reranker
+        # handed forty blank passages scores like a slightly-worse `hybrid`
+        # with nothing in the log. A mode that renders nothing is a bug in
+        # the mode, so say so here rather than three hours later in a report.
+        if not any(t.strip() for t in texts):
+            raise ValueError(
+                f"passage_mode={self.passage_mode!r} rendered {len(texts)} "
+                "empty passages; the reranker would be scoring blank text"
+            )
         # The label is the whole difference in prompt cost between the two
         # output modes on the *input* side: a 5-digit node id is ~3 tokens
         # and an index is 1, times `fetch` candidates.
@@ -267,8 +551,18 @@ class RerankAgent:
         )
         try:
             judged = await tools.extract(
-                _PROMPT_TEMPLATE.format(query=query.text, candidates=rendered),
-                TerseRelevances if self.terse_scores else Relevances,
+                _PROMPT_TEMPLATE.format(
+                    query=query.text,
+                    candidates=rendered,
+                    output=_OUTPUT_INSTRUCTION[
+                        "pairs"
+                        if self.pair_scores
+                        else ("terse" if self.terse_scores else "verbose")
+                    ],
+                ),
+                PairRelevances
+                if self.pair_scores
+                else (TerseRelevances if self.terse_scores else Relevances),
             )
         except Exception:
             # Logged, not swallowed quietly. A reranker whose every call
@@ -278,6 +572,16 @@ class RerankAgent:
             # separates "reranking did not help" from "reranking did not run".
             logger.warning("rerank: extract failed for query %s", query.query_id)
             judged = None
+
+        if judged is not None and not judged.scores:
+            # Not an exception: one bad response should not lose the run.
+            # But it MUST be greppable, because the fallback below is
+            # retrieval order, which scores exactly `hybrid`.
+            logger.warning(
+                "rerank: empty scores for query %s -- falling back to "
+                "retrieval order, which scores as hybrid",
+                query.query_id,
+            )
 
         retrieval_rank = {p.node_id: i for i, p in enumerate(passages)}
         # An index is validated against the range rather than trusted. The
@@ -290,7 +594,18 @@ class RerankAgent:
         scores: dict[str, float] = {}
         if judged is not None:
             for r in judged.scores:
-                if self.terse_scores:
+                if self.pair_scores:
+                    # A row that is not exactly [index, score] is dropped,
+                    # not guessed at. Guessing which element was which is
+                    # how a reranker silently scores candidates by index.
+                    if not isinstance(r, list) or len(r) != 2:
+                        continue
+                    index, raw = r
+                    if not 1 <= index <= len(passages):
+                        continue
+                    node_id = passages[index - 1].node_id
+                    score = float(max(0, min(100, raw)))
+                elif self.terse_scores:
                     if not 1 <= r.i <= len(passages):
                         continue
                     node_id = passages[r.i - 1].node_id

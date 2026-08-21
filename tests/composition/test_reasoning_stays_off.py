@@ -70,9 +70,16 @@ def llm(config, monkeypatch):
 
 
 def test_the_request_carries_enable_thinking_false(llm):
-    """The flag has to be on the wire, not merely in a default somewhere."""
+    """The flag has to be on the wire, not merely in a default somewhere.
+
+    Containment rather than equality: `extra_body` also carries
+    `cache_prompt`, and asserting the whole dict would fail whenever an
+    unrelated request option is added -- turning a guard against reasoning
+    into a guard against change. What must hold is that the thinking flag
+    is present and False, whatever else rides along.
+    """
     chat = llm._chat
-    assert chat.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert chat.extra_body["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 def test_temperature_is_zero(llm):
@@ -99,8 +106,8 @@ def test_every_config_on_disk_builds_a_non_reasoning_provider(monkeypatch):
     assert configs, "no configs found -- this test would pass vacuously"
     for path in configs:
         chat = _llm_for(load_config(path))._chat
-        assert chat.extra_body == {
-            "chat_template_kwargs": {"enable_thinking": False}
+        assert chat.extra_body["chat_template_kwargs"] == {
+            "enable_thinking": False
         }, f"{path.name} builds a reasoning provider"
         assert (
             chat.temperature == 0.0

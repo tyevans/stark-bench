@@ -723,3 +723,106 @@ and one `retrieve_chunks` separately against `qwen-rel-whole`, then re-run
 carries `query_embed_live_calls`, which must read `0` -- a non-zero value
 means the prewarm missed and the wall-clock comparison is measuring something
 else.
+
+## B-RERANK-RETRIEVAL-FLOOR-1
+
+`agents/rerank.py`, and any future work on prompt size.
+
+Measured 2026-08-20 from a raw endpoint response during `rerank40lean`:
+prefill 13,133 tok / 10.56s, decode 627 tok / 9.27s -- **19.8s of LLM
+against 28.6s observed per query**. The residual **~8.8s is retrieval**
+(hybrid = pgvector + BM25 over the 5.7M-row terms table), and nothing in
+any report shows it.
+
+Why this matters before the next lean arm: `rerank40title` cuts prefill
+from 10.6s to ~0.3s, which makes retrieval roughly two-thirds of the
+remaining query. Further prompt work has a hard floor there.
+
+Deferred because measuring it needs the database quiet, and an ingest plus
+a scoring run were in flight. Subsumes the query-embedding half of
+B-QUERY-LATENCY-SPLIT-1, which the prewarm already answered:
+`prewarmed 280 query vectors in 3 requests`.
+
+## B-RERANK-OUTPUT-ENCODING-1
+
+`agents/rerank.py:TerseRelevance`.
+
+Decode is now the larger half of the LLM cost and is 15.7 tok/candidate to
+convey one integer. Measured alternatives, from the observed 627-token
+pretty-printed response at fetch=40:
+
+| encoding | tokens | decode |
+|---|---|---|
+| pretty `{"i": 1, "s": 12}` (current) | 627 | 9.3s |
+| JSON pairs `[[1,12],...]` | 208 | 3.1s |
+| space table `1 12\n` | ~120 | ~1.8s |
+
+Not done. The space table needs a `complete(prompt) -> str` on `Toolset`
+-- neither it nor redstring's `LlmProvider` has a raw-completion method --
+and that trades away grammar-constrained decoding for ~0.6s over JSON
+pairs. Judged not worth it while retrieval sits at 8.8s
+(B-RERANK-RETRIEVAL-FLOOR-1). Revisit if that floor drops.
+
+## B-QUERY-CONCURRENCY-1
+
+`application/run_queries.py`, `--query-concurrency`.
+
+The runner can now run N queries in flight (68f8d55), and **it buys nothing
+today**: the chat peer is `-np 1`, confirmed 2026-08-20. Measured on
+`rerank40title`, 90-second windows: concurrency 1 gave 6.2s/query and
+concurrency 4 gave **6.43s** -- 3.7% *worse*, which is four clients
+queuing on one slot.
+
+Left in rather than reverted, because the client capping itself at one
+request is a defect whatever the server does, and `cli.py`'s comment
+justifying the serial loop ("nothing is given up, three of those four
+slots could never be used") was written about the embedding peer's `-np 4`
+and does not describe the chat peer.
+
+Two things to know before turning it up:
+
+- **Verify the peer, do not trust the flag.** llama-swap launches the chat
+  model with its own command line, so a `-np` edit does nothing until the
+  peer restarts through llama-swap. `/props` is not reachable through the
+  proxy path on :8080; check the peer's own port.
+- **`-np 4` may still not help.** Decode on a 27B model is plausibly
+  memory-bandwidth bound, and speculative decoding (413/428 drafts
+  accepted, the reason decode reaches 67 tok/s) degrades under batching.
+  Four slots could split the same throughput four ways. Measure before
+  claiming a speedup.
+
+Default stays 1 so no previously-recorded arm's timing moves.
+
+## B-LLM-RUN-NOISE-1
+
+**LLM arms are not reproducible run to run, and CLAUDE.md's standing claim
+that "every accuracy number in this repository is a difference between two
+runs" needs a noise floor beside it.**
+
+`rerank40title` on `gemma-4-26b-qat`, same corpus, same tenant, same split,
+`temperature=0.0`, `enable_thinking: false`, run twice within an hour:
+
+| metric | run 1 | run 2 | delta |
+|---|---|---|---|
+| mrr | 0.34100392200052737 | 0.3397480349721653 | 0.00126 |
+| hit@1 | 0.25714285714285712 | 0.25357142857142856 | 0.00357 |
+| hit@5 | 0.43928571428571428 | 0.45 | **0.01071** |
+| recall@20 | 0.46431878718686570 | 0.4720568822829851 | 0.00774 |
+
+Temperature zero does not make a batched server deterministic: with `-np 4`
+and continuous batching, a request's logits depend on which other requests
+share its batch, and floating-point addition is not associative. A handful
+of near-tied argmaxes flip and the ranking moves.
+
+**Consequences.** A difference below ~0.001 mrr between two LLM arms is
+noise. hit@5 is worse, at ~0.011 -- roughly 2.5% relative -- so it should
+not be quoted as a precise figure at all on these arms.
+
+Retrieval-only arms (`dense`, `lexical`, `hybrid`, `vss-control`) are
+unaffected: no LLM, and `vss-control` reproducing 0.23057383129905376 to
+every digit after a re-ingest remains a valid check.
+
+**Unresolved and cheap to settle:** whether `--query-concurrency 1` restores
+determinism. If it does, the cause is confirmed as batch composition and a
+reported number can be made reproducible by paying ~4x wall time for it.
+Two serial runs of the same arm would answer it.

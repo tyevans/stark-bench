@@ -18,13 +18,42 @@ if TYPE_CHECKING:
     from stark_bench.domain import Ranked, ToolCall
 
 
-def summarise_cost(calls: Sequence[ToolCall], queries: int) -> dict[str, float]:
+def summarise_cost(
+    calls: Sequence[ToolCall],
+    queries: int,
+    *,
+    wall_s: float | None = None,
+    concurrency: int = 1,
+) -> dict[str, float]:
+    """Cost per query, in two currencies that stopped agreeing.
+
+    `seconds_total` sums per-call durations. That WAS wall time, back when
+    `run_queries.run` was a serial loop and exactly one call was ever in
+    flight. Under `--query-concurrency N` the calls overlap and the sum
+    counts the same seconds up to N times -- a run taking ~480s reported
+    1933s, under a column headed `seconds`.
+
+    Both numbers are wanted and they answer different questions:
+
+    - `seconds_total` is compute consumed. It is the right figure for "what
+      did this arm cost the shared endpoint", and it stays comparable across
+      concurrencies precisely because it does not shrink when you add slots.
+    - `seconds_wall` is elapsed time. It is the right figure for "how long
+      before I have the number", and it is NOT comparable between arms run
+      at different concurrencies -- which is why `query_concurrency` is
+      recorded beside it rather than left to a reader's memory.
+
+    `wall_s` is `None` for a report written outside a timed run, where
+    inventing a value would be worse than admitting there isn't one.
+    """
     if queries == 0:
         return {
             "tool_calls_per_query": 0.0,
             "llm_calls_per_query": 0.0,
             "tokens_per_query": None,
             "seconds_total": 0.0,
+            "seconds_wall": wall_s,
+            "query_concurrency": concurrency,
         }
     llm_calls = [c for c in calls if c.tool == "extract"]
     measured = [c for c in llm_calls if c.tokens is not None]
@@ -37,6 +66,8 @@ def summarise_cost(calls: Sequence[ToolCall], queries: int) -> dict[str, float]:
             sum(c.tokens for c in measured) / queries if measured else None
         ),
         "seconds_total": sum(c.duration_s for c in calls),
+        "seconds_wall": wall_s,
+        "query_concurrency": concurrency,
     }
 
 
@@ -81,6 +112,10 @@ def write_report(
                 # config would make the file confidently name the wrong
                 # query set.
                 "split": config.effective_split,
+                # The chat model that RAN, for the same reason as `split`.
+                # `None` means the composition default, which is recorded
+                # in `cost` only if an agent actually made an LLM call.
+                "chat_model": config.effective_chat_model,
                 "queries": queries,
                 "metrics": dict(metrics),
                 "cost": dict(cost),
