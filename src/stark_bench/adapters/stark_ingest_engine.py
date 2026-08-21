@@ -508,8 +508,11 @@ async def ingest(
             source_id = SourceId(f"{dataset}:{node.node_id}")
             for piece, vector in zip(pieces, vectors, strict=True):
                 chunk_batch.append(
+                    # No `id=`: redstring derives it from (source_id, text)
+                    # since redstring PR #69 / ADR 0044. Supplying a matching one is
+                    # still accepted -- it is the event-replay path -- but a
+                    # caller computing it here is a second copy of the rule.
                     StoredChunk(
-                        id=chunk_id(source_id, piece.text),
                         tenant_id=tenant_id,
                         source_id=source_id,
                         text=piece.text,
