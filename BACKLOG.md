@@ -623,6 +623,14 @@ split `seconds_total` and `seconds_wall` now make. Deferred because it
 needs the ingest to read back its own tenant count, and the standalone
 script already answers the question for anyone who asks it.
 
+**The library half is filed as redstring B161.** `ChunkWriter.upsert_many`
+returns `None`, so the store is the only thing that knows a row collided
+and it tells nobody. If that lands returning a written-row count, our fix
+here is reading its return value instead of counting our own calls --
+which is also the only version that stays correct on the resume path,
+where the collision is against rows already stored rather than within our
+own batch.
+
 Related: B-SLIDING-REDUNDANT-1 is a DIFFERENT defect with a similar smell.
 Its redundant tail chunk has a distinct `start_char` but identical text to
 part of its predecessor -- not byte-identical to a whole chunk, so it does
