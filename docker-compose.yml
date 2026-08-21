@@ -6,6 +6,16 @@ services:
       POSTGRES_PASSWORD: stark
       POSTGRES_DB: stark
     ports: ["55432:5432"]
+    # Docker's default 64M defeats a parallel HNSW build: the workers hand
+    # tuples through shared memory and the build dies with DiskFullError
+    # naming a shm segment, on a host with 131G free.
+    #
+    # It must also exceed maintenance_work_mem, because a PARALLEL build
+    # allocates that much *shared* memory rather than backend-local -- 2G
+    # here failed against a 12G setting with the identical error, which
+    # reads as a disk problem and is not one. See
+    # scripts/build_ann_indexes.py.
+    shm_size: 16gb
     volumes: ["stark-pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U stark"]
