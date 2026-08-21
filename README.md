@@ -1,5 +1,7 @@
 # stark-bench
 
+[![ci](https://github.com/tyevans/stark-bench/actions/workflows/ci.yml/badge.svg)](https://github.com/tyevans/stark-bench/actions/workflows/ci.yml)
+
 Measures [redstring](https://github.com/tyevans/redstring) against the
 [STaRK](https://stark.stanford.edu/) retrieval benchmark, with the retrieval
 strategy as a swappable agent.
@@ -124,8 +126,18 @@ See CLAUDE.md.
 uv run pytest -q
 ```
 
-Quality gates run on commit via pre-commit. Read `CLAUDE.md` before writing
-tests -- it carries the list of ways a test here has passed while proving
-nothing, which is longer than you would like.
+Quality gates run on commit via pre-commit, and again in CI on every push
+and pull request -- so a bypassed hook cannot land silently.
+
+CI runs the suite in **random order** (no `-p no:randomly`), which is the
+cheapest check that no test depends on another having run first. It skips
+the `integration` marker, which needs Postgres, Neo4j or the stark-qa
+sidecar, and it checks out `redstring` as a sibling because it is a path
+dependency -- recording which commit of it the run tested, since this
+benchmark measures redstring and redstring's chunking has changed once
+mid-campaign.
+
+Read `CLAUDE.md` before writing tests -- it carries the list of ways a test
+here has passed while proving nothing, which is longer than you would like.
 
 Deferred work goes in `BACKLOG.md`, in the commit that passes it by.
