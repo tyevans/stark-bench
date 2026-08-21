@@ -15,6 +15,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pydantic import BaseModel
 
     from stark_bench.domain import Passage, Query, Ranked, ToolCall
@@ -33,6 +35,19 @@ class Toolset(Protocol):
 
     calls: list[ToolCall]
 
+    #: `rank_texts` exists because an agent cannot embed.
+    #:
+    #: `search_*` scores text that is IN the store. Scoring arbitrary strings
+    #: -- the neighbour names inside a candidate's own document -- has no
+    #: route through those, and an agent may not import `harness` to reach an
+    #: `EmbeddingProvider`. A missing capability on this protocol is the
+    #: sanctioned fix; an import would make the agent seam decorative.
+    #:
+    #: Returns one score per input text, in input order, higher is better.
+    #: Scores are comparable within a call and NOT across calls: the lexical
+    #: half's idf is relative to `texts`, which is the point -- rarity among
+    #: the alternatives being ranked is what makes a name informative.
+
     async def search_chunks(
         self, text: str, *, k: int = 10, mode: str = "hybrid"
     ) -> list[Ranked]: ...
@@ -42,6 +57,9 @@ class Toolset(Protocol):
     async def get_node(self, node_id: str) -> dict[str, object] | None: ...
     async def neighbors(self, node_id: str, *, depth: int = 1) -> list[str]: ...
     async def get_relationships(self, node_id: str) -> list[tuple[str, str, str]]: ...
+    async def rank_texts(
+        self, query: str, texts: Sequence[str], *, mode: str = "hybrid"
+    ) -> list[float]: ...
     async def extract[S: BaseModel](self, prompt: str, schema: type[S]) -> S: ...
 
 

@@ -156,6 +156,26 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # Doubling used to mean doubling a 13,133-token prompt. On titles it is
     # ~350 extra prefill tokens, well under a second at aggregate rates.
     # Decode roughly doubles, which is the real bill.
+    # The hybrid selector: neighbour names scored by embedding AND BM25
+    # against the query, fused by reciprocal rank, in ONE batched call
+    # across all 40 candidates. `...dense` and `...lexical` isolate the
+    # channels -- the lexical one differs from `rerank40titlerelranked`
+    # only in where idf is computed (across all candidates, not within one
+    # document), which is itself worth a number.
+    "rerank40titlerelhybrid": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_hybrid",
+    ),
+    "rerank40titlereldense": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_dense",
+    ),
     "rerank80titlerelranked": lambda config: RerankAgent(
         k=config.k,
         fetch=80,

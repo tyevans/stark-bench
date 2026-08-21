@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from stark_bench.domain import Query, Ranked
     from stark_bench.ports import Toolset
 
@@ -346,6 +347,69 @@ def rank_names_lexically(query: str, names: Sequence[str], *, top: int) -> list[
     return [name for _, _, name in scored[:top]]
 
 
+def relation_names(text: str, *, max_types: int = 8) -> list[str]:
+    """Every neighbour name this document offers, in document order.
+
+    Collected across all candidates and scored in ONE `rank_texts` call.
+    Scoring per candidate would issue forty embedding round trips per query
+    and, worse, would compute each name's idf against only its own
+    document -- where rarity says nothing, because the alternatives that
+    make a name distinctive are the OTHER candidates' names.
+    """
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return []
+    names: list[str] = []
+    lines = 0
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names += [n for n in match.group(2).split(", ") if n]
+        lines += 1
+        if lines >= max_types:
+            break
+    return names
+
+
+def relations_by_score(
+    text: str,
+    scores: Mapping[str, float],
+    *,
+    per_type: int = 1,
+    max_types: int = 8,
+) -> str:
+    """`ranked_relations`, but ordering comes from a precomputed map.
+
+    A name missing from `scores` sorts last rather than raising: the map is
+    built from `relation_names`, so a mismatch means a parsing disagreement
+    between the two, and losing one name is a better failure than losing the
+    run.
+    """
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return ""
+    out: list[str] = []
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names = [n for n in match.group(2).split(", ") if n]
+        if not names:
+            continue
+        kind = match.group(1).strip().rstrip(": {").strip()
+        # Stable: equal scores keep document order, so a channel that
+        # cannot separate these names renders what `first_relations` would.
+        ordered = sorted(
+            range(len(names)), key=lambda i: (-scores.get(names[i], -1e9), i)
+        )
+        kept = [names[i] for i in ordered[:per_type]]
+        out.append(f"{kind}: {', '.join(kept)}")
+        if len(out) >= max_types:
+            break
+    return "; ".join(out)
+
+
 def ranked_relations(
     text: str,
     query: str,
@@ -501,8 +565,27 @@ class RerankAgent:
     passage_mode: str = "full"
     name: str = "rerank"
 
-    def _render_passage(self, text: str, query: str) -> str:
+    #: Modes whose relation selection needs scores from the toolset, and
+    #: therefore one batched call before any passage can be rendered.
+    _SCORED_MODES = {
+        "title_rel_hybrid": "hybrid",
+        "title_rel_dense": "dense",
+        "title_rel_lexical": "lexical",
+    }
+
+    def _render_passage(
+        self, text: str, query: str, scores: Mapping[str, float] | None = None
+    ) -> str:
         """One candidate's text, at whatever detail `passage_mode` asks for."""
+        if self.passage_mode in self._SCORED_MODES:
+            if scores is None:
+                raise ValueError(
+                    f"passage_mode={self.passage_mode!r} needs scores from "
+                    "rank_texts; rendering without them would silently fall "
+                    "back to document order and score as the unranked arm"
+                )
+            rels = relations_by_score(text, scores)
+            return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode == "title":
             return title_of(text)
         if self.passage_mode == "title_rel":
@@ -527,7 +610,25 @@ class RerankAgent:
         if not passages:
             return []
 
-        texts = [self._render_passage(p.text, query.text) for p in passages]
+        scores: Mapping[str, float] | None = None
+        if self.passage_mode in self._SCORED_MODES:
+            # ONE call for the whole candidate set. Per-candidate calls would
+            # be forty round trips a query, and would compute idf against a
+            # single document -- where rarity is meaningless, since what
+            # makes a name distinctive is the other candidates' names.
+            names: list[str] = []
+            for passage in passages:
+                names += relation_names(passage.text)
+            unique = list(dict.fromkeys(names))
+            if unique:
+                values = await tools.rank_texts(
+                    query.text, unique, mode=self._SCORED_MODES[self.passage_mode]
+                )
+                scores = dict(zip(unique, values, strict=True))
+            else:
+                scores = {}
+
+        texts = [self._render_passage(p.text, query.text, scores) for p in passages]
         # Every real defect in this project has been silent, and a reranker
         # handed forty blank passages scores like a slightly-worse `hybrid`
         # with nothing in the log. A mode that renders nothing is a bug in
