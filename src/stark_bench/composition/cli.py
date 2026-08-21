@@ -649,7 +649,7 @@ async def _do_run(config: RunConfig) -> None:
         # Postgres connection -- an ingest may be writing to the same
         # database, and CLAUDE.md records a scoring pass costing an in-flight
         # ingest 36% of its rate by contending there.
-        await embeddings.prewarm([q.text for q in queries])
+        await embeddings.prewarm_or_log([q.text for q in queries])
 
     chunks = await PostgresChunkStore.connect(
         POSTGRES_DSN, table=_table_for(config), dimension=config.dimension

@@ -242,9 +242,72 @@ async def test_the_stats_distinguish_a_served_vector_from_a_bought_one(spy):
     await wrapper.embed_query(["z"])
 
     assert wrapper.stats() == {
+        "query_embed_prewarm_failed": 0,
         "query_embed_prewarm_texts": 3,
         "query_embed_prewarm_requests": 2,
         "query_embed_hits": 1,
         "query_embed_misses": 1,
         "query_embed_live_calls": 1,
     }
+
+
+class Broken:
+    """A provider whose endpoint is down."""
+
+    model = "broken"
+    dimension = 2
+
+    def __init__(self) -> None:
+        self.query_calls = 0
+
+    async def embed(self, texts):
+        raise ConnectionError("endpoint unreachable")
+
+    async def embed_query(self, texts):
+        self.query_calls += 1
+        raise ConnectionError("endpoint unreachable")
+
+
+async def test_prewarm_or_log_survives_an_unreachable_endpoint() -> None:
+    """Prewarming is an optimisation. A `lexical` arm is pure BM25 over
+    Postgres and never embeds -- it must not die for a capability it will
+    never use, least of all when the shared host is busy."""
+    wrapper = PrewarmedQueryEmbeddings(Broken())
+    await wrapper.prewarm_or_log(["a", "b"])
+    assert wrapper.prewarm_failed is True
+    assert wrapper.stats()["query_embed_prewarm_failed"] == 1
+
+
+async def test_prewarm_or_log_says_so_in_the_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    wrapper = PrewarmedQueryEmbeddings(Broken())
+    with caplog.at_level(logging.WARNING):
+        await wrapper.prewarm_or_log(["a"])
+    assert any("prewarm failed" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_failed_prewarm_still_lets_embed_query_raise() -> None:
+    """Nothing is faked or retried. A run that DOES need embeddings must
+    fail loudly at its first query, not silently return wrong vectors."""
+    broken = Broken()
+    wrapper = PrewarmedQueryEmbeddings(broken)
+    await wrapper.prewarm_or_log(["a"])
+    with pytest.raises(ConnectionError):
+        await wrapper.embed_query(["a"])
+
+
+async def test_the_bare_prewarm_still_propagates() -> None:
+    """`prewarm_or_log` is the tolerant entry point; `prewarm` is not, so a
+    caller that wants the failure can still have it."""
+    wrapper = PrewarmedQueryEmbeddings(Broken())
+    with pytest.raises(ConnectionError):
+        await wrapper.prewarm(["a"])
+
+
+async def test_a_successful_prewarm_reports_no_failure() -> None:
+    wrapper = PrewarmedQueryEmbeddings(SpyProvider())
+    await wrapper.prewarm_or_log(["a"])
+    assert wrapper.prewarm_failed is False
