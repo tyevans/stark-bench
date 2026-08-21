@@ -257,33 +257,6 @@ Lower value than the flag was: it needs a live Postgres to check, so it
 belongs at ingest start rather than in `resume_is_safe`, which is a pure
 file-reading script and is better for being one.
 
-## B-SIDECAR-RESOLVE-1 -- scoring resolves from PyPI on every run
-
-`adapters/stark_scorer.py:83` shells out to
-`uv run --no-project --python 3.11 --with stark-qa --with numpy<2`, which
-re-resolves 166 packages every time anything is scored. With a warm uv cache
-that is 114ms and invisible. With a cold one, or with PyPI degraded, it is a
-hard failure *after* all retrieval has been paid for.
-
-That is not hypothetical: on 2026-08-19 `redstring-native/deep` finished 280
-queries in 46 minutes of shared GPU and then died on
-
-    502 Bad Gateway ... anthropic-0.124.0-py3-none-any.whl.metadata
-
-`anthropic` is a transitive dependency of `stark-qa` that this sidecar never
-imports, so the run was lost to a package it does not use.
-
-`write_predictions` (this commit) stops the loss being total -- retrieval now
-lands on disk before anything scores it, and `scripts/rescore.py` finishes the
-job later. The resolve itself is still a network dependency in the middle of
-every run.
-
-What to do: build the 3.11 environment once, into a checked-in path
-(`uv venv --python 3.11 .sidecar-venv` plus `uv pip install`), and invoke that
-interpreter directly instead of `uv run --with`. Then a scoring run touches no
-network at all. Do not simply add `--offline`: it makes the *first* run on any
-machine fail instead, which trades a rare failure for a certain one.
-
 ## B-EMBED-COLDSTART-1 — one embedding timeout kills a two-hour ingest
 
 `src/stark_bench/adapters/stark_ingest_engine.py:251` gathers a wave of embed

@@ -11,3 +11,6 @@ wheels/
 data/
 results/
 logs/
+
+# Prebuilt scoring sidecar environment; see scripts/build_sidecar_env.sh
+.sidecar-venv/
