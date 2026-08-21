@@ -26,7 +26,7 @@ from hashlib import blake2b
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
-from uuid import uuid5
+from uuid import UUID, uuid5
 
 from redstring import TenantId
 from redstring.chunks.adapters.postgres import PostgresChunkStore
@@ -607,6 +607,43 @@ async def _do_ingest(
     return replace(outcome, complete=True).as_dict()
 
 
+class EmptyCorpusError(RuntimeError):
+    """The arm's tenant holds no chunks, so every query would retrieve nothing."""
+
+
+async def _require_a_corpus(config: RunConfig, tenant_id: TenantId) -> None:
+    """Refuse to score against an empty store.
+
+    Every real defect in this project has been silent, and this is the
+    shape two of them took. A per-model chunk-table rename orphaned
+    `vss-control`'s corpus: all 280 queries retrieved nothing, `runner.run`
+    logged zero failures because retrieval SUCCEEDED and returned empty, and
+    the only symptom was a `ValueError: min() arg is an empty sequence` from
+    inside a 3.11 subprocess. Separately, a `docker compose down`-shaped
+    event took 589,790 chunks with it (B-EPHEMERAL-STORES-1); the next run
+    failed with `ConnectionRefusedError`, which reads as "the container is
+    down" rather than "the corpus is gone".
+
+    The worse case is the one this catches: a store that is UP and EMPTY.
+    That fails nowhere -- the arms would score low-but-plausible numbers and
+    be read as a bad retriever.
+
+    `ensure_schema` runs before this and creates the table if absent, so a
+    missing table and an empty one are the same thing here. Both mean the
+    same thing to the caller.
+    """
+    index = PostgresChunkIdIndex(POSTGRES_DSN, _table_for(config))
+    count = await index.count_for_tenant(UUID(str(tenant_id)))
+    if count:
+        return
+    raise EmptyCorpusError(
+        f"{config.name!r} has no chunks: table {_table_for(config)!r}, "
+        f"tenant {tenant_id}. Every query would retrieve nothing and the "
+        f"arm would score as a bad retriever rather than as an empty store. "
+        f"Ingest it first: --config config/{config.name}.yaml --ingest"
+    )
+
+
 async def _do_run(config: RunConfig) -> None:
     if config.embeddings != "precomputed-ada002" and config.embeddings not in (
         LIVE_EMBEDDINGS
@@ -657,6 +694,7 @@ async def _do_run(config: RunConfig) -> None:
     graph = Neo4jGraphStore.connect(NEO4J_URI, auth=NEO4J_AUTH)
     await chunks.ensure_schema()
     await graph.ensure_schema()
+    await _require_a_corpus(config, tenant_id)
     try:
         tools = toolset_for(
             chunks=chunks,
