@@ -826,3 +826,36 @@ every digit after a re-ingest remains a valid check.
 determinism. If it does, the cause is confirmed as batch composition and a
 reported number can be made reproducible by paying ~4x wall time for it.
 Two serial runs of the same arm would answer it.
+
+## B-RERANK-SCORES-DISCARDED-1
+
+`agents/rerank.py:860` -- `_Ranked(node_id=p.node_id, score=1.0 / (1 + rank))`.
+
+The reranker returns a reciprocal-rank placeholder, so **the model's actual
+judgements never reach disk**. `write_predictions` persists the placeholder,
+and every prediction file therefore shows twenty distinct scores with no
+ties, whatever the model did.
+
+Found by measuring quantisation from the prediction files and getting
+"20.0 distinct scores, largest tie group 5%" for three arms that should
+differ -- a result contradicted by the one raw response we have, where 5
+appeared nine times and 8 six times across 40 candidates.
+
+**What this costs.** Every question about the model's scoring behaviour
+needs a fresh run and a packet capture: how hard it quantises, whether the
+matrix arm's dimensions are actually orthogonal (`matrix_degenerate_rows`
+is logged per query but not persisted), whether scores are calibrated, how
+often a gold answer was scored highly but still lost. These are cheap
+questions about data we already paid for and threw away.
+
+**Why the placeholder is not simply wrong.** It guarantees a strict total
+order downstream, and the sidecar sorts by score -- writing raw scores would
+make tied candidates order arbitrarily inside the evaluator, changing
+results for a reason unrelated to retrieval.
+
+So the fix is to persist the judgements ALONGSIDE, not to change `score`.
+That needs a diagnostics channel from agent to harness, which does not
+exist: `ToolCall` carries cost and nothing carries per-query observations.
+Deferred for that reason -- it is a real design addition, not a one-line
+change, and inventing the channel casually is how the agent seam stops
+being a seam.
