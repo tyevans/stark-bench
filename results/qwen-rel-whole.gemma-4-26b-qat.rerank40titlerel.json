@@ -21,7 +21,8 @@
     "query_embed_prewarm_requests": 3,
     "query_embed_hits": 280,
     "query_embed_misses": 0,
-    "query_embed_live_calls": 0
+    "query_embed_live_calls": 0,
+    "redstring_release": "pre-8de0cb2"
   },
   "ingest": {
     "nodes": 129375,

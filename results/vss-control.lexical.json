@@ -22,7 +22,8 @@
     "ann_index_definition": null,
     "ann_index_scans_cumulative": null,
     "hnsw_ef_search": "800",
-    "retrieval_is_exact": true
+    "retrieval_is_exact": true,
+    "redstring_release": "pre-8de0cb2"
   },
   "ingest": {
     "nodes": 129375,

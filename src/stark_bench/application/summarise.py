@@ -248,6 +248,30 @@ def _chat_context(cost: dict) -> str:
     return f"{n_ctx // 1024}k"
 
 
+def _source(cost: dict) -> str:
+    """The redstring commit a number was measured on, short, or its era.
+
+    A chunker fix changes what a corpus holds while leaving the chunker's
+    configured name identical -- redstring PR #72 moved `sliding-1000-500`
+    without renaming it -- so neither `config_verbatim` nor the ingest
+    report can distinguish two corpora built by different code. The commit
+    can.
+
+    `pre-<sha>` marks a report stamped by
+    `scripts/annotate_pre_release_results.py`: measured before that merge,
+    on an exact commit that is no longer recoverable. A trailing `*` means
+    the checkout had uncommitted changes under `src/`, which makes the hash
+    a lie about what ran.
+    """
+    era = cost.get("redstring_release")
+    if isinstance(era, str):
+        return era
+    commit = cost.get("redstring_commit")
+    if not isinstance(commit, str):
+        return "--"
+    return commit[:7] + ("*" if cost.get("redstring_src_dirty") else "")
+
+
 def render(rows: Iterable[Row]) -> str:
     """One markdown document, one section per dataset."""
     rows = list(rows)
@@ -283,8 +307,8 @@ def render(rows: Iterable[Row]) -> str:
             "| config | agent | embed model | chat model | ctx | chunker "
             "| chunks/node | mrr | hit@1 "
             "| hit@5 | recall@20 | llm calls/query | tokens/query "
-            "| gpu seconds | wall seconds | conc | cut off | retrieval |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| gpu seconds | wall seconds | conc | cut off | retrieval | src |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in sorted(
             section, key=lambda r: (-r.metrics.get("mrr", 0.0), r.config, r.agent)
@@ -301,7 +325,7 @@ def render(rows: Iterable[Row]) -> str:
                 f"| {_fmt(row.cost.get('seconds_wall'), 1)} "
                 f"| {_fmt(row.cost.get('query_concurrency'))} "
                 f"| {_fmt(row.cost.get('exhausted_queries'))} "
-                f"| {_retrieval(row.cost)} |"
+                f"| {_retrieval(row.cost)} | {_source(row.cost)} |"
             )
         out.append("")
     return "\n".join(out)

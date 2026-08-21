@@ -2,6 +2,47 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-SLIDING-CORPORA-PREDATE-THE-FIX-1 -- live sliding-window tenants hold chunks no current code would produce
+
+redstring PR #72 (merged into `main` as `8de0cb2`) fixed
+`SlidingWindowChunker`'s redundant tail -- the defect this project reported
+as its second redstring finding. Two changes: a break point landing at or
+before the previous chunk's end now falls back to the hard boundary, and
+the loop stops once a chunk reaches the end of the text instead of emitting
+one final wholly-contained window.
+
+**Four configs name `sliding-1000-500`** -- `qwen-rel-sliding1k`,
+`qwen-mini-sliding1k`, `qwen-sliding1k`, `native-sliding1k` -- and the
+first two are live, `qwen-rel-sliding1k` at 549,697 rows. Every one of
+those chunks was written by the pre-fix chunker. Nothing in the database or
+in any report records which chunker version produced a row.
+
+So: **existing sliding-window numbers are not comparable to numbers taken
+after any re-ingest of those tenants.** They are still valid as measured;
+they simply describe a corpus the current library would not rebuild. That
+includes this campaign's best retrieval-only figures, `qwen-rel-sliding1k`
+hybrid at 0.34675 and dense at 0.25319, and today's finding that chunking
+costs the lean rerank arm 0.063 mrr.
+
+This is the second time chunking has changed mid-campaign. PR #64 was the
+first, and `CLAUDE.md` carries the diff command that was run at the qwen
+re-ingest to prove comparability across it. **That check has no equivalent
+here**, because there is no second checkout to diff against -- the old
+behaviour exists only in rows already written.
+
+Closing it means re-ingesting the sliding tenants under the fixed chunker
+and re-scoring, which is roughly 90 minutes of endpoint time for
+`qwen-rel-sliding1k` alone plus the re-scores. Worth doing before any
+sliding-window number is published, and NOT worth doing to chase a
+comparison already made.
+
+The general gap this exposes: `retrieval` and `ctx` columns were added to
+`RESULTS.md` so an invisible basis could not hide, and **the chunker
+version is a basis with no column at all**. An ingest report records the
+chunker's *name* (`sliding-1000-500`), which is exactly the identifier that
+stayed constant while the behaviour changed underneath it -- the same shape
+as a chat model whose id says `64k` at every `-np`.
+
 ## B-DEEP-NEVER-FAIRLY-TESTED-1 -- the agentic arm's numbers are about 2026-08-19, not about agentic retrieval
 
 `deep` scored 0.1851 (`native-wholedoc`) and 0.2015 (`native-sliding1k`),

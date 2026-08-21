@@ -28,7 +28,8 @@
     "ann_index_definition": "CREATE INDEX kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_mini_boundary ON public.kg_chunks_qwen3_embedding_0_6b_1e22db42 USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64') WHERE (tenant_id = '0a91f134-a43e-5030-abb3-e8875a167be9'::uuid)",
     "ann_index_scans_cumulative": 560,
     "hnsw_ef_search": "800",
-    "retrieval_is_exact": false
+    "retrieval_is_exact": false,
+    "redstring_release": "pre-8de0cb2"
   },
   "ingest": {
     "nodes": 10000,

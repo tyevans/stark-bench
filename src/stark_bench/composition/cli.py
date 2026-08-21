@@ -17,14 +17,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from time import perf_counter
 import itertools
 import json
 import logging
+from dataclasses import replace
 from functools import partial
 from hashlib import blake2b
-from dataclasses import replace
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid5
 
@@ -38,29 +38,29 @@ from redstring.graph.adapters.neo4j import Neo4jGraphStore
 from redstring.llm.adapters.langchain import NO_THINKING, LangChainLlmProvider
 from redstring.llm.adapters.langchain_embedding import LangChainEmbeddingProvider
 
-from stark_bench.composition.agent_registry import AGENTS, build_agent
+from stark_bench.adapters.chunkers import WholeDocumentChunker
 from stark_bench.adapters.config_file import load_config
-from stark_bench.adapters.postgres_embedding_cache import PostgresEmbeddingCache
-from stark_bench.domain.run_config import RunConfig
-from stark_bench.adapters.prewarmed_query_embeddings import (
-    PrewarmedQueryEmbeddings,
-)
-from stark_bench.adapters.precomputed_embeddings import (
-    PrecomputedEmbeddingProvider,
-    node_vector_lookup,
-)
 from stark_bench.adapters.model_preflight import (
     chat_context_window,
     require_chat_model,
 )
+from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
+from stark_bench.adapters.postgres_embedding_cache import PostgresEmbeddingCache
 from stark_bench.adapters.postgres_retrieval_stats import retrieval_stats
+from stark_bench.adapters.precomputed_embeddings import (
+    PrecomputedEmbeddingProvider,
+    node_vector_lookup,
+)
+from stark_bench.adapters.prewarmed_query_embeddings import (
+    PrewarmedQueryEmbeddings,
+)
+from stark_bench.adapters.redstring_toolset import RedstringToolset
 from stark_bench.adapters.report_file import (
     summarise_cost,
     write_predictions,
     write_report,
 )
-from stark_bench.application.run_queries import run
-from stark_bench.adapters.stark_scorer import score_predictions
+from stark_bench.adapters.source_provenance import source_provenance
 from stark_bench.adapters.stark_artifacts import (
     read_doc_embeddings,
     read_edges,
@@ -68,13 +68,14 @@ from stark_bench.adapters.stark_artifacts import (
     read_queries,
     read_query_embeddings,
 )
-from stark_bench.adapters.chunkers import WholeDocumentChunker
-from stark_bench.domain.stark_ids import NAMESPACE_STARK
-from stark_bench.application.ingest_corpus import ingest_corpus
-from stark_bench.application.summarise import summarise
 from stark_bench.adapters.stark_ingest_engine import ingest
-from stark_bench.adapters.postgres_chunk_index import PostgresChunkIdIndex
-from stark_bench.adapters.redstring_toolset import RedstringToolset
+from stark_bench.adapters.stark_scorer import score_predictions
+from stark_bench.application.ingest_corpus import ingest_corpus
+from stark_bench.application.run_queries import run
+from stark_bench.application.summarise import summarise
+from stark_bench.composition.agent_registry import AGENTS, build_agent
+from stark_bench.domain.run_config import RunConfig
+from stark_bench.domain.stark_ids import NAMESPACE_STARK
 
 if TYPE_CHECKING:
     from redstring import EmbeddingProvider, LlmProvider
@@ -678,7 +679,10 @@ async def _do_ingest(
         if embedding_cache is not None:
             await embedding_cache.close()
 
-    return replace(outcome, complete=True).as_dict()
+    # Provenance matters MORE here than on a run: an ingest decides what
+    # text a tenant holds, and a chunker fix changes that while leaving
+    # the chunker's configured name identical.
+    return {**replace(outcome, complete=True).as_dict(), **source_provenance()}
 
 
 class EmptyCorpusError(RuntimeError):
@@ -849,6 +853,12 @@ async def _do_run(config: RunConfig) -> None:
         # single total could not distinguish. See `_AgentWarnings`.
         cost["agent_warnings_degraded"] = warnings.degraded
         cost["agent_warnings_diagnostic"] = warnings.diagnostics
+        # Which code produced this number, in both repositories. The
+        # chunker's NAME is stable across behaviour changes -- redstring
+        # PR #72 moved what `sliding-1000-500` emits without renaming it
+        # -- so a commit is the only identifier that cannot drift from
+        # what it names. See `source_provenance`.
+        cost.update(source_provenance())
         # The per-slot context the chat peer accepted, probed rather
         # than inferred from the model id -- see `chat_context_window`.
         # Recorded on every run, including retrieval-only ones where it
@@ -869,7 +879,7 @@ async def _do_run(config: RunConfig) -> None:
         ingest=_ingest_stats(config),
         queries=len(queries),
     )
-    print(metrics)  # noqa: T201
+    print(metrics)
 
     # After the report, not instead of it: a degraded run's data is still
     # worth keeping and re-running it costs half an hour. But the process
@@ -1031,7 +1041,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.summarise is not None:
-        print(summarise(args.summarise))  # noqa: T201
+        print(summarise(args.summarise))
         return
 
     if args.config is None:
@@ -1093,7 +1103,7 @@ def main() -> None:
         )
         RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
         ingest_report_path(config).write_text(json.dumps(report, indent=2))
-        print(report)  # noqa: T201
+        print(report)
 
     if args.run:
         asyncio.run(_do_run(config))
