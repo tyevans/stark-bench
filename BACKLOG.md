@@ -271,8 +271,9 @@ Two things make this worth an entry rather than a note:
 **The engine's re-split does not catch it.** `MAX_RESPLIT_ATTEMPTS` fires only
 when `_is_oversize(error)` matches -- an input longer than the context. A
 proxy timeout and a 502 are not oversize errors, so they propagate and kill
-the ingest. The re-split was built for B-TOKEN-CAP-1 and correctly does not
-guess at transport failures, but the result is that the one obvious safety net
+the ingest. The re-split was built to survive an oversize chunk (see CLAUDE.md,
+"A chunk the server rejects is re-split") and correctly does not guess at
+transport failures, but the result is that the one obvious safety net
 does not cover the failure mode most likely to be hit on a large-document
 corpus. A bounded retry on 502/timeout, halving the batch, would.
 
@@ -324,8 +325,8 @@ characters against the corpus mean of 1,761. The rate was a healthy 2.37M
 chars/min throughout; only the unit was wrong.
 
 An ETA that climbs while the run is healthy trains its reader to ignore it,
-and this one nearly caused a second false hang diagnosis in the same session
-as B-EDGE-PROGRESS-1. The fix is to accumulate `sum(len(text))` alongside the
+and this one nearly caused a second false hang diagnosis in the same
+session as the silent edge phase, since fixed. The fix is to accumulate `sum(len(text))` alongside the
 chunk counter and extrapolate against the corpus's total characters -- one
 extra pass over `nodes.jsonl` at startup, the same place `_count_lines`
 already reads it.
