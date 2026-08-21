@@ -39,7 +39,7 @@ def _report(root, **fields) -> None:
 
 
 def test_an_identical_config_allows_resume(root):
-    _report(root, nodes=129375, config_verbatim=CONFIG)
+    _report(root, nodes=129375, config_verbatim=CONFIG, complete=True)
     assert resume_is_safe("arm", root) is True
 
 
@@ -119,3 +119,42 @@ async def test_the_ingest_report_actually_records_the_field():
         "the ingest report must carry the config that produced it, "
         "or resume_is_safe has nothing to compare against"
     )
+
+
+def test_an_unfinished_run_refuses_even_with_an_identical_config(root):
+    """B-RESUME-COMPLETE-1. The config matching says the CHUNKER did not
+    change; it says nothing about whether the run that wrote the report ever
+    reached the end.
+
+    Observed 2026-08-19: a tenant held 7,754 chunks from a run killed hours
+    earlier, against ~129,375 nodes, with an older complete report beside
+    it. Harmless while the chunker is unchanged -- ids are content-addressed
+    and a rerun converges -- and a silent mixture of two chunkings the
+    moment it is not."""
+    _report(root, nodes=129375, config_verbatim=CONFIG, complete=False)
+    assert resume_is_safe("arm", root) is False
+
+
+def test_a_report_predating_the_complete_field_refuses(root):
+    """Defaulting `complete` to True would make every old report claim
+    something it never recorded -- the same argument the module docstring
+    makes about `config_verbatim`.
+
+    Named for the field it covers rather than "the field", because a test
+    above already claims that name for `config_verbatim` and the duplicate
+    silently shadowed it: the older test stopped running, and only ruff's
+    F811 said so."""
+    _report(root, nodes=129375, config_verbatim=CONFIG)
+    assert resume_is_safe("arm", root) is False
+
+
+def test_completeness_is_checked_after_the_config_not_instead_of_it(root):
+    """A complete report for a DIFFERENT chunker must still refuse: the new
+    check must narrow the guard, never widen it."""
+    _report(
+        root,
+        nodes=129375,
+        config_verbatim="name: arm\nchunker: sliding-1000-500\n",
+        complete=True,
+    )
+    assert resume_is_safe("arm", root) is False

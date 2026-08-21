@@ -55,6 +55,11 @@ PROGRESS_EVERY_SECONDS = 30.0
 #: Both spellings are listed because llama.cpp emits the `type` field and
 #: OpenAI-compatible servers vary in the prose; matching either is cheap and
 #: matching neither means a real error propagates, which is the safe default.
+#: How often the edge phase reports. The node phase reports every
+#: `PROGRESS_EVERY` nodes; edges are counted in millions, so this is a
+#: clock rather than a count.
+EDGE_REPORT_SECONDS = 30.0
+
 _OVERSIZE_MARKERS = ("exceed_context_size_error", "larger than the max context size")
 
 #: How many times a group may be re-chunked at half the size before giving up.
@@ -268,7 +273,7 @@ async def ingest(
         logger.info(
             "ingest %s: %s/%s nodes%s, %s chunks (%s skipped), "
             "%.0f chunks/s, %.0f nodes/s, %.0fm elapsed%s",
-            "done" if final else "progress",
+            "nodes done" if final else "progress",
             f"{node_count:,}",
             f"{total_nodes:,}" if total_nodes else "?",
             pct,
@@ -551,6 +556,8 @@ async def ingest(
 
     dropped = 0
     edge_count = 0
+    edges_started_at = time.monotonic()
+    last_edge_report = edges_started_at
     rels: list[Relationship] = []
     for edge in edges:
         if edge.source == edge.target:
@@ -572,8 +579,35 @@ async def ingest(
         if len(rels) >= BATCH:
             await graph.upsert_relationships(rels)
             rels = []
+            # PRIME is 8,100,498 relationships and ~28 minutes. Before this
+            # the phase logged NOTHING, after a line reading "ingest done"
+            # -- and on 2026-08-19 that combination produced a confident
+            # wrong diagnosis of a hang. Every signal checked at the time
+            # (flat chunk count, unchanged client CPU, a `/slots` snapshot)
+            # was a misread of a healthy run. A snapshot cannot distinguish
+            # stalled from busy; only a window can, and this is the window.
+            now = time.monotonic()
+            if now - last_edge_report >= EDGE_REPORT_SECONDS:
+                last_edge_report = now
+                elapsed = now - edges_started_at
+                logger.info(
+                    "edge progress: %s relationships, %.0f/s, %.0fm elapsed",
+                    f"{edge_count:,}",
+                    edge_count / elapsed if elapsed > 0 else 0.0,
+                    elapsed / 60,
+                )
     if rels:
         await graph.upsert_relationships(rels)
+    if edge_count or dropped:
+        elapsed = time.monotonic() - edges_started_at
+        logger.info(
+            "edges done: %s relationships (%s self-loops dropped), "
+            "%.0f/s, %.0fm elapsed",
+            f"{edge_count:,}",
+            f"{dropped:,}",
+            edge_count / elapsed if elapsed > 0 else 0.0,
+            elapsed / 60,
+        )
 
     return IngestReport(
         nodes=node_count,

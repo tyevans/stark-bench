@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from stark_bench.domain import Query, Ranked
     from stark_bench.ports import Toolset
 
@@ -148,6 +149,55 @@ class Relevance(BaseModel):
 
 class Relevances(BaseModel):
     scores: list[Relevance]
+
+
+#: The dimensions a matrix-scoring run asks for, in the order they appear
+#: in each row. Chosen to be plausibly ORTHOGONAL over PRIME's queries,
+#: which are explicitly conjunctive -- "a drug that targets X and is
+#: indicated for Y". A single holistic score forces that judgement into one
+#: number; these ask for it in parts.
+#:
+#: Whether they are orthogonal in practice is measured, not assumed:
+#: `matrix_degenerate_rows` counts rows where every dimension agrees, and a
+#: run where that is high has tripled its decode bill for nothing.
+_SCORE_DIMENSIONS: tuple[tuple[str, str], ...] = (
+    (
+        "type",
+        "is this the KIND of entity the query asks for (a drug, a gene, a "
+        "disease, a pathway)",
+    ),
+    (
+        "conditions",
+        "how many of the query's stated conditions does it satisfy",
+    ),
+    (
+        "specificity",
+        "is it the specific entity asked for rather than a broader or "
+        "neighbouring one",
+    ),
+)
+
+
+class MatrixRelevances(BaseModel):
+    """One row per candidate: `[index, d1, d2, d3]`, averaged into a score.
+
+    Beyond decomposing the judgement, this addresses a measurable defect in
+    the single-score encoding. Scores are integers and the model quantises
+    hard onto a few of them -- one observed response used 5 nine times, 8
+    six times and 10 six times across 40 candidates. Ties break on retrieval
+    order, so those stretches are hybrid's ranking passed through: 10% of
+    queries carry a run of >=10 candidates ordered that way.
+
+    Three dimensions give 3x the resolution before any tie, without asking
+    the model for a precision it does not have on one axis.
+    """
+
+    scores: list[list[int]] = Field(
+        description=(
+            "One row per candidate: [index, type, conditions, specificity], "
+            "index starting at 1, each score 0-100"
+        )
+    )
 
 
 _RELATIONS_MARKER = "- relations:"
@@ -346,6 +396,69 @@ def rank_names_lexically(query: str, names: Sequence[str], *, top: int) -> list[
     return [name for _, _, name in scored[:top]]
 
 
+def relation_names(text: str, *, max_types: int = 8) -> list[str]:
+    """Every neighbour name this document offers, in document order.
+
+    Collected across all candidates and scored in ONE `rank_texts` call.
+    Scoring per candidate would issue forty embedding round trips per query
+    and, worse, would compute each name's idf against only its own
+    document -- where rarity says nothing, because the alternatives that
+    make a name distinctive are the OTHER candidates' names.
+    """
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return []
+    names: list[str] = []
+    lines = 0
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names += [n for n in match.group(2).split(", ") if n]
+        lines += 1
+        if lines >= max_types:
+            break
+    return names
+
+
+def relations_by_score(
+    text: str,
+    scores: Mapping[str, float],
+    *,
+    per_type: int = 1,
+    max_types: int = 8,
+) -> str:
+    """`ranked_relations`, but ordering comes from a precomputed map.
+
+    A name missing from `scores` sorts last rather than raising: the map is
+    built from `relation_names`, so a mismatch means a parsing disagreement
+    between the two, and losing one name is a better failure than losing the
+    run.
+    """
+    marker = text.find(_RELATIONS_MARKER)
+    if marker < 0:
+        return ""
+    out: list[str] = []
+    for line in text[marker:].splitlines()[1:]:
+        match = _RELATION_LINE.match(line)
+        if match is None:
+            continue
+        names = [n for n in match.group(2).split(", ") if n]
+        if not names:
+            continue
+        kind = match.group(1).strip().rstrip(": {").strip()
+        # Stable: equal scores keep document order, so a channel that
+        # cannot separate these names renders what `first_relations` would.
+        ordered = sorted(
+            range(len(names)), key=lambda i: (-scores.get(names[i], -1e9), i)
+        )
+        kept = [names[i] for i in ordered[:per_type]]
+        out.append(f"{kind}: {', '.join(kept)}")
+        if len(out) >= max_types:
+            break
+    return "; ".join(out)
+
+
 def ranked_relations(
     text: str,
     query: str,
@@ -436,7 +549,20 @@ _PROMPT_TEMPLATE = (
 #: A schema constrains shape. It does not say what to put in it, and the
 #: instruction that used to carry that meaning named `id`s the model can no
 #: longer see.
+_MATRIX_INSTRUCTION = (
+    "Return one row for EVERY candidate below: "
+    "[index, {names}], using the bracketed index exactly as shown, "
+    "each score 0-100. The three scores are SEPARATE judgements and should "
+    "often differ from each other -- {described}. "
+    "Return as many rows as there are candidates. Do not return an empty "
+    "list."
+).format(
+    names=", ".join(name for name, _ in _SCORE_DIMENSIONS),
+    described="; ".join(f"{name}: {how}" for name, how in _SCORE_DIMENSIONS),
+)
+
 _OUTPUT_INSTRUCTION = {
+    "matrix": _MATRIX_INSTRUCTION,
     "pairs": (
         "Return one [index, score] pair for EVERY candidate below, using "
         "the bracketed index exactly as shown: [[1, 90], [2, 15], ...]. "
@@ -498,18 +624,69 @@ class RerankAgent:
     #: Implies index addressing, so it subsumes `terse_scores` on the output
     #: side while leaving the input-side label choice to that flag.
     pair_scores: bool = False
+    #: Ask for one score per dimension and average them. See
+    #: `MatrixRelevances`. Wins over `pair_scores` when both are set,
+    #: because it is the strictly richer encoding.
+    matrix_scores: bool = False
+    #: Neighbour names kept per relation type, and relation types shown.
+    #:
+    #: Never varied before 2026-08-20 and worth varying now: FINDINGS 1b
+    #: measured selection as worth +0.083 mrr at `per_type=1`, which says
+    #: nothing about whether one name is the right budget. Two names might
+    #: gain more, or might reintroduce the noise that made the unranked arm
+    #: score BELOW titles-only -- a second name is by definition a worse
+    #: match than the first.
+    #:
+    #: `max_types` bounds the pathological node: PRIME hubs carry dozens of
+    #: relation types and one candidate would otherwise cost more than the
+    #: rest of the prompt together.
+    relation_per_type: int = 1
+    relation_max_types: int = 8
     passage_mode: str = "full"
     name: str = "rerank"
 
-    def _render_passage(self, text: str, query: str) -> str:
+    #: Modes whose relation selection needs scores from the toolset, and
+    #: therefore one batched call before any passage can be rendered.
+    _SCORED_MODES = {
+        "title_rel_hybrid": "hybrid",
+        "title_rel_dense": "dense",
+        "title_rel_lexical": "lexical",
+    }
+
+    def _render_passage(
+        self, text: str, query: str, scores: Mapping[str, float] | None = None
+    ) -> str:
         """One candidate's text, at whatever detail `passage_mode` asks for."""
+        if self.passage_mode in self._SCORED_MODES:
+            if scores is None:
+                raise ValueError(
+                    f"passage_mode={self.passage_mode!r} needs scores from "
+                    "rank_texts; rendering without them would silently fall "
+                    "back to document order and score as the unranked arm"
+                )
+            rels = relations_by_score(
+                text,
+                scores,
+                per_type=self.relation_per_type,
+                max_types=self.relation_max_types,
+            )
+            return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode == "title":
             return title_of(text)
         if self.passage_mode == "title_rel":
-            rels = first_relations(text)
+            rels = first_relations(
+                text,
+                per_type=self.relation_per_type,
+                max_types=self.relation_max_types,
+            )
             return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode == "title_rel_ranked":
-            rels = ranked_relations(text, query)
+            rels = ranked_relations(
+                text,
+                query,
+                per_type=self.relation_per_type,
+                max_types=self.relation_max_types,
+            )
             return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode != "full":
             # Not a warning. An unrecognised mode silently falling back to
@@ -527,7 +704,25 @@ class RerankAgent:
         if not passages:
             return []
 
-        texts = [self._render_passage(p.text, query.text) for p in passages]
+        scores: Mapping[str, float] | None = None
+        if self.passage_mode in self._SCORED_MODES:
+            # ONE call for the whole candidate set. Per-candidate calls would
+            # be forty round trips a query, and would compute idf against a
+            # single document -- where rarity is meaningless, since what
+            # makes a name distinctive is the other candidates' names.
+            names: list[str] = []
+            for passage in passages:
+                names += relation_names(passage.text, max_types=self.relation_max_types)
+            unique = list(dict.fromkeys(names))
+            if unique:
+                values = await tools.rank_texts(
+                    query.text, unique, mode=self._SCORED_MODES[self.passage_mode]
+                )
+                scores = dict(zip(unique, values, strict=True))
+            else:
+                scores = {}
+
+        texts = [self._render_passage(p.text, query.text, scores) for p in passages]
         # Every real defect in this project has been silent, and a reranker
         # handed forty blank passages scores like a slightly-worse `hybrid`
         # with nothing in the log. A mode that renders nothing is a bug in
@@ -555,12 +750,16 @@ class RerankAgent:
                     query=query.text,
                     candidates=rendered,
                     output=_OUTPUT_INSTRUCTION[
-                        "pairs"
+                        "matrix"
+                        if self.matrix_scores
+                        else "pairs"
                         if self.pair_scores
                         else ("terse" if self.terse_scores else "verbose")
                     ],
                 ),
-                PairRelevances
+                MatrixRelevances
+                if self.matrix_scores
+                else PairRelevances
                 if self.pair_scores
                 else (TerseRelevances if self.terse_scores else Relevances),
             )
@@ -592,9 +791,26 @@ class RerankAgent:
         # exactly as invented node ids are, leaving that candidate unscored
         # rather than mis-scored.
         scores: dict[str, float] = {}
+        degenerate = 0
         if judged is not None:
             for r in judged.scores:
-                if self.pair_scores:
+                if self.matrix_scores:
+                    width = 1 + len(_SCORE_DIMENSIONS)
+                    if not isinstance(r, list) or len(r) != width:
+                        continue
+                    index, *dims = r
+                    if not 1 <= index <= len(passages):
+                        continue
+                    node_id = passages[index - 1].node_id
+                    clamped = [max(0, min(100, d)) for d in dims]
+                    # A row whose dimensions all agree carried no more
+                    # information than a single score would have, at three
+                    # times the decode. Counted so a run can say whether the
+                    # dimensions were orthogonal in practice.
+                    if len(set(clamped)) == 1:
+                        degenerate += 1
+                    score = sum(clamped) / len(clamped)
+                elif self.pair_scores:
                     # A row that is not exactly [index, score] is dropped,
                     # not guessed at. Guessing which element was which is
                     # how a reranker silently scores candidates by index.
@@ -615,6 +831,21 @@ class RerankAgent:
                     if node_id not in retrieval_rank:
                         continue
                 scores.setdefault(node_id, score)
+
+        if self.matrix_scores and judged is not None and judged.scores:
+            share = degenerate / len(judged.scores)
+            if share > 0.5:
+                # Not fatal, and deliberately not silent. The whole premise
+                # of this encoding is that the dimensions are orthogonal; a
+                # run where they mostly agree paid 3x the decode for one
+                # number and its result should be read as such.
+                logger.warning(
+                    "rerank: %.0f%% of rows for query %s scored every "
+                    "dimension identically -- the dimensions are not "
+                    "behaving orthogonally",
+                    100 * share,
+                    query.query_id,
+                )
 
         # Unscored candidates sort below every scored one, in retrieval
         # order. `-1.0` rather than `0.0`: a candidate the model actively

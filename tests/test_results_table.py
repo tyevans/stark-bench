@@ -180,3 +180,31 @@ def test_a_resumed_ingest_renders_the_corpus_granularity(table):
     rendered = table.render(table.load())
     assert "1.057" in rendered, rendered
     assert "0.381" not in rendered, rendered
+
+
+def test_predictions_files_are_not_rendered_as_arms(table):
+    """`<config>.<agent>.predictions.json` is raw rankings, not a report.
+
+    It has no `metrics`, so it rendered as an arm named
+    `<config>.<agent> | predictions` with every cell `--` -- exactly the
+    "looks like a broken run" shape `--check` exists to flag. The checker
+    was emitting the defect it was written to catch.
+    """
+    results = table.RESULTS
+    (results / "arm.dense.json").write_text(
+        json.dumps(
+            {
+                "metrics": {"mrr": 0.5},
+                "cost": {},
+                "ingest": {"nodes": 1, "chunks": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (results / "arm.dense.predictions.json").write_text(
+        json.dumps({"1": {"9": 1.0}}), encoding="utf-8"
+    )
+    (results / "arm.ingest.json").write_text(json.dumps({"nodes": 1}), encoding="utf-8")
+
+    agents = [row["agent"] for row in table.load()]
+    assert agents == ["dense"], f"expected only the report, got {agents}"

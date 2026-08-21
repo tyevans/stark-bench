@@ -64,10 +64,15 @@ def test_the_run_actually_prewarms():
     prewarms = [
         call
         for call in _calls(_do_run_tree())
-        if isinstance(call.func, ast.Attribute) and call.func.attr == "prewarm"
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "prewarm_or_log"
     ]
 
-    assert prewarms, "_do_run must call prewarm() before running the agent"
+    assert prewarms, (
+        "_do_run must call prewarm_or_log() before running the agent. The "
+        "TOLERANT entry point specifically: the bare `prewarm` propagates, "
+        "and a lexical arm -- pure BM25 over Postgres, never embedding -- "
+        "would die for a capability it will never use."
+    )
 
 
 def test_prewarming_happens_before_the_stores_are_opened():
@@ -80,7 +85,7 @@ def test_prewarming_happens_before_the_stores_are_opened():
     prewarm_line = min(
         call.lineno
         for call in _calls(tree)
-        if isinstance(call.func, ast.Attribute) and call.func.attr == "prewarm"
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "prewarm_or_log"
     )
     connect_line = min(
         call.lineno

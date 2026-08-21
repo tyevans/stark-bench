@@ -2,51 +2,24 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
-## B-SUMMARISE-1: `--summarise` is not implemented
-
-Task 14 step 4 of the plan
-(`docs/superpowers/plans/2026-08-18-stark-benchmark-harness.md`) ends with:
-
-```
-uv run python -m stark_bench.composition.cli --summarise results/ > RESULTS.md
-```
-
-`src/stark_bench/composition/cli.py` has no `--summarise` flag. The four
-per-architecture report files now exist (`{config}.{agent}.json`), so the
-input to it is in place and the work left is the reading side: load every
-`*.json` under a directory that is not `*.ingest.json`, and emit one row per
-file with `metrics` and `cost` side by side. Cost belongs in the same table as
-accuracy, per the plan -- a number without its cost beside it is not
-actionable.
-
-## B-BUDGET-REPORT-1: budget exhaustion is not in the report
-
-`PerQueryDeepAgent.exhausted_queries` (`src/stark_bench/harness/agents.py`)
-counts how many queries ended at the cap, and nothing reads it.
-`_do_run` in `cli.py` calls `summarise_cost(tools.calls, ...)`, which counts
-calls but cannot distinguish "the agent decided it was finished" from "the
-agent was cut off". Those are different findings: a deep run where 90% of
-queries hit the cap is a run whose accuracy number is about
-`MAX_TOOL_CALLS`, not about the architecture.
-
-The fix is small and was left out to keep the wiring commit narrow: thread
-the agent back out of `run(...)` (or read it off the built agent, which
-`_do_run` still holds) and pass `exhausted_queries` into `write_report`.
-`write_report` takes a fixed keyword set, so it needs one more parameter --
-that is the only reason this is not a one-liner.
-
 ## B-BUDGET-CAPS-1: the per-query budget caps are constants, not config
 
 `MAX_TOOL_CALLS`, `MAX_LLM_CALLS` and `MAX_SECONDS` in
-`src/stark_bench/harness/agents.py` are module constants (8/8/60s). They are
-the single biggest lever on what a `deep` number means, and they are not in
-`RunConfig`, so they are not in `config_verbatim` either -- a deep result
-file does not record the budget it was run under. Changing them changes every
-past number's comparability with no trace in the artefacts.
+`src/stark_bench/composition/agent_registry.py` are module constants
+(8/8/60s). They are the single biggest lever on what a `deep` number means
+and they are not in `RunConfig`, so they are not in `config_verbatim`.
 
-`chat_model` was added to `RunConfig` in the same commit and these were not,
-because the caps have never been tuned and a config field nobody sets is its
-own kind of noise. The moment anyone changes one, they belong in the config.
+**Narrowed 2026-08-20, not closed.** The reports now record the caps that
+actually ran, read off the agent (`budget_max_tool_calls` and friends in
+`cost`), alongside `exhausted_queries`. That closes the half that mattered
+most: a cut-off count without its cap beside it is half a fact, and the
+artefacts carried the numerator only.
+
+What remains is that the caps cannot be SET per config -- only observed.
+Still deliberate: a config field nobody sets is its own kind of noise, and
+the caps have never been tuned. The moment anyone wants two `deep` arms at
+different budgets in one sweep, they belong in `RunConfig`, and the
+recording added today is what will make those two arms readable.
 
 ## B-DEEP-EDGES-1: `deep` against an edgeless corpus measures nothing useful
 
@@ -72,33 +45,6 @@ Two things to check when it runs, neither of which the ingest itself will
 tell you: that `self_loops_dropped` is non-zero (STaRK's PRIME has them, so
 a zero is more likely a loader that stopped looking than a clean corpus),
 and that `edges` matches the line count of `edges.jsonl` minus those drops.
-
-## B-ADA002-TABLE-1: the `vss-control` corpus is orphaned in the pre-rename `kg_chunks` table
-
-`_table_for` in `src/stark_bench/composition/cli.py` derives a per-embedding-model
-chunk table (`kg_chunks_precomputed_ada002` for `vss-control`). It landed in
-e6411e3 (17:14). The `vss-control` ingest ran at 17:05 and the dense run at
-17:08, both against the hardcoded `kg_chunks` of the time -- so
-`results/vss-control.dense.json` (mrr 0.23057) was measured against a table
-the harness no longer reads.
-
-Today: `kg_chunks` holds 129,375 rows for tenant
-`9ef286ae-92c2-5655-8d1a-47a9ff4d0892`, which is exactly
-`_tenant_for(vss-control)`. `kg_chunks_precomputed_ada002` holds **zero** rows;
-`ensure_schema` creates it empty on every run. Every one of the 280 queries
-therefore retrieves nothing, in *all three* retrieval modes -- this is not a
-hybrid-vs-dense difference, and any future `vss-control` number is a data
-finding until the corpus is back.
-
-Two ways out, both a decision rather than a fix:
-
-- rename the data across (`kg_chunks` also holds 200 rows for a second tenant,
-  `5a7ba3cf-...`, and there is a companion `kg_chunks_terms`), or
-- re-ingest `vss-control`, which is cheap because its embeddings are
-  precomputed -- no endpoint time.
-
-Until then `results/vss-control.dense.json` is not comparable with anything
-produced after e6411e3 and should not be quoted beside a post-rename number.
 
 ## B-SLIDING-REDUNDANT-1 — SlidingWindowChunker emits one fully-redundant tail chunk
 
@@ -174,66 +120,6 @@ reproduce in direction, not bit-for-bit). That catches a model swap, a
 quantisation change, and a pooling-flag change, none of which any name
 comparison can see.
 
-## B-CORESIDENCE-1 — RESOLVED: both models are resident together
-
-**Resolved 2026-08-19.** The embedding endpoint now runs concurrently with
-the chat model — confirmed operationally, not inferred — so there is no
-swapping and the LLM arms are runnable. The analysis below is kept because
-it is why the endpoint is configured the way it is, and because the
-prediction it makes about the fix held.
-
-Two things downstream of this were wrong while it was open and have been
-corrected: `composition/cli.py` carried a comment claiming one model is
-resident at a time, and run queues were ordering `rerank` last to avoid a
-thrash that cannot happen. Neither is true.
-
-The 36.9s cold-start latencies seen during ingest are a *first load* after
-the model has been evicted for idleness, not swap churn between models.
-
-### Original entry
-
-`zero_shot` and `deep` cannot run against the current endpoint. Both search
-with text the LLM produced moments earlier -- `zero_shot` rewrites the query
-(`agents/zero_shot.py:42-51`) and `deep` searches on `step.argument` chosen
-per round (`agents/deep.py:101,127`) -- so the embedding model has to answer
-*during* the agent loop, interleaved with chat completions.
-
-Nemotron-3-Embed-1B does not fit in VRAM beside `qwen3.8-27b-mtp`, so
-llama-swap unloads one to serve the other. `deep` is budgeted at 8 LLM calls
-and 8 tool calls per query, which is up to 16 alternating swaps per query,
-280 queries, three configs. That is not a slow run, it is a non-starter.
-
-The obvious workaround does not work, and it is worth writing down so nobody
-spends an afternoon on it: precomputing the 280 query vectors while the
-embedder is loaded and serving them from `PrecomputedEmbeddingProvider`
-covers `dense` and `hybrid` exactly, and covers neither LLM agent at all,
-because neither one ever embeds the original query text.
-
-**Resolved in approach, not yet run.** The embedding model is not what
-fills the VRAM -- it is ~700MB at Q4_K_M. The KV cache is: 32 slots at 4096
-tokens each. Dropping the embedding server to `-np 1` with a 4096-token
-context shrinks that cache by 32x and both models fit, with no swapping, no
-weaker chat model, and no loss of comparability against the `dense` and
-`hybrid` arms.
-
-It costs nothing for this workload, which is the part worth noticing: the
-agent loop embeds one short query at a time and waits for it, so 31 of the
-32 slots were never going to be used during an LLM run. High concurrency is
-an *ingest* setting. The two phases want opposite server configurations, and
-the plan is now to run them as two phases:
-
-  - ingest and the `dense`/`hybrid` scoring at `-np 32`, embeddings alone;
-  - the `zero_shot`/`deep` scoring at `-np 1`, both models resident.
-
-Rejected, and worth recording so they are not retried: precomputing the 280
-query vectors covers neither LLM agent, because neither embeds the original
-query text; a smaller chat model would have made "deep beat dense" mean
-something different from what it says; and accepting the swap cost on a
-reduced subset would have produced a number comparable to nothing else here.
-
-Nothing here is blocked on it: the control plus three arms times
-`dense`/`hybrid` is seven of the numbers, and none of them make an LLM call.
-
 ## B-EMBED-RETRY-1 — a transient 503 from the embedding server kills a whole ingest
 
 `src/stark_bench/skb/ingest.py` makes embedding calls through redstring's
@@ -265,68 +151,6 @@ What to do:
   `EmbeddingProviderError`, so a caller *can* distinguish these — it just
   has to parse the message, which argues for a status code on the error
   rather than a retry loop in this repo.
-
-## B-RESUME-COMPLETE-1 — nothing records that an ingest *finished*
-
-`scripts/resume_is_safe.py` compares the recorded config to the config on
-disk, byte for byte, and refuses on any difference. What it cannot see is
-whether the run that wrote that report ever completed.
-
-`IngestOutcome` has no `complete` field, and the report is written once at
-the end -- so a killed run leaves either no report at all (resume refused,
-correct) or the report of some *earlier* run (resume permitted against a
-corpus that earlier run did not finish).
-
-Observed 2026-08-19: tenant `c507d57b` (`native-sliding1k`) holds 7,754
-chunks from a run killed hours earlier, against ~129,375 nodes.
-
-This is currently harmless and the reason is worth writing down, because it
-is what makes the fix low priority rather than urgent. Nothing in this
-codebase deletes chunk rows, and chunk ids are content-addressed over
-`(source, text)`, so a later run with the *same* config upserts over the
-partial rows and converges on the right corpus. The hazard is only a
-partial corpus plus a *changed* chunker: then the old ids are not rewritten,
-stay live, and answer queries alongside the new ones.
-
-That is the same silent-mixture failure `resume_is_safe.py` exists to
-prevent -- it just arrives by a route the guard does not check.
-
-What to do: add `complete: bool` to `IngestOutcome`, write the report once
-before the load with `complete=False` and again after with `complete=True`,
-and have `resume_is_safe` require it. Writing it twice is the point; a
-single write at the end cannot distinguish "did not finish" from "never
-started".
-
-Also worth a count assertion: the report records `nodes`, so a resumed run
-can compare the chunk rows actually present for its tenant against what the
-report claims and refuse on a mismatch.
-
-## B-SIDECAR-RESOLVE-1 -- scoring resolves from PyPI on every run
-
-`adapters/stark_scorer.py:83` shells out to
-`uv run --no-project --python 3.11 --with stark-qa --with numpy<2`, which
-re-resolves 166 packages every time anything is scored. With a warm uv cache
-that is 114ms and invisible. With a cold one, or with PyPI degraded, it is a
-hard failure *after* all retrieval has been paid for.
-
-That is not hypothetical: on 2026-08-19 `redstring-native/deep` finished 280
-queries in 46 minutes of shared GPU and then died on
-
-    502 Bad Gateway ... anthropic-0.124.0-py3-none-any.whl.metadata
-
-`anthropic` is a transitive dependency of `stark-qa` that this sidecar never
-imports, so the run was lost to a package it does not use.
-
-`write_predictions` (this commit) stops the loss being total -- retrieval now
-lands on disk before anything scores it, and `scripts/rescore.py` finishes the
-job later. The resolve itself is still a network dependency in the middle of
-every run.
-
-What to do: build the 3.11 environment once, into a checked-in path
-(`uv venv --python 3.11 .sidecar-venv` plus `uv pip install`), and invoke that
-interpreter directly instead of `uv run --with`. Then a scoring run touches no
-network at all. Do not simply add `--offline`: it makes the *first* run on any
-machine fail instead, which trades a rare failure for a certain one.
 
 ## B-EMBED-COLDSTART-1 — one embedding timeout kills a two-hour ingest
 
@@ -376,35 +200,6 @@ Ingest is resumable (`loaded N existing chunk ids for tenant`), so the cost of
 a crash is the wave in flight, not the run. That is what makes this a backlog
 item and not a blocker.
 
-## B-EPHEMERAL-STORES-1 — the stores had no volumes, and an ingest was lost
-
-`docker-compose.yml` declared no `volumes:` for either service, so Postgres
-and Neo4j wrote to anonymous volumes that are destroyed with their container.
-A `docker compose down`-shaped event at 2026-08-19T22:08:51Z removed both
-containers and the `stark-bench_default` network, taking 589,790 embedded
-chunks across four tenants with them.
-
-Fixed here by adding named volumes (`stark-pgdata`, `stark-neo4jdata`). What
-is still open is the detection gap, which is the part that cost time:
-
-- **Nothing announced the loss.** The next run failed with
-  `ConnectionRefusedError` on 55432, which reads as "the container is down",
-  not as "the corpus is gone". Those need different responses and looked
-  identical.
-- **A surviving container with an empty store would have been worse.** The
-  connection error at least failed loudly; had the stack been restarted first,
-  the queue's ingest gate would have passed on a fresh empty corpus and the
-  arms would have scored low-but-plausible numbers. That is the same silent
-  degradation shape as the stale model id and the three-valued rerank scores.
-
-So the fix worth adding is a preflight that asserts the configured tenant's
-chunk count is non-zero (or that ingest is being asked for), rather than
-letting an empty store look like a bad retriever.
-
-Note what did NOT need recovering: `results/*.json` and the persisted
-predictions are files in the repo, so every scored number survived intact.
-Keep expensive-to-recompute artifacts out of the containers.
-
 ## B-NOMIC-CONFOUND-1 — nomic vs Nemotron varies two things at once
 
 `nomic-wholedoc` was built to isolate the embedding model against
@@ -434,64 +229,6 @@ What is NOT confounded, and is the reason the MAG run exists: PRIME against
 MAG, both on nomic at `capped-whole-2400`. That comparison holds the model
 and the chunker fixed and varies only the corpus.
 
-## B-TOKEN-CAP-1 — RESOLVED by catch-and-re-split
-
-**Resolved 2026-08-20.** The cap is no longer required to be right. When the
-provider rejects a text for length, `stark_ingest_engine` re-chunks that
-group at half the size and retries, up to `MAX_RESPLIT_ATTEMPTS`. A correct
-cap costs nothing, because the path only runs on rejection.
-
-Option 1 from the original entry (cap by tokens with nomic's vocabulary) was
-NOT taken, and the reason is worth keeping: it needs a `tokenizers`
-dependency and a downloaded vocabulary, and it would put a *second* estimate
-of the model's tokenization next to the server's real one. `all-MiniLM-L6-v2`
-is in the local HF cache and shares BERT WordPiece, so it was available as a
-stand-in -- and using it would have been the same "close enough" reasoning
-that produced the three wrong caps. The server's own 400 is the only oracle
-that cannot disagree with the server.
-
-`/tokenize` was probed first and is not routed by llama-swap; only the
-`/v1/*` surface is reachable.
-
-Still worth doing eventually: the cap now sits at 2400 characters, which is
-67% of the ceiling at the measured worst ratio, so every document pays a
-granularity cost for a tail of a few hundred. Token-exact chunking would
-recover that. It is an optimisation now rather than a correctness fix.
-
-### Original entry
-
-`CHUNKERS["capped-whole-2400"]` exists because nomic-embed-text rejects
-anything over 2048 tokens and the chunker measures characters. The conversion
-is an estimate, and it was wrong three times running: 5000 chars (from 4.0
-chars/token, measured on chat prompts through a different tokenizer), then
-4000 (from 2.4, the ratio the first failure implied), then 2400 (from 1.754,
-measured over the 250 densest of 607,292 documents).
-
-Each estimate was defensible and each was too high, because the worst case
-lives in a tail that sampling keeps missing. 2400 has a large enough margin
-to survive ratios down to 1.17 chars/token, which is why it is expected to
-hold -- but it is still a guess with a bigger cushion, not a fix.
-
-Two real fixes, either of which ends it:
-
-1. **Cap by tokens.** Load nomic's WordPiece vocabulary with `tokenizers`
-   and split on token count. Exact, and it lets the cap sit near 2048 rather
-   than at 67% of it, which recovers the chunks/node the margin costs.
-2. **Catch and split.** The server returns a specific, machine-readable 400
-   (`exceed_context_size_error`, with `n_prompt_tokens`). Catching it and
-   re-splitting just that chunk makes any cap safe.
-
-(1) is better: it keeps failures out of the hot path and makes chunks/node
-predictable. (2) is a smaller change and would also have saved the three
-ingests lost to this.
-
-Cost of not doing it: each wrong cap costs a full re-ingest, ~30 min for
-PRIME at 218 chunks/s and ~1h for MAG.
-
-Note the cap also widens B-NOMIC-CONFOUND-1: nomic now runs at 2400
-characters against Nemotron's 5000, so the two arms differ more in chunking
-than the original swap intended.
-
 ## B-QWEN-UNCAPPED-1: qwen's whole-document arm is capped for a reason that is not qwen's
 
 `config/qwen-wholedoc.yaml` runs `capped-whole-2400`. qwen3-embedding-0.6b
@@ -512,41 +249,6 @@ the chunking sweep asks and would extend it to a fourth point at 1.00
 chunks/node. Deferred because the four arms already queued are ~6h of
 endpoint time on a single-slot server and this one adds a fifth without
 answering anything the sweep does not already ask.
-
-## B-EDGE-PROGRESS-1: the edge phase reports nothing, after announcing it is done
-
-`ingest_corpus` in `src/stark_bench/adapters/stark_ingest_engine.py` calls
-`_report(final=True)` at line 465 -- which logs `ingest done: 129,375/129,375
-nodes (100%) ... 72m elapsed` -- and only *then* enters the edge loop at line
-471, which has no logging of any kind until the process exits.
-
-On PRIME that is 8,100,498 relationships and, measured, **~33 minutes of
-total silence following a line that says the ingest is done**. The node loop
-already has `_report`; this phase needs the equivalent.
-
-Cost of not having it, paid on 2026-08-19: the qwen-wholedoc ingest was
-diagnosed as hung. The reasoning looked sound at every step -- the log had
-stopped, chunk count was flat over 30s, client CPU time was unchanged over
-20s, and a `/slots` snapshot showed `is_processing: true` with
-`n_prompt_tokens_processed: 0`. Every one of those was a misread of a healthy
-run: chunks commit in `CHUNK_BATCH` steps, an I/O-bound client accrues under
-a second of CPU in 20s, and `processed: 0` is what a slot reports the instant
-it picks up a task. What actually settled it was `id_task` climbing ~13/s
-across three `/slots` samples, and a 3-minute Postgres window showing +5,010
-chunks. **A snapshot cannot distinguish stalled from busy; only a window
-can.**
-
-Two things would each have prevented the detour, and both are worth doing:
-
-  - log progress inside the edge loop, at the same cadence as nodes;
-  - do not print `ingest done` until the ingest is done. Either move
-    `_report(final=True)` after the edge loop, or word the node-phase line as
-    the phase it actually ends.
-
-The second matters more than the first. A message that says the work is
-finished, ~33 minutes before it is, is not a missing feature -- it is the log
-actively asserting something false, and it is the reason the run nearly got
-killed.
 
 ## B-PROXY-LIMITS-1: the embedding batch ceiling is the proxy's, not the model's
 
@@ -569,8 +271,9 @@ Two things make this worth an entry rather than a note:
 **The engine's re-split does not catch it.** `MAX_RESPLIT_ATTEMPTS` fires only
 when `_is_oversize(error)` matches -- an input longer than the context. A
 proxy timeout and a 502 are not oversize errors, so they propagate and kill
-the ingest. The re-split was built for B-TOKEN-CAP-1 and correctly does not
-guess at transport failures, but the result is that the one obvious safety net
+the ingest. The re-split was built to survive an oversize chunk (see CLAUDE.md,
+"A chunk the server rejects is re-split") and correctly does not guess at
+transport failures, but the result is that the one obvious safety net
 does not cover the failure mode most likely to be hit on a large-document
 corpus. A bounded retry on 502/timeout, halving the batch, would.
 
@@ -622,8 +325,8 @@ characters against the corpus mean of 1,761. The rate was a healthy 2.37M
 chars/min throughout; only the unit was wrong.
 
 An ETA that climbs while the run is healthy trains its reader to ignore it,
-and this one nearly caused a second false hang diagnosis in the same session
-as B-EDGE-PROGRESS-1. The fix is to accumulate `sum(len(text))` alongside the
+and this one nearly caused a second false hang diagnosis in the same
+session as the silent edge phase, since fixed. The fix is to accumulate `sum(len(text))` alongside the
 chunk counter and extrapolate against the corpus's total characters -- one
 extra pass over `nodes.jsonl` at startup, the same place `_count_lines`
 already reads it.
@@ -700,48 +403,71 @@ Not filed as a defect -- nothing is wrong -- but the cost model this project
 has been reasoning with ("chars/min is a constant") is wrong, and it produced
 two ETAs today that were out by 3x in opposite directions.
 
-## B-QUERY-LATENCY-SPLIT-1 -- how much of a query's 0.28s was the embed?
+## B-QUERY-LATENCY-SPLIT-1 — ANSWERED: dense 0.281s, lexical 0.575s
 
-`PrewarmedQueryEmbeddings` removes one HTTP round-trip per query, and the
-round-trip was demonstrably there: `run_queries.run:47` is a serial loop and
-`ChunkRetriever.retrieve_chunks` embedded inside it. What is **not** measured
-is how the 0.28s/query `dense` was paying divides between that round-trip and
-the pgvector search it precedes (`k*4` = 80 chunks overfetched, then folded).
+"How much of a query's 0.28s was the embed?" -- answered from the reports
+rather than by instrumenting anything, since `seconds_total` on a
+retrieval-only arm IS the retrieval time.
 
-If pgvector is the larger half, this change buys less than it looks like it
-should, and the next lever is the index or the overfetch -- not the endpoint.
+| arm | per query | what it contains |
+|---|---|---|
+| `dense` | 0.281s | one query embed + pgvector search |
+| `lexical` | 0.575s | BM25 over the 5.7M-row terms table, no embed |
+| `hybrid` | 0.890s | both, and 0.575 + 0.281 = 0.856 |
 
-Deliberately not measured when written: the `qwen-rel-sliding1k` ingest was
-running, and both halves of the probe contend with it. CLAUDE.md records a
-scoring pass costing an in-flight ingest 36% of its rate by touching
-Postgres, so a number taken now would be wrong in the direction that flatters
-the change.
+Two things worth keeping:
 
-The measurement, once the stores are quiet: time `embed_query` for one query
-and one `retrieve_chunks` separately against `qwen-rel-whole`, then re-run
-`dense` and compare wall time against the recorded 78.66s. The report now
-carries `query_embed_live_calls`, which must read `0` -- a non-zero value
-means the prewarm missed and the wall-clock comparison is measuring something
-else.
+- **Lexical is twice dense.** BM25 over that terms table costs more than a
+  vector search plus an embedding round trip. The intuition that the
+  network call dominates is wrong here.
+- **The channels are additive**, so `hybrid` is not sharing work between
+  them. Whether it could is a separate question nobody has asked.
 
-## B-RERANK-RETRIEVAL-FLOOR-1
+The embed's own share is now smaller than the 0.281s suggests: those
+figures predate `PrewarmedQueryEmbeddings`, which batches all 280 query
+embeddings into 3 requests before the run and reports
+`query_embed_live_calls: 0`. A dense arm re-run today would be nearly all
+pgvector. That re-run needs the endpoint and has not happened.
 
-`agents/rerank.py`, and any future work on prompt size.
+## B-RERANK-RETRIEVAL-FLOOR-1 — CORRECTED: retrieval is ~0.9s, not ~8.8s
 
-Measured 2026-08-20 from a raw endpoint response during `rerank40lean`:
-prefill 13,133 tok / 10.56s, decode 627 tok / 9.27s -- **19.8s of LLM
-against 28.6s observed per query**. The residual **~8.8s is retrieval**
-(hybrid = pgvector + BM25 over the 5.7M-row terms table), and nothing in
-any report shows it.
+**The original claim in this entry was wrong and is worth keeping as an
+example of how.** It said: prefill 13,133 tok / 10.56s plus decode 627 tok
+/ 9.27s is 19.8s of LLM against 28.6s observed per query, so "~8.8s is
+retrieval".
 
-Why this matters before the next lean arm: `rerank40title` cuts prefill
-from 10.6s to ~0.3s, which makes retrieval roughly two-thirds of the
-remaining query. Further prompt work has a hard floor there.
+Measured directly from the reports' own `seconds_total`, which is the sum
+of tool-call durations and for a retrieval-only arm is exactly retrieval:
 
-Deferred because measuring it needs the database quiet, and an ingest plus
-a scoring run were in flight. Subsumes the query-embedding half of
-B-QUERY-LATENCY-SPLIT-1, which the prewarm already answered:
-`prewarmed 280 query vectors in 3 requests`.
+| arm | retrieval, per query |
+|---|---|
+| `dense` (pgvector + query embed) | 0.281s |
+| `lexical` (BM25 over the 5.7M-row terms table) | 0.575s |
+| **`hybrid` (what the reranker fetches with)** | **0.890s** |
+
+Almost exactly additive: 0.575 + 0.281 = 0.856 against 0.890 measured. The
+reranker fetches 40 rather than 20, so its retrieval is somewhat more than
+0.890s -- and nowhere near 8.8s.
+
+### The mistake
+
+A residual was computed by subtracting ONE sampled query's LLM time from
+the AVERAGE per-query wall time. Those are not the same population.
+Candidate documents on this corpus run from 357 to 133,778 characters, so
+prompt size varies enormously between queries; the sampled response had
+13,133 prompt tokens and was cheaper than the mean. The residual absorbed
+that difference and got attributed to retrieval.
+
+This is the mistake CLAUDE.md already records under "two rates from two
+different windows are not comparable", in a new costume. **Sample both
+sides of a subtraction from the same population, or do not subtract.**
+
+### What still stands
+
+Retrieval IS now a meaningful share: at `rerank40title`'s 1.70s/query with
+concurrency 4, roughly 0.9-1.4s of retrieval per query is most of it. The
+conclusion "further prompt work has a floor at retrieval" survives -- it was
+right for the wrong reason, and the floor is lower than claimed.
 
 ## B-RERANK-OUTPUT-ENCODING-1
 
@@ -763,35 +489,36 @@ and that trades away grammar-constrained decoding for ~0.6s over JSON
 pairs. Judged not worth it while retrieval sits at 8.8s
 (B-RERANK-RETRIEVAL-FLOOR-1). Revisit if that floor drops.
 
-## B-QUERY-CONCURRENCY-1
+## B-QUERY-CONCURRENCY-1 — RESOLVED: 2.02x once the slots were real
 
-`application/run_queries.py`, `--query-concurrency`.
+`--query-concurrency` (68f8d55) runs N queries in flight. This entry
+originally recorded that it **bought nothing**, measured at 6.2s/query
+serial against 6.43s at concurrency 4 -- 3.7% *worse*, four clients queuing
+on one slot.
 
-The runner can now run N queries in flight (68f8d55), and **it buys nothing
-today**: the chat peer is `-np 1`, confirmed 2026-08-20. Measured on
-`rerank40title`, 90-second windows: concurrency 1 gave 6.2s/query and
-concurrency 4 gave **6.43s** -- 3.7% *worse*, which is four clients
-queuing on one slot.
+That was true and is no longer. The chat peer moved to `-np 4` and the same
+knob, measured in 90-second windows on `rerank40title`:
 
-Left in rather than reverted, because the client capping itself at one
-request is a defect whatever the server does, and `cli.py`'s comment
-justifying the serial loop ("nothing is given up, three of those four
-slots could never be used") was written about the embedding peer's `-np 4`
-and does not describe the chat peer.
+| | s/query |
+|---|---|
+| serial (gemma, `-np 4` server) | ~4.5 |
+| `--query-concurrency 4` | **2.22** |
 
-Two things to know before turning it up:
+**2.02x, not 4x.** Sublinear, as expected when four decodes share memory
+bandwidth -- and exactly the measurement this entry insisted on taking
+before anyone claimed a speedup.
 
-- **Verify the peer, do not trust the flag.** llama-swap launches the chat
-  model with its own command line, so a `-np` edit does nothing until the
-  peer restarts through llama-swap. `/props` is not reachable through the
-  proxy path on :8080; check the peer's own port.
-- **`-np 4` may still not help.** Decode on a 27B model is plausibly
-  memory-bandwidth bound, and speculative decoding (413/428 drafts
-  accepted, the reason decode reaches 67 tok/s) degrades under batching.
-  Four slots could split the same throughput four ways. Measure before
-  claiming a speedup.
+Both traps it warned about were real:
 
-Default stays 1 so no previously-recorded arm's timing moves.
+- **The flag you edited may not be the one running.** The first attempt was
+  against a peer still at `-np 1`; `/props` is not reachable through the
+  llama-swap proxy on :8080, so it took the operator checking the peer
+  directly to establish it.
+- **`-np 4` might not have helped anyway.** It did here, but only 2x, and
+  the entry's reasoning about bandwidth-bound decode is what the shortfall
+  looks like.
+
+Default stays 1, so no previously-recorded arm's timing moves.
 
 ## B-LLM-RUN-NOISE-1
 
@@ -826,3 +553,77 @@ every digit after a re-ingest remains a valid check.
 determinism. If it does, the cause is confirmed as batch composition and a
 reported number can be made reproducible by paying ~4x wall time for it.
 Two serial runs of the same arm would answer it.
+
+## B-RERANK-SCORES-DISCARDED-1
+
+`agents/rerank.py:860` -- `_Ranked(node_id=p.node_id, score=1.0 / (1 + rank))`.
+
+The reranker returns a reciprocal-rank placeholder, so **the model's actual
+judgements never reach disk**. `write_predictions` persists the placeholder,
+and every prediction file therefore shows twenty distinct scores with no
+ties, whatever the model did.
+
+Found by measuring quantisation from the prediction files and getting
+"20.0 distinct scores, largest tie group 5%" for three arms that should
+differ -- a result contradicted by the one raw response we have, where 5
+appeared nine times and 8 six times across 40 candidates.
+
+**What this costs.** Every question about the model's scoring behaviour
+needs a fresh run and a packet capture: how hard it quantises, whether the
+matrix arm's dimensions are actually orthogonal (`matrix_degenerate_rows`
+is logged per query but not persisted), whether scores are calibrated, how
+often a gold answer was scored highly but still lost. These are cheap
+questions about data we already paid for and threw away.
+
+**Why the placeholder is not simply wrong.** It guarantees a strict total
+order downstream, and the sidecar sorts by score -- writing raw scores would
+make tied candidates order arbitrarily inside the evaluator, changing
+results for a reason unrelated to retrieval.
+
+So the fix is to persist the judgements ALONGSIDE, not to change `score`.
+That needs a diagnostics channel from agent to harness, which does not
+exist: `ToolCall` carries cost and nothing carries per-query observations.
+Deferred for that reason -- it is a real design addition, not a one-line
+change, and inventing the channel casually is how the agent seam stops
+being a seam.
+
+## B-CHUNK-COUNT-OVERSTATED-1 — reported chunks count writes, not rows
+
+`scripts/verify_corpus.py` compares each ingest report's `chunks + skipped`
+against `count(*)` for the arm's tenant. Every whole-document and
+boundary arm agrees exactly. Both sliding-window arms do not:
+
+| arm | claimed | actual | gap |
+|---|---|---|---|
+| `qwen-rel-sliding1k` | 549,886 | 549,697 | **189** |
+| `qwen-mini-sliding1k` | 24,284 | 24,274 | 10 |
+
+**Mechanism, reproduced exactly.** `stark_ingest_engine.py:507` builds
+`id=chunk_id(source_id, piece.text)` -- source and TEXT, with no
+`start_char`. A sliding window over repetitive text produces windows whose
+text is byte-identical, those share an id, and the upsert merges them.
+
+Re-chunking `prime-rel` offline: 38,964 documents over 1000 characters
+produce 459,475 chunks, of which **189 collapse across 78 documents** --
+the observed gap, to the unit.
+
+**The dedup is right; the reporting is wrong.** Two identical chunk texts
+embed to the same vector and `aggregation: max` takes the best, so a second
+copy adds nothing to retrieval and costs a row. Adding `start_char` to the
+id would "fix" the count by storing redundant duplicates, which is worse.
+
+So the defect is that `chunks` counts writes ATTEMPTED and is reported as
+if it counted rows. `chunks/node` for `qwen-rel-sliding1k` is 4.250 as
+reported and 4.249 in fact -- immaterial here, and only immaterial because
+the collision rate is 0.034%. A chunker that produced many duplicates would
+lose a lot of them silently, and nothing would say so.
+
+Fix: report rows actually present alongside writes attempted, the same
+split `seconds_total` and `seconds_wall` now make. Deferred because it
+needs the ingest to read back its own tenant count, and the standalone
+script already answers the question for anyone who asks it.
+
+Related: B-SLIDING-REDUNDANT-1 is a DIFFERENT defect with a similar smell.
+Its redundant tail chunk has a distinct `start_char` but identical text to
+part of its predecessor -- not byte-identical to a whole chunk, so it does
+NOT collide, and it is still written.

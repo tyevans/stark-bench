@@ -112,6 +112,9 @@ class PrewarmedQueryEmbeddings:
         #: Distinct texts prewarmed. Lower than the query count when the set
         #: contains duplicates, which is a property of the data, not a bug.
         self.prewarm_texts = 0
+        #: Set when `prewarm_or_log` caught a failure, and reported, so a
+        #: cost column showing live calls carries its explanation.
+        self.prewarm_failed = False
 
     @property
     def model(self) -> str:
@@ -124,6 +127,34 @@ class PrewarmedQueryEmbeddings:
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         """The corpus side, deliberately untouched. See the module docstring."""
         return await self._inner.embed(texts)
+
+    async def prewarm_or_log(self, texts: Sequence[str]) -> None:
+        """`prewarm`, but a failure is logged rather than fatal.
+
+        Prewarming is an OPTIMISATION: it batches what a serial run would
+        otherwise request one query at a time. A run that needs no
+        embeddings must not be taken down by it, and a run that does will
+        fail at its first `embed_query` a second later with the same error.
+
+        Not hypothetical. `retrieve_chunks` embeds only for SEMANTIC and
+        HYBRID -- a `lexical` arm is pure BM25 over Postgres and never
+        touches the endpoint. Before this, such a run died in the prewarm
+        for a capability it would never use, which is exactly the moment the
+        shared inference host is most likely to be busy with something else.
+
+        Nothing is retried or faked: `embed_query` still goes to the live
+        provider and still raises.
+        """
+        try:
+            await self.prewarm(texts)
+        except Exception as error:
+            self.prewarm_failed = True
+            logger.warning(
+                "query embedding prewarm failed (%s); continuing. A run "
+                "needing embeddings will fail at its first query; a lexical "
+                "run is unaffected.",
+                error,
+            )
 
     async def prewarm(self, texts: Sequence[str]) -> None:
         """Embed every distinct text once, in batches, and hold the vectors.
@@ -188,6 +219,7 @@ class PrewarmedQueryEmbeddings:
     def stats(self) -> dict[str, int]:
         """The counters, for the report. See the module docstring on `live_calls`."""
         return {
+            "query_embed_prewarm_failed": int(self.prewarm_failed),
             "query_embed_prewarm_texts": self.prewarm_texts,
             "query_embed_prewarm_requests": self.prewarm_requests,
             "query_embed_hits": self.hits,

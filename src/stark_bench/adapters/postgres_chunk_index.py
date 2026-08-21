@@ -35,6 +35,24 @@ class PostgresChunkIdIndex:
         self._dsn = dsn
         self._table = table
 
+    async def count_for_tenant(self, tenant_id: UUID) -> int:
+        """How many chunks this tenant holds.
+
+        `ids_for_tenant` answers the same question but materialises every
+        id -- 549,886 strings for one arm -- and a preflight only needs to
+        know whether the number is zero.
+        """
+        connection = await asyncpg.connect(self._dsn)
+        try:
+            return int(
+                await connection.fetchval(
+                    f"SELECT count(*) FROM {self._table} WHERE tenant_id = $1",  # nosec B608
+                    tenant_id,
+                )
+            )
+        finally:
+            await connection.close()
+
     async def ids_for_tenant(self, tenant_id: UUID) -> set[str]:
         connection = await asyncpg.connect(self._dsn)
         try:
@@ -57,6 +75,9 @@ class InMemoryChunkIdIndex:
 
     def __init__(self, ids: dict[UUID, set[str]] | None = None) -> None:
         self._ids = ids or {}
+
+    async def count_for_tenant(self, tenant_id: UUID) -> int:
+        return len(self._ids.get(tenant_id, set()))
 
     async def ids_for_tenant(self, tenant_id: UUID) -> set[str]:
         return set(self._ids.get(tenant_id, set()))

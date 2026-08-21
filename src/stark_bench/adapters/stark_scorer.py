@@ -25,6 +25,53 @@ DEFAULT_METRICS = ("mrr", "hit@1", "hit@5", "recall@20")
 SIDECAR = Path(__file__).resolve().parent.parent / "sidecar" / "score.py"
 
 
+#: A prebuilt Python 3.11 environment for the sidecar, if one exists.
+#: Created by `scripts/build_sidecar_env.sh`; not committed, and not
+#: required.
+SIDECAR_VENV = Path(__file__).resolve().parents[3] / ".sidecar-venv"
+
+
+def _sidecar_command() -> list[str]:
+    """How to launch the 3.11 sidecar: prebuilt if present, resolved if not.
+
+    `uv run --no-project --with stark-qa --with "numpy<2"` re-resolves 166
+    packages on every scoring run. Warm, that is ~114ms and invisible. Cold,
+    or with PyPI degraded, it is a hard failure AFTER all retrieval has been
+    paid for -- on 2026-08-19 a `deep` arm finished 280 queries in 46
+    minutes of shared GPU and then died on a 502 fetching `anthropic`, a
+    transitive dependency of `stark-qa` that this sidecar never imports.
+
+    So a prebuilt environment is used when it exists, and the run touches no
+    network at all.
+
+    **Falling back rather than requiring it is deliberate.** Making the
+    prebuilt path mandatory -- or adding `--offline` -- trades a rare
+    failure for a certain one: the first run on any machine, and every CI
+    checkout, would fail instead. The fallback is the same command that has
+    always worked.
+
+    The version is pinned by whatever the venv was built with, which is a
+    real difference from `--with stark-qa`: the resolved path floats and the
+    prebuilt one does not. That is a feature for reproducibility and a trap
+    for staleness, which is why the builder script is one command to re-run.
+    """
+    python = SIDECAR_VENV / "bin" / "python"
+    if python.exists():
+        return [str(python)]
+    return [
+        "uv",
+        "run",
+        "--no-project",
+        "--python",
+        "3.11",
+        "--with",
+        "stark-qa",
+        "--with",
+        "numpy<2",
+        "python",
+    ]
+
+
 def score_predictions(
     predictions: Mapping[int, Sequence[Ranked]],
     answers: Mapping[int, Sequence[str]],
@@ -82,16 +129,7 @@ def score_predictions(
 
         completed = subprocess.run(  # noqa: S603
             [
-                "uv",
-                "run",
-                "--no-project",
-                "--python",
-                "3.11",
-                "--with",
-                "stark-qa",
-                "--with",
-                "numpy<2",
-                "python",
+                *_sidecar_command(),
                 str(SIDECAR),
                 "--predictions",
                 str(preds_path),

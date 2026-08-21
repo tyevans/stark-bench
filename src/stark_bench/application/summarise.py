@@ -55,6 +55,17 @@ comparison it cannot support.
 Arms scored before this existed render `--`, which is honest: their wall
 time was not recorded and, being serial, equalled their gpu seconds anyway.
 
+## `cut off` is not a cost, it is a caveat
+
+`exhausted_queries` counts queries that ended at the budget cap rather than
+because the agent decided it was finished. A `deep` arm where most queries
+are cut off has an accuracy number about `MAX_TOOL_CALLS` and not about the
+architecture, and nothing else in the row would say so.
+
+`--` means the agent has no budget to exhaust -- `dense` cannot be cut off,
+and rendering 0 there would claim it ran to completion under a cap it does
+not have.
+
 ## Cost sits beside accuracy
 
 The plan this repo was built from asks for accuracy **and** cost per
@@ -231,8 +242,8 @@ def render(rows: Iterable[Row]) -> str:
             "| config | agent | embed model | chat model | chunker "
             "| chunks/node | mrr | hit@1 "
             "| hit@5 | recall@20 | llm calls/query | tokens/query "
-            "| gpu seconds | wall seconds | conc |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| gpu seconds | wall seconds | conc | cut off |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in sorted(
             section, key=lambda r: (-r.metrics.get("mrr", 0.0), r.config, r.agent)
@@ -246,7 +257,8 @@ def render(rows: Iterable[Row]) -> str:
                 f"| {_fmt(row.cost.get('tokens_per_query'))} "
                 f"| {_fmt(row.cost.get('seconds_total'), 1)} "
                 f"| {_fmt(row.cost.get('seconds_wall'), 1)} "
-                f"| {_fmt(row.cost.get('query_concurrency'))} |"
+                f"| {_fmt(row.cost.get('query_concurrency'))} "
+                f"| {_fmt(row.cost.get('exhausted_queries'))} |"
             )
         out.append("")
     return "\n".join(out)

@@ -53,34 +53,70 @@ over `(source, text)`, so a re-run skips what it already wrote.
 
 **That also makes a chunker change corrupting rather than merely stale** -- new
 ids get written and the old rows stay live and searchable, leaving a silent
-mixture of two chunkings. `scripts/resume_is_safe.py` refuses to resume unless
-the recorded config is byte-identical.
+mixture of two chunkings. `scripts/resume_is_safe.py` refuses to resume
+unless the recorded config is byte-identical *and* the run that wrote it
+finished; the ingest report is written twice for that reason.
 
-`scripts/sweep.sh` runs every arm. `scripts/results_table.py` renders
-`RESULTS.md` and flags results that look like a broken run rather than a bad
-one -- all-zero metrics, an empty ingest block, an edgeless corpus under a
-graph agent.
+Useful flags: `--query-concurrency N` (set it to at least the chat peer's
+`-np`), `--chat-model ID` and `--split NAME`. The last two override a config
+without replacing it, which matters because the tenant is derived from the
+config *name* -- a new config file for a different model would point at an
+empty corpus.
+
+### Checking a run rather than trusting it
+
+```
+uv run python -m stark_bench.composition.cli --summarise results/ > RESULTS.md
+uv run python scripts/verify_corpus.py    # reports vs actual rows, per tenant
+uv run bash scripts/sweep.sh              # every arm
+```
+
+`verify_corpus.py` compares each ingest report's claimed chunk count against
+what the tenant holds. It found a 189-chunk discrepancy the first time it
+ran. A `--run` against an empty store now refuses up front, rather than
+scoring nothing retrieved as a bad retriever.
+
+`scripts/results_table.py --check` is the other half: it exits non-zero when
+a cell looks like a *broken* run rather than a bad one -- all-zero metrics,
+an unbacked cost column, a `deep` arm on an edgeless corpus, or a report
+written against a different config than the one now on disk. `--summarise`
+renders; this one judges.
 
 ## Arms
 
-| config | chunking | embeddings | agent |
+Seventeen configs live in `config/`. The two carrying the current results:
+
+| config | corpus | chunking | embeddings |
 |---|---|---|---|
-| `vss-control` | whole document | precomputed ada-002 | dense |
-| `native-wholedoc` | whole document, capped | Nemotron-3-Embed-1B | dense |
-| `redstring-native` | boundary preference | Nemotron-3-Embed-1B | hybrid |
-| `native-sliding1k` | sliding 1000/500 | Nemotron-3-Embed-1B | dense |
+| `qwen-rel-whole` | `prime-rel` (documents name their neighbours) | whole document | qwen3-embedding-0.6b |
+| `qwen-rel-sliding1k` | `prime-rel` | sliding 1000/500 | qwen3-embedding-0.6b |
 
-`vss-control` is the floor: no graph, no live embedding, published vectors.
-`native-wholedoc` exists so the model change and the chunking change can be
-attributed separately -- `vss-control` minus it is the model, it minus
-`redstring-native` is the chunking.
+The original control set -- `vss-control`, `native-wholedoc`,
+`redstring-native`, `native-sliding1k` -- was built so the model change and
+the chunking change could be attributed separately. Their corpora have since
+been dropped; the results survive in `results/`, but reproducing one needs a
+re-ingest. `vss-control` is the cheap one, since its vectors are precomputed.
 
-Agents: `dense`, `hybrid`, `zero_shot`, `deep`.
+**Agents** are listed by
+`uv run python -c "from stark_bench.composition.agent_registry import AGENTS; print(sorted(AGENTS))"`.
+Four families: retrieval only (`dense`, `lexical`, `hybrid`), LLM-driven
+(`zero_shot`, `deep`), reranking on full documents (`rerank*`), and reranking
+on lean encodings (`rerank40title*`), which reach comparable accuracy at
+roughly a twentieth of the cost.
 
 ## Scoring
 
 `mrr`, `hit@1`, `hit@5`, `recall@20`, computed by STaRK's own `Evaluator` in
 the 3.11 sidecar rather than reimplemented here.
+
+`scripts/build_sidecar_env.sh` builds that environment once, so scoring
+touches no network. Optional -- without it the sidecar resolves from PyPI
+per run, which has cost a completed run before.
+
+**Numbers from LLM agents carry a noise floor.** Two identical runs differ
+by ~0.001 mrr and ~0.011 hit@5: temperature zero does not make a batched
+server deterministic. Retrieval-only arms are reproducible to every digit.
+See CLAUDE.md.
 
 ## Testing
 

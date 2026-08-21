@@ -31,17 +31,27 @@ uv run pre-commit install   # gate for the gates; see below
 docker compose up -d        # postgres :55432, neo4j :57687 (non-standard ports)
 ```
 
-**The stores are currently EMPTY** — the volumes were dropped
-(`docker compose down -v`) at the last handoff, deliberately, because every
-corpus needed re-ingesting for the embedding prefixes anyway. Nothing was
-lost that cost endpoint time to rebuild:
+**What the stores hold, as of 2026-08-20.** One chunk table exists,
+`kg_chunks_qwen3_embedding_0_6b_1e22db42`, with 878,479 rows across six
+tenants. Run `uv run python scripts/verify_corpus.py` for the current
+picture rather than trusting this paragraph — it compares every ingest
+report against `count(*)` for that arm's tenant and prints `MISSING` for
+corpora that no longer exist.
 
-- `vss-control` reloads from STaRK's precomputed vectors in minutes, and
-  reproducing `0.23057383129905376` exactly is the check that it came back
-  correctly.
-- The nomic arms had to be re-embedded regardless.
+Live: `qwen-rel-sliding1k` (549,697), `qwen-wholedoc` (151,232),
+`qwen-rel-whole` (129,656), and the three `qwen-mini-*` arms.
 
-`results/*.json` live on disk and survived.
+**Gone**, and needing a re-ingest before they can be scored again: every
+nomic and Nemotron arm, and `vss-control`. `results/*.json` for them live
+on disk and survived, so their numbers are still readable — they just
+cannot be reproduced without rebuilding the corpus.
+
+`vss-control` is the cheap one: it reloads from STaRK's precomputed vectors
+in minutes with no endpoint time, and reproducing `0.23057383129905376`
+exactly is the check that it came back correctly.
+
+A `--run` against a missing corpus now refuses up front rather than
+scoring an empty store as a bad retriever.
 
 **`redstring` is a path dependency and the path is load-bearing:**
 
@@ -99,16 +109,52 @@ uv run python -m stark_bench.composition.cli --config config/<name>.yaml --inges
 
 # score one architecture against it
 uv run python -m stark_bench.composition.cli --config config/<name>.yaml --run \
-    --agent {dense,hybrid,zero_shot,deep}
+    --agent hybrid
+
+# regenerate the results table
+uv run python -m stark_bench.composition.cli --summarise results/ > RESULTS.md
+
+# what the stores actually hold, against what the reports claim
+uv run python scripts/verify_corpus.py
 ```
 
-`--agent` overrides the config's own `agent:`, so one config serves all four.
-Reports land in `results/<name>.<agent>.json`.
+`--agent` overrides the config's own `agent:`, so one config serves every
+architecture. Reports land in `results/<name>.<agent>.json`.
 
-Useful flags: `--limit N` (throughput calibration only — never for a reported
+**Seventeen agents are registered**; `uv run python -c "from
+stark_bench.composition.agent_registry import AGENTS; print(sorted(AGENTS))"`
+is the list, and `tests/composition/test_agent_registry.py` asserts it as an
+exact set so a new architecture cannot appear without someone deciding it
+should. Four families:
+
+| family | what varies |
+|---|---|
+| `dense`, `lexical`, `hybrid` | retrieval only, no LLM |
+| `zero_shot`, `deep` | LLM-driven, never yet scored |
+| `rerank`, `rerank40`, `rerank40lean` | rerank on full documents |
+| `rerank40title*`, `rerank80*` | rerank on lean encodings — see FINDINGS 1b |
+
+### Flags
+
+**Ingest:** `--limit N` (throughput calibration only — never for a reported
 number, and see B-RATE-UNIT-1 before extrapolating from one), `--no-resume`
 (force re-embed; upserts cleanly over existing rows), `--no-cache` (force a
-cold embed; see below), `--ingest-edges` (off by default, see below).
+cold embed), `--ingest-edges` (off by default), `--embed-concurrency`,
+`--embed-batch`.
+
+**Run:** `--query-concurrency N` (queries in flight; **set it to at least
+the chat peer's `-np` or the extra slots idle**, and record it — it is in
+the report and in `RESULTS.md`'s `conc` column), `--chat-model ID`
+(override the LLM for one run; the report and the filename carry the model
+that ran, because `config_verbatim` is the config FILE's bytes and would
+name the one that did not), `--split NAME` (run `test` instead of
+`test-0.1` against the same store — the tenant is derived from the config
+NAME, so no re-ingest).
+
+**Never make a new config just to change the model or the split.** The
+tenant is `uuid5` of the config name, so a new name points at an empty
+corpus — the incident where 280 queries returned empty and the only symptom
+was a `min()` error from a subprocess.
 
 ### Chunk vectors are cached across arms
 
@@ -325,6 +371,25 @@ zero disagreed with each other about how many entities a document held,
 while two thinking-off runs did not. Every accuracy number in this
 repository is a difference between two runs.
 
+## A chunk the server rejects is re-split, so the cap need not be right
+
+When the embedding provider rejects a text for length, `stark_ingest_engine`
+re-chunks that group at half the size and retries, up to
+`MAX_RESPLIT_ATTEMPTS`. The path only runs on rejection, so a correct cap
+costs nothing and a wrong one costs a retry rather than a run.
+
+**Why the cap is not computed instead.** Capping by tokens with the model's
+own vocabulary was considered and rejected: it needs a `tokenizers`
+dependency and a downloaded vocabulary, and it would put a *second*
+estimate of the model's tokenization next to the server's real one.
+`all-MiniLM-L6-v2` was available locally as a stand-in and shares BERT
+WordPiece — using it would have been the same "close enough" reasoning that
+produced three wrong caps in a row. **The server's own 400 is the only
+oracle that cannot disagree with the server.**
+
+`/tokenize` was probed first and is not routed by llama-swap; only the
+`/v1/*` surface is reachable.
+
 ## Embedding models need task prefixes, and the port cannot express them
 
 **Read this before trusting any retrieval number.**
@@ -364,6 +429,36 @@ sides. Its `1_Pooling/config.json` sets `include_prompt: true`, so the
 prefix tokens belong inside the mean pool, which is what prepending
 client-side gives you.
 
+## How precisely an LLM number may be quoted
+
+**LLM arms are not reproducible run to run.** `rerank40title` on
+`gemma-4-26b-qat`, same corpus, same tenant, same split,
+`temperature=0.0`, thinking off, run twice within an hour:
+
+| metric | run 1 | run 2 | delta |
+|---|---|---|---|
+| mrr | 0.34100392 | 0.33974803 | 0.00126 |
+| hit@1 | 0.25714286 | 0.25357143 | 0.00357 |
+| hit@5 | 0.43928571 | 0.45000000 | **0.01071** |
+| recall@20 | 0.46431879 | 0.47205688 | 0.00774 |
+
+Temperature zero does not make a *batched* server deterministic: with
+`-np 4` and continuous batching, a request's logits depend on which other
+requests share its batch, and floating-point addition is not associative. A
+handful of near-tied argmaxes flip and the ranking moves.
+
+**So: a difference below ~0.001 mrr between two LLM arms is noise, and
+hit@5 should not be quoted precisely on these arms at all** — its floor is
+~0.011, about 2.5% relative.
+
+Retrieval-only arms are unaffected — no LLM — and `vss-control`
+reproducing `0.23057383129905376` to every digit remains a valid check.
+
+Whether `--query-concurrency 1` restores determinism is unresolved and
+cheap to settle: two serial runs of one arm. If it does, the cause is
+confirmed as batch composition and reproducibility can be bought at ~4x
+wall time. See B-LLM-RUN-NOISE-1.
+
 ## Where the numbers are
 
 **`RESULTS.md` is generated** — `--summarise results/` renders every scored
@@ -386,9 +481,16 @@ indexed document carries a `- relations:` block naming the node's neighbours:
 | lexical | 0.20479 | 0.24913 | **+22%** |
 | hybrid | 0.19870 | **0.28214** | **+42%** |
 
-`qwen-rel-whole` hybrid at **0.28214** is the best figure this project has
-produced — above `vss-control`'s best (0.23111) and above STaRK's published
-ada-002 VSS figure of 0.2350.
+`qwen-rel-whole` hybrid at **0.28214** was the best figure this project had
+produced when this section was written — above `vss-control`'s best
+(0.23111) and above STaRK's published ada-002 VSS figure of 0.2350.
+
+**Reranking has since gone well past it.** The current best is
+`qwen-rel-whole` + `rerank40` at **0.46323**, and the cheap lean arms reach
+0.39343 at roughly a twentieth of the cost. `hybrid` remains the right
+baseline to read the rerank arms against, because reranking can only
+reorder what it found: at `fetch=20`, recall@20 is *identical* to hybrid's
+to four decimals, by construction.
 
 **The mechanism is the interesting part.** PRIME's queries name related
 entities verbatim ("a drug that targets X and is indicated for Y"). BM25
@@ -397,6 +499,30 @@ compresses them away. So the gain is almost entirely lexical — dense barely
 moves. That also retro-explains an oddity in the older data: lexical beat
 dense on 5 of 9 arms, which looked like noise and was this effect showing
 through weakly on corpora that lacked the text.
+
+### Two later findings sharpen this one
+
+**FINDINGS 1b — relational text only helps if you choose WHICH relations.**
+Eight neighbour names per candidate, identical count and token cost,
+differing only in which eight: document order scores **0.030 BELOW** showing
+no relations at all, BM25-ranked scores 0.054 above. The swing from
+selection alone is +0.083 mrr. "More context helps the reranker" is false
+here — names of entities unrelated to the query are noise it spends
+attention on.
+
+That does not contradict this section. Here the whole relation block reaches
+the *retriever*, where BM25 selects at retrieval time and nothing has to
+choose. On a lean encoding the choosing is explicit, and doing it badly is
+worse than not doing it.
+
+**FINDINGS 1c — chunking helps the lexical channel by 29% on this corpus**,
+against the prediction written into the config before the run. Length
+normalisation is the mechanism: a term matched inside a 12,000-character
+document is heavily discounted, the same term in a 1,000-character chunk is
+not, and `aggregation: max` lets the node take its best chunk. It also
+explains why the earlier chunking sweep found so little — that ran on
+`prime`, median document 103 characters, where chunking cannot rescue
+documents from a penalty they were never long enough to incur.
 
 ### A hypothesis this falsified, recorded because it drove real decisions
 
@@ -466,18 +592,46 @@ empty predictions up front and names the queries and the likely cause.
 
 ## Every real bug in this project has been silent
 
-Six for six. A chunker that inflated its output 3.2x; a corpus that moved
+Nine for nine. A chunker that inflated its output 3.2x; a corpus that moved
 tables; 280 queries retrieving nothing with no error logged; an embedding
 model running below spec for want of a string; a model swapped underneath a
 still-advertised model id; a `write_report(ingest={})` that emptied the cost
-column of every report ever written. **None raised an exception at the point
-of failure.** Each surfaced only because a number looked wrong, and each took
-real time to trace back.
+column of every report ever written.
+
+Three more on 2026-08-20, all found the same way:
+
+- **A reranker returning `{"scores": []}`** for most queries, in 1.55s with
+  no decode. Empty scores fall through to retrieval order, which scores
+  *identically to `hybrid`*, while `run_queries` still logs `0 empty`. The
+  cause was stripping the schema docstrings to save tokens — which removed
+  the only text telling the model what to put in the array. It would have
+  read as "titles are not enough", which is exactly the hypothesis the arm
+  was built to test.
+- **189 chunks silently deduplicated.** Chunk ids are content-addressed on
+  `(source, text)` with no `start_char`, so sliding windows over repetitive
+  text collapse on upsert. The reported count says 549,886 and the table
+  holds 549,697. Found by `scripts/verify_corpus.py`, not by anything
+  failing.
+- **`seconds_total` quietly stopped being wall time** when the runner became
+  concurrent — the calls overlap, so the sum counts the same seconds up to N
+  times. A run taking ~480s reported 1933s under a column headed `seconds`.
+
+**None raised an exception at the point of failure.** Each surfaced only
+because a number looked wrong, and each took real time to trace back.
 
 The habit that follows: **assert on the data at each step, not on exit codes.**
 A stage that "succeeded" is not evidence it did anything. Check chunks per
 node, minimum chunk length, row counts per tenant, and non-empty predictions —
 and make the check fail loudly rather than log a warning nobody reads.
+
+Two of those checks now exist as commands, and both found something the
+first time they ran:
+
+```
+uv run python scripts/verify_corpus.py   # reports vs rows, per tenant
+```
+
+and a `--run` refuses up front when the arm's tenant holds no chunks.
 
 Corollary, learned the same way: **a zero, an empty, and a perfect score are
 the results most in need of suspicion.** "0 failed" and "0 collected" are the
@@ -599,11 +753,17 @@ comment, not a sentence in chat. Name the file and line, say what is actually
 wrong, and say what you learned that made deferring right. Delete the entry in
 the commit that fixes it.
 
-Open at last handoff: `B-SUMMARISE-1` (no `--summarise` to build `RESULTS.md`),
-`B-BUDGET-REPORT-1` (deep agent's `exhausted_queries` is counted and nothing
-reads it — a run where most queries hit the cap is a finding about the cap,
-not the architecture), `B-BUDGET-CAPS-1`, `B-DEEP-EDGES-1`,
-`B-ADA002-TABLE-1`, `B-SLIDING-REDUNDANT-1`.
+Nineteen entries open at this handoff; `grep '^## ' BACKLOG.md` for the
+list rather than reading a copy of it here, which goes stale the moment
+anyone closes one.
+
+The ones that shape what you can do next: **`B-EMBED-RETRY-1`** and
+**`B-EMBED-COLDSTART-1`** both need a forced model swap on the shared GPU
+to diagnose, and both warn that adding retry without measuring would be a
+no-op that looks like a fix — the openai client already retries every
+`>=500`. **`B-DEEP-EDGES-1`** gates any `deep` number.
+**`B-LLM-RUN-NOISE-1`** governs how precisely any LLM number may be
+quoted.
 
 ## Before running the deep agent
 
@@ -628,9 +788,18 @@ was written about (a resume whose entities already existed) and badly wrong
 as a general claim. Rate is roughly 200-280k relationships/min and eases as
 the graph grows, since Neo4j maintains indexes against a larger set.
 
-Budget for it, and expect **silence** while it runs: the edge loop logs
-nothing, and `ingest done` prints *before* it starts. See B-EDGE-PROGRESS-1,
-filed after that combination produced a confident wrong diagnosis of a hang.
+Budget for it, and watch the right line. The edge loop reports
+`edge progress: N relationships, R/s` every 30 seconds and `edges done`
+when it finishes, and the node phase now ends with `ingest **nodes** done`
+rather than `ingest done`.
+
+That wording is load-bearing. The phase used to log nothing at all after a
+line reading `ingest done`, and ~28 minutes of silence following a claim
+that the work had finished produced a confident wrong diagnosis of a hang
+(B-EDGE-PROGRESS-1, now closed). Every signal checked at the time was a
+misread of a healthy run -- flat chunk count, unchanged client CPU, a
+`/slots` snapshot. **A snapshot cannot distinguish stalled from busy; only
+a window can**, which is why the edge line carries a rate.
 
 Check two things afterwards, neither of which the ingest will volunteer:
 `edges` matches `edges.jsonl`'s line count minus `self_loops_dropped`, and
@@ -652,12 +821,19 @@ anywhere. `PerQueryDeepAgent` in `harness/agents.py` rebuilds the budget per
 
 ## Still to do
 
-1. Fill the agent x config matrix. `dense` and `hybrid` are cheap; `zero_shot`
-   and `deep` are LLM-bound and had never been scored as of this writing.
-2. `RESULTS.md` with accuracy **and cost** per architecture — the cost side is
-   why `ToolCall.tokens` exists (`int | None`, where `None` != 0), and the
-   ingest half now reaches the report via `_ingest_stats`.
-3. Whole-branch review, then `superpowers:finishing-a-development-branch`.
+1. **Run the four built-but-unrun arms.** `rerank40titlerelhybrid` and
+   `rerank40titlereldense` isolate whether an embedding selector beats BM25
+   alone; `rerank40titlerelmatrix` tests three averaged score axes;
+   `rerank80titlerelranked` asks whether the recall curve has flattened past
+   40 candidates. All need the endpoint.
+2. **Score `qwen-rel-sliding1k` on `dense` and `hybrid`.** Its `lexical`
+   number is in (FINDINGS 1c, +29% over whole-document) and the config's
+   more interesting prediction — that dense may improve, because a
+   1000-character window isolates the relations block into its own chunk —
+   is still open.
+3. **`zero_shot` and `deep` have still never been scored**, and `deep`
+   needs `--ingest-edges` first (B-DEEP-EDGES-1).
+4. Whole-branch review, then `superpowers:finishing-a-development-branch`.
 
 When reading the chunking sweep, hold one caveat: its three points are
 **1.06, 1.14 and 1.94 chunks/node**, and the first two are closer together
