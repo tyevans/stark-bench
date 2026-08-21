@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from stark_bench.agents.dense import DenseAgent
+from stark_bench.agents.decompose import DecomposeAgent
 from stark_bench.agents.deep import DeepAgent
 from stark_bench.agents.hybrid import HybridAgent
 from stark_bench.agents.lexical import LexicalAgent
@@ -222,6 +223,12 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
         pair_scores=True,
         passage_mode="title_rel_ranked",
     ),
+    # The only agent here that changes what RETRIEVAL sees rather than how
+    # candidates are scored. Every `rerank*` arm above is bounded by what
+    # one `hybrid` search found; this one issues several and fuses them, so
+    # its recall@20 is not `hybrid`'s by construction. See
+    # `agents/decompose.py` for the hypothesis and the prediction.
+    "decompose": lambda config: DecomposeAgent(k=config.k),
 }
 
 
