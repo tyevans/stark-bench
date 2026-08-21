@@ -2,6 +2,47 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-DEEP-NEVER-FAIRLY-TESTED-1 -- the agentic arm's numbers are about 2026-08-19, not about agentic retrieval
+
+`deep` scored 0.1851 (`native-wholedoc`) and 0.2015 (`native-sliding1k`),
+and those figures have been quoted repeatedly since -- including in this
+session -- as evidence that agentic architectures lose on this benchmark.
+**They do not support that claim**, and the reasons are all recorded
+elsewhere in this repo:
+
+- Both corpora are **`prime`, not `prime-rel`**: the documents carry no
+  `- relations:` block. An agent whose premise is walking relationships was
+  measured on text that names none of them.
+- Retrieval underneath it was far weaker. `hybrid` managed **0.2187** on
+  that corpus against **0.34675** on `qwen-rel-sliding1k` now. An arm that
+  reranks or re-searches cannot exceed what retrieval reaches.
+- It predates every encoding lesson the campaign paid for: lean
+  observations, ranked relation selection (FINDINGS 1b, +0.083 mrr from
+  selection alone), ANN indexes, and `ef_search` tuning.
+- Its context bound was loose enough that a **72,000-character
+  observation** reached the model untouched -- found as a weak-test defect,
+  not as a deliberate setting.
+- Nemotron-3-Embed-1B, **Q4_K_M with no importance matrix and no MTEB
+  evaluation**, is the embedder for all three of those arms.
+
+So the honest statement is that **agentic retrieval has never been fairly
+tested here**, not that it lost. Deleting this entry requires a run that
+fixes the above, which needs:
+
+1. A `prime-rel` tenant ingested with `--ingest-edges`. The qwen arms were
+   not -- `neighbors` and `relationships` return empty against them, which
+   is B-DEEP-EDGES-1 and would turn a data finding into an architecture
+   finding.
+2. The edge load itself, ~28 minutes for PRIME's 8,100,498 relationships.
+3. Lean observation encoding, so the agent spends its context on candidates
+   rather than on database provenance.
+
+What deferring taught: a number keeps its authority long after the
+conditions that produced it have been superseded, and nothing in
+`RESULTS.md` marks a row as measured on a corpus that no longer represents
+the project's best. The `retrieval` and `ctx` columns exist for exactly
+this reason; corpus generation has no such column.
+
 ## B-EXTRACT-USAGE-1 -- the cost half of every LLM arm is unmeasured
 
 `adapters/redstring_toolset.py:341` records `tokens=None` for every

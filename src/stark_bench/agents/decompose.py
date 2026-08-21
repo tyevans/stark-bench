@@ -23,15 +23,25 @@ gap. Expected to beat `hybrid` (0.27711 on this corpus) comfortably and
 `rerank40titlerelranked` (0.39343) by a smaller margin; beating 0.46323 is
 the outcome that would change the recommendation.
 
-## Why this is not `deep` again
+## Why this is a workflow rather than an agent
 
-`deep` is the worst arm this project has run -- 0.1851 and 0.2015, below
-`lexical` on one corpus -- at 7.46 LLM calls per query against a cap of 8.
-Running to exhaustion is the tell: it was searching, not deciding.
+The plan is made once and everything after it is deterministic: one
+planning call, N retrievals, arithmetic fusion, one scoring call. No loop,
+no tool selection, no budget to exhaust. The LLM is used twice as a pure
+function.
 
-Here the plan is made once and the rest is deterministic. Two LLM calls per
-query, no loop, no budget to exhaust. The agency is in *what to ask*, not
-in how long to look.
+That is a design choice about this problem, **not** a claim that agentic
+search fails here. `deep` scored 0.1851 and 0.2015, but those runs are
+weak evidence about the architecture: they ran on `prime` corpora with no
+relations block -- on an agent whose premise is walking relationships --
+where `hybrid` itself managed only 0.2187 against 0.34675 on the
+relational corpora. They also predate lean observation encodings, ranked
+relation selection, ANN indexes and `ef` tuning, and a context bound loose
+enough that a 72,000-character observation reached the model untouched.
+
+A fair test of `deep` has not been run. It needs a `prime-rel` tenant
+ingested `--ingest-edges` (the qwen arms were not), and the encoding
+lessons this campaign paid for. See B-DEEP-EDGES-1.
 
 ## Three properties that are load-bearing rather than tidy
 
