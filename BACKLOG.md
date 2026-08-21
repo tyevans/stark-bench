@@ -397,41 +397,6 @@ chunks/node. Deferred because the four arms already queued are ~6h of
 endpoint time on a single-slot server and this one adds a fifth without
 answering anything the sweep does not already ask.
 
-## B-EDGE-PROGRESS-1: the edge phase reports nothing, after announcing it is done
-
-`ingest_corpus` in `src/stark_bench/adapters/stark_ingest_engine.py` calls
-`_report(final=True)` at line 465 -- which logs `ingest done: 129,375/129,375
-nodes (100%) ... 72m elapsed` -- and only *then* enters the edge loop at line
-471, which has no logging of any kind until the process exits.
-
-On PRIME that is 8,100,498 relationships and, measured, **~33 minutes of
-total silence following a line that says the ingest is done**. The node loop
-already has `_report`; this phase needs the equivalent.
-
-Cost of not having it, paid on 2026-08-19: the qwen-wholedoc ingest was
-diagnosed as hung. The reasoning looked sound at every step -- the log had
-stopped, chunk count was flat over 30s, client CPU time was unchanged over
-20s, and a `/slots` snapshot showed `is_processing: true` with
-`n_prompt_tokens_processed: 0`. Every one of those was a misread of a healthy
-run: chunks commit in `CHUNK_BATCH` steps, an I/O-bound client accrues under
-a second of CPU in 20s, and `processed: 0` is what a slot reports the instant
-it picks up a task. What actually settled it was `id_task` climbing ~13/s
-across three `/slots` samples, and a 3-minute Postgres window showing +5,010
-chunks. **A snapshot cannot distinguish stalled from busy; only a window
-can.**
-
-Two things would each have prevented the detour, and both are worth doing:
-
-  - log progress inside the edge loop, at the same cadence as nodes;
-  - do not print `ingest done` until the ingest is done. Either move
-    `_report(final=True)` after the edge loop, or word the node-phase line as
-    the phase it actually ends.
-
-The second matters more than the first. A message that says the work is
-finished, ~33 minutes before it is, is not a missing feature -- it is the log
-actively asserting something false, and it is the reason the run nearly got
-killed.
-
 ## B-PROXY-LIMITS-1: the embedding batch ceiling is the proxy's, not the model's
 
 `--embed-batch 512 --embed-concurrency 2` against whole `prime-rel`
@@ -670,35 +635,36 @@ and that trades away grammar-constrained decoding for ~0.6s over JSON
 pairs. Judged not worth it while retrieval sits at 8.8s
 (B-RERANK-RETRIEVAL-FLOOR-1). Revisit if that floor drops.
 
-## B-QUERY-CONCURRENCY-1
+## B-QUERY-CONCURRENCY-1 — RESOLVED: 2.02x once the slots were real
 
-`application/run_queries.py`, `--query-concurrency`.
+`--query-concurrency` (68f8d55) runs N queries in flight. This entry
+originally recorded that it **bought nothing**, measured at 6.2s/query
+serial against 6.43s at concurrency 4 -- 3.7% *worse*, four clients queuing
+on one slot.
 
-The runner can now run N queries in flight (68f8d55), and **it buys nothing
-today**: the chat peer is `-np 1`, confirmed 2026-08-20. Measured on
-`rerank40title`, 90-second windows: concurrency 1 gave 6.2s/query and
-concurrency 4 gave **6.43s** -- 3.7% *worse*, which is four clients
-queuing on one slot.
+That was true and is no longer. The chat peer moved to `-np 4` and the same
+knob, measured in 90-second windows on `rerank40title`:
 
-Left in rather than reverted, because the client capping itself at one
-request is a defect whatever the server does, and `cli.py`'s comment
-justifying the serial loop ("nothing is given up, three of those four
-slots could never be used") was written about the embedding peer's `-np 4`
-and does not describe the chat peer.
+| | s/query |
+|---|---|
+| serial (gemma, `-np 4` server) | ~4.5 |
+| `--query-concurrency 4` | **2.22** |
 
-Two things to know before turning it up:
+**2.02x, not 4x.** Sublinear, as expected when four decodes share memory
+bandwidth -- and exactly the measurement this entry insisted on taking
+before anyone claimed a speedup.
 
-- **Verify the peer, do not trust the flag.** llama-swap launches the chat
-  model with its own command line, so a `-np` edit does nothing until the
-  peer restarts through llama-swap. `/props` is not reachable through the
-  proxy path on :8080; check the peer's own port.
-- **`-np 4` may still not help.** Decode on a 27B model is plausibly
-  memory-bandwidth bound, and speculative decoding (413/428 drafts
-  accepted, the reason decode reaches 67 tok/s) degrades under batching.
-  Four slots could split the same throughput four ways. Measure before
-  claiming a speedup.
+Both traps it warned about were real:
 
-Default stays 1 so no previously-recorded arm's timing moves.
+- **The flag you edited may not be the one running.** The first attempt was
+  against a peer still at `-np 1`; `/props` is not reachable through the
+  llama-swap proxy on :8080, so it took the operator checking the peer
+  directly to establish it.
+- **`-np 4` might not have helped anyway.** It did here, but only 2x, and
+  the entry's reasoning about bandwidth-bound decode is what the shortfall
+  looks like.
+
+Default stays 1, so no previously-recorded arm's timing moves.
 
 ## B-LLM-RUN-NOISE-1
 

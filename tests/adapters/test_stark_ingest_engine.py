@@ -434,6 +434,11 @@ async def test_it_reports_a_final_progress_line_with_the_counts(stores, caplog):
     A log line that says "ingest done" and nothing else is what this
     replaced: it cannot answer whether the corpus is complete, which is the
     one question asked of it.
+
+    It says "nodes done" rather than "done" because the edge phase runs
+    AFTER it and takes ~28 minutes on PRIME (B-EDGE-PROGRESS-1). A line
+    claiming the ingest had finished, half an hour before it had, is what
+    produced a confident wrong diagnosis of a hang.
     """
     graph, chunks = stores
     nodes = [SkbNode(str(i), "drug", f"d{i}", f"doc {i}") for i in range(3)]
@@ -453,7 +458,9 @@ async def test_it_reports_a_final_progress_line_with_the_counts(stores, caplog):
             total_nodes=3,
         )
 
-    done = [r.getMessage() for r in caplog.records if "ingest done" in r.getMessage()]
+    done = [
+        r.getMessage() for r in caplog.records if "ingest nodes done" in r.getMessage()
+    ]
     assert len(done) == 1, f"expected exactly one summary line, got {done}"
     assert "3/3 nodes" in done[0]
     assert "3 chunks" in done[0]
@@ -485,7 +492,9 @@ async def test_progress_survives_an_unknown_node_total(stores, caplog):
             total_nodes=None,
         )
 
-    done = [r.getMessage() for r in caplog.records if "ingest done" in r.getMessage()]
+    done = [
+        r.getMessage() for r in caplog.records if "ingest nodes done" in r.getMessage()
+    ]
     assert len(done) == 1
     assert "1/? nodes" in done[0]
     assert "%" not in done[0], "no percentage is claimable without a total"
@@ -575,3 +584,90 @@ async def test_an_unrelated_provider_error_is_not_retried(stores):
         )
 
     assert provider.calls == 1, f"retried a non-length error {provider.calls} times"
+
+
+@pytest.mark.asyncio
+async def test_the_node_summary_does_not_claim_the_whole_ingest_finished(
+    stores, caplog
+):
+    """B-EDGE-PROGRESS-1. The edge phase runs after this line and is ~28
+    minutes on PRIME. A message saying the work is finished, half an hour
+    before it is, is not a missing feature -- it is the log actively lying,
+    and it cost a real debugging detour on 2026-08-19."""
+    graph, chunks = stores
+    nodes = [SkbNode(str(i), "drug", f"d{i}", f"doc {i}") for i in range(2)]
+
+    with caplog.at_level(
+        logging.INFO, logger="stark_bench.adapters.stark_ingest_engine"
+    ):
+        await ingest(
+            nodes,
+            [],
+            dataset="prime",
+            tenant_id=TenantId(uuid4()),
+            graph=graph,
+            chunks=chunks,
+            chunker=WholeDocumentChunker(),
+            embeddings=FakeEmbeddingProvider(dimension=8),
+            total_nodes=2,
+        )
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert not [m for m in messages if "ingest done" in m], (
+        "the node phase must not announce the ingest as done; the edge "
+        f"phase has not run yet. Got: {messages}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_edge_phase_reports_when_it_finishes(stores, caplog):
+    """It logged nothing at all before -- ~28 minutes of silence after a
+    line reading 'done'."""
+    graph, chunks = stores
+    nodes = [SkbNode(str(i), "drug", f"d{i}", f"doc {i}") for i in range(3)]
+    edges = [SkbEdge("0", "1", "targets"), SkbEdge("1", "2", "targets")]
+
+    with caplog.at_level(
+        logging.INFO, logger="stark_bench.adapters.stark_ingest_engine"
+    ):
+        await ingest(
+            nodes,
+            edges,
+            dataset="prime",
+            tenant_id=TenantId(uuid4()),
+            graph=graph,
+            chunks=chunks,
+            chunker=WholeDocumentChunker(),
+            embeddings=FakeEmbeddingProvider(dimension=8),
+            total_nodes=3,
+        )
+
+    done = [r.getMessage() for r in caplog.records if "edges done" in r.getMessage()]
+    assert len(done) == 1, f"expected one edge summary, got {done}"
+    assert "2 relationships" in done[0]
+
+
+@pytest.mark.asyncio
+async def test_no_edges_means_no_edge_summary(stores, caplog):
+    """A run without `--ingest-edges` must not print an edge line claiming
+    zero -- it did not do the phase, which is different from doing it and
+    finding nothing."""
+    graph, chunks = stores
+    nodes = [SkbNode("0", "drug", "d", "doc")]
+
+    with caplog.at_level(
+        logging.INFO, logger="stark_bench.adapters.stark_ingest_engine"
+    ):
+        await ingest(
+            nodes,
+            [],
+            dataset="prime",
+            tenant_id=TenantId(uuid4()),
+            graph=graph,
+            chunks=chunks,
+            chunker=WholeDocumentChunker(),
+            embeddings=FakeEmbeddingProvider(dimension=8),
+            total_nodes=1,
+        )
+
+    assert not [r for r in caplog.records if "edges done" in r.getMessage()]

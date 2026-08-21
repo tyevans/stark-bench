@@ -628,9 +628,18 @@ was written about (a resume whose entities already existed) and badly wrong
 as a general claim. Rate is roughly 200-280k relationships/min and eases as
 the graph grows, since Neo4j maintains indexes against a larger set.
 
-Budget for it, and expect **silence** while it runs: the edge loop logs
-nothing, and `ingest done` prints *before* it starts. See B-EDGE-PROGRESS-1,
-filed after that combination produced a confident wrong diagnosis of a hang.
+Budget for it, and watch the right line. The edge loop reports
+`edge progress: N relationships, R/s` every 30 seconds and `edges done`
+when it finishes, and the node phase now ends with `ingest **nodes** done`
+rather than `ingest done`.
+
+That wording is load-bearing. The phase used to log nothing at all after a
+line reading `ingest done`, and ~28 minutes of silence following a claim
+that the work had finished produced a confident wrong diagnosis of a hang
+(B-EDGE-PROGRESS-1, now closed). Every signal checked at the time was a
+misread of a healthy run -- flat chunk count, unchanged client CPU, a
+`/slots` snapshot. **A snapshot cannot distinguish stalled from busy; only
+a window can**, which is why the edge line carries a rate.
 
 Check two things afterwards, neither of which the ingest will volunteer:
 `edges` matches `edges.jsonl`'s line count minus `self_loops_dropped`, and
