@@ -239,40 +239,23 @@ What to do:
   has to parse the message, which argues for a status code on the error
   rather than a retry loop in this repo.
 
-## B-RESUME-COMPLETE-1 — nothing records that an ingest *finished*
+## B-RESUME-COMPLETE-1 — PARTLY DONE: completion is recorded; the count check is not
 
-`scripts/resume_is_safe.py` compares the recorded config to the config on
-disk, byte for byte, and refuses on any difference. What it cannot see is
-whether the run that wrote that report ever completed.
+`IngestOutcome.complete` now exists, the report is written twice (before the
+load with `False`, after with `True`), and `resume_is_safe` requires it. A
+report predating the field refuses, because it cannot vouch for having
+finished.
 
-`IngestOutcome` has no `complete` field, and the report is written once at
-the end -- so a killed run leaves either no report at all (resume refused,
-correct) or the report of some *earlier* run (resume permitted against a
-corpus that earlier run did not finish).
+**What is still open** is the second half of the original entry: a count
+assertion. The report records `nodes`, so a resumed run could compare the
+chunk rows actually present for its tenant against what the report claims
+and refuse on a mismatch. That catches a case the completion flag cannot --
+a run that finished, wrote `complete: True`, and had its rows partially
+removed or never committed afterwards.
 
-Observed 2026-08-19: tenant `c507d57b` (`native-sliding1k`) holds 7,754
-chunks from a run killed hours earlier, against ~129,375 nodes.
-
-This is currently harmless and the reason is worth writing down, because it
-is what makes the fix low priority rather than urgent. Nothing in this
-codebase deletes chunk rows, and chunk ids are content-addressed over
-`(source, text)`, so a later run with the *same* config upserts over the
-partial rows and converges on the right corpus. The hazard is only a
-partial corpus plus a *changed* chunker: then the old ids are not rewritten,
-stay live, and answer queries alongside the new ones.
-
-That is the same silent-mixture failure `resume_is_safe.py` exists to
-prevent -- it just arrives by a route the guard does not check.
-
-What to do: add `complete: bool` to `IngestOutcome`, write the report once
-before the load with `complete=False` and again after with `complete=True`,
-and have `resume_is_safe` require it. Writing it twice is the point; a
-single write at the end cannot distinguish "did not finish" from "never
-started".
-
-Also worth a count assertion: the report records `nodes`, so a resumed run
-can compare the chunk rows actually present for its tenant against what the
-report claims and refuse on a mismatch.
+Lower value than the flag was: it needs a live Postgres to check, so it
+belongs at ingest start rather than in `resume_is_safe`, which is a pure
+file-reading script and is better for being one.
 
 ## B-SIDECAR-RESOLVE-1 -- scoring resolves from PyPI on every run
 

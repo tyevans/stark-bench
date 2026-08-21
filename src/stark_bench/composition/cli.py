@@ -604,7 +604,7 @@ async def _do_ingest(
         if embedding_cache is not None:
             await embedding_cache.close()
 
-    return outcome.as_dict()
+    return replace(outcome, complete=True).as_dict()
 
 
 async def _do_run(config: RunConfig) -> None:
@@ -909,6 +909,21 @@ def main() -> None:
         )
 
     if args.ingest:
+        RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+        # Written BEFORE the load, and written again after. Writing it twice
+        # is the point: a single write at the end cannot distinguish "did
+        # not finish" from "never started", so a killed run leaves the
+        # report of some EARLIER run vouching for a corpus it did not
+        # produce. See B-RESUME-COMPLETE-1 and `IngestOutcome.complete`.
+        #
+        # This deliberately clobbers a previous COMPLETE report. From the
+        # moment rows start being written the store is mid-change, and the
+        # old report stopped describing it. If this run then dies, resume is
+        # refused -- which is the conservative answer for a hazard whose
+        # failure mode is a silent mixture of two chunkings.
+        ingest_report_path(config).write_text(
+            json.dumps({"complete": False, "config_verbatim": config.raw}, indent=2)
+        )
         report = asyncio.run(
             _do_ingest(
                 config,

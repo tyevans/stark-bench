@@ -32,12 +32,23 @@ def resume_is_safe(config_name: str, root: Path = ROOT) -> bool:
     if not report.exists() or not source.exists():
         return False
     try:
-        recorded = json.loads(report.read_text(encoding="utf-8")).get("config_verbatim")
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        recorded = payload.get("config_verbatim")
     except (OSError, ValueError):
         return False
     if recorded is None:
         return False
-    return recorded == source.read_text(encoding="utf-8")
+    if recorded != source.read_text(encoding="utf-8"):
+        return False
+    # A report written before the load carries `complete: False`. Resuming
+    # against it would resume onto a corpus whose own run never finished --
+    # harmless with the same chunker (ids are content-addressed and converge)
+    # and a silent mixture of two chunkings with a different one.
+    #
+    # `.get(..., False)` rather than `True`: a report predating this field
+    # cannot vouch for having finished, and defaulting to permissive would
+    # make every old report claim something it never recorded.
+    return bool(payload.get("complete", False))
 
 
 if __name__ == "__main__":

@@ -55,6 +55,27 @@ class IngestOutcome:
     #: and nothing else in the report would show it.
     cache_hits: int = 0
     cache_misses: int = 0
+    #: Whether the run that wrote this report reached the end.
+    #:
+    #: The report is written TWICE -- once before the load with `False`, once
+    #: after with `True` -- and writing it twice is the whole point. A single
+    #: write at the end cannot distinguish "did not finish" from "never
+    #: started": a killed run leaves either no report (resume refused,
+    #: correct) or the report of some EARLIER run, which then vouches for a
+    #: corpus that run did not produce.
+    #:
+    #: Observed 2026-08-19: tenant `c507d57b` held 7,754 chunks from a run
+    #: killed hours before, against ~129,375 nodes, while an older complete
+    #: report sat beside it.
+    #:
+    #: Harmless on its own -- nothing deletes chunk rows and ids are
+    #: content-addressed, so a later run with the SAME config upserts over
+    #: the partial rows and converges. The hazard is a partial corpus plus a
+    #: CHANGED chunker: the old ids are never rewritten, stay live, and
+    #: answer queries beside the new ones. That is the silent mixture
+    #: `resume_is_safe` exists to prevent, arriving by a route it did not
+    #: check.
+    complete: bool = False
 
     @property
     def corpus_chunks(self) -> int:
