@@ -49,7 +49,10 @@ from stark_bench.adapters.precomputed_embeddings import (
     PrecomputedEmbeddingProvider,
     node_vector_lookup,
 )
-from stark_bench.adapters.model_preflight import require_chat_model
+from stark_bench.adapters.model_preflight import (
+    chat_context_window,
+    require_chat_model,
+)
 from stark_bench.adapters.postgres_retrieval_stats import retrieval_stats
 from stark_bench.adapters.report_file import (
     summarise_cost,
@@ -276,6 +279,38 @@ CHUNKERS = {
 #: chunker, so its whole-document arm caps at 5000 characters for parity with
 #: the Nemotron sweep rather than because the server would refuse more.
 LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text", "qwen3-embedding-0.6b"}
+
+
+class _AgentWarnings(logging.Handler):
+    """Counts warnings an agent emitted, so a degraded run cannot look clean.
+
+    The convention in `agents/` is that a failure the agent survives is
+    logged at WARNING and execution continues -- `rerank: extract failed`
+    is the important one, because a reranker whose every call fails returns
+    retrieval order and scores like a slightly-worse `hybrid`. That is the
+    one failure of this agent that looks like a result.
+
+    Twice on 2026-08-21 a rerank arm did exactly that and wrote a report
+    reporting success. Once the chat peer answered `502 Bad Gateway` to
+    every call for a model llama-swap could not serve, giving
+    `llm_calls_per_query = 0.0` and an mrr that read as a plausible
+    architecture result; once it answered 502 to 8.2% of them, giving a
+    number quietly depressed by an eighth of its queries being unranked.
+    `run_queries` logged `0 empty` both times, because retrieval order is
+    not empty.
+
+    Counting the log rather than asking each agent for a tally is
+    deliberate: it needs nothing from the `Agent` protocol, works for an
+    agent written tomorrow, and cannot drift from the warning it counts
+    because it *is* the warning.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.count = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.count += 1
 
 
 def _tenant_for(config: RunConfig) -> TenantId:
@@ -712,6 +747,9 @@ async def _do_run(config: RunConfig) -> None:
         # Wall time is measured around the whole query set rather than
         # derived from the calls, which overlap under concurrency.
         run_started = perf_counter()
+        warnings = _AgentWarnings()
+        agent_logger = logging.getLogger("stark_bench.agents")
+        agent_logger.addHandler(warnings)
         predictions = await run(
             agent,
             queries,
@@ -721,6 +759,7 @@ async def _do_run(config: RunConfig) -> None:
             checkpoint=partial(write_predictions, preds_path),
         )
         run_wall_s = perf_counter() - run_started
+        agent_logger.removeHandler(warnings)
         write_predictions(preds_path, predictions)
 
         candidates_path = data_dir / "candidates.json"
@@ -766,6 +805,17 @@ async def _do_run(config: RunConfig) -> None:
             value = getattr(agent, cap, None)
             if value is not None:
                 cost[f"budget_{cap}"] = value
+        # See `_AgentWarnings`. Recorded rather than only printed, because
+        # the number that matters is read off the file months later.
+        cost["agent_warnings"] = warnings.count
+        # The per-slot context the chat peer accepted, probed rather
+        # than inferred from the model id -- see `chat_context_window`.
+        # Recorded on every run, including retrieval-only ones where it
+        # is `None`, so the field's absence means "written before this
+        # existed" rather than "measured as nothing".
+        cost["chat_n_ctx"] = chat_context_window(
+            INFERENCE_BASE_URL, config.effective_chat_model or DEFAULT_CHAT_MODEL
+        )
     finally:
         await chunks.close()
         await graph.close()
@@ -779,6 +829,23 @@ async def _do_run(config: RunConfig) -> None:
         queries=len(queries),
     )
     print(metrics)  # noqa: T201
+
+    # After the report, not instead of it: a degraded run's data is still
+    # worth keeping and re-running it costs half an hour. But the process
+    # must exit non-zero, because the caller is usually a loop over arms
+    # and the whole failure mode here is that the arm looks like it
+    # worked. `score_predictions` already refuses empty predictions up
+    # front; this is the same rule for predictions that are present and
+    # wrong.
+    if warnings.count:
+        raise SystemExit(
+            f"{warnings.count} agent warning(s) during the run -- this arm is "
+            f"DEGRADED and its number should not be reported. "
+            f"llm_calls_per_query={cost.get('llm_calls_per_query')}; a rerank "
+            f"agent whose extract calls fail returns retrieval order, which "
+            f"scores like a slightly-worse `hybrid`. Check the run log for "
+            f"'extract failed' and the endpoint for 5xx."
+        )
 
 
 def main() -> None:

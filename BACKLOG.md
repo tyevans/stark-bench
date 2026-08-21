@@ -2,6 +2,44 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-CHAT-CTX-UNRECORDED-1 -- a number's context budget was never in its report
+
+`src/stark_bench/adapters/model_preflight.py:chat_context_window` now probes
+it and `cli.py` records it as `cost["chat_n_ctx"]`, so this entry is about
+the **arms measured before that existed**, which cannot be fixed by code.
+
+The chat peer serves `qwen3.8-27b-64k-txt` from one `--ctx-size 65536`
+process divided by `-np`. The id says `64k` at every setting. On 2026-08-21
+the same id served **16,384** tokens per request at `-np 4` and **65,536**
+at `-np 1`, hours apart, and `gemma-4-26b-qat` went 32,768 -> 65,536 the
+same way.
+
+At 16,384 a `rerank40` arm over whole PRIME documents lost **72 of its
+first 79** LLM calls to `exceed_context_size_error`, and continued: `rerank`
+catches extract failures and falls back to retrieval order. `agent_warnings`
+now stops that arm from being reported.
+
+**What the gate cannot fix is the arm that passed.** `qwen-rel-whole` +
+`rerank40` = **0.46323**, this project's best number, ran with
+`llm_calls_per_query = 1.0` -- 280/280 -- which is impossible at 16,384.
+So it was taken at a lower `-np`, its report does not say which, and it is
+therefore **not currently reproducible**. Every `rerank*` row written before
+today has the same hole; they are clean at `llm/q = 1.0`, so their prompts
+fit, but "fit" is a lower bound and not a setting.
+
+What deferring taught: the value of `retrieval_is_exact` was that it made an
+invisible basis visible on disk. This is the identical shape one layer up,
+and it was missed because the endpoint is treated as a fixed thing that
+either answers or does not. It is a *configured* thing, reconfigured for
+VRAM reasons between runs, and the reconfiguration is silent in both
+directions -- a too-small context degrades an arm, and a restored one makes
+the degradation vanish without explaining the earlier number.
+
+**Closing it** means re-running the pre-2026-08-21 `rerank*` arms with
+`chat_n_ctx` recorded, at roughly an hour each. Worth doing for the 0.46323
+headline specifically, since a headline that cannot be reproduced is worth
+less than a slightly lower one that can.
+
 ## B-BUDGET-CAPS-1: the per-query budget caps are constants, not config
 
 `MAX_TOOL_CALLS`, `MAX_LLM_CALLS` and `MAX_SECONDS` in
@@ -727,9 +765,12 @@ effect of several architecture changes in FINDINGS. 400 costs 0.0028 on
 dense; 800 lands at +0.0003, which is query-embedding noise rather than a
 gain (B-QUERY-EMBED-NONDETERMINISM-1).
 
-800 is not slower in any way that matters: `qwen-rel-sliding1k` dense is
-8.0s at 800, ~30s at 200, and 165.8s exact. A wider graph walk still beats
-scanning 2.25GB of vectors, so the lower setting bought nothing.
+800 is not slower in any way that matters, and the measurement matters
+more than the claim: dense is 4.6s at 200, 7.3s at 400, 5.9s at 800
+across 280 queries, against 165.8s exact. Non-monotonic, because
+page-cache state exceeds the effect. Hybrid is 246.9s at 200 against
+183.9s at 800 -- faster wider, since its cost is BM25 over the terms
+table. So the lower setting bought about a second and cost 0.011 mrr.
 
 **Standing rule, which is why this entry stays instead of being deleted:
 sweep a recall knob on the largest corpus you have.** The small corpus
@@ -740,3 +781,33 @@ corpus was measured; they were stopped and restarted.
 
 Still open: whether 800 suffices at MAG scale, another order of magnitude
 up. The rule above says measure it there rather than extrapolating this row.
+
+## B-ENDPOINT-5XX-DEGRADES-ARMS-1: llama-swap 5xx turns a rerank arm into hybrid
+
+**Half closed 2026-08-21.** The detection half is done: `agent_warnings`
+is recorded in every report and any agent warning makes `--run` exit
+non-zero, after the report is written. What remains is the cause.
+
+The chat peer returns `502 Bad Gateway` under model switching, and
+`503 Loading model` while a peer warms. Both surface as a failed `extract`
+call; the rerank agent logs `rerank: extract failed`, falls back to
+retrieval order, and produces a plausible-looking number. Measured the
+same night: one arm at `llm_calls_per_query = 0.0` scoring 0.29188 (every
+call failed), one at 0.9179 scoring 0.41880 (8.2% failed). Neither was
+distinguishable from a real result without reading that field.
+
+`qwen3.8-27b-64k-txt` returned 502 to a bare four-token chat request while
+`gemma-4-26b-qat` answered 200 in the same second, so this is not load --
+that model could not be served at all at that moment. Whether it is VRAM
+against a resident gemma, a llama-swap config problem, or the peer being
+down is **not diagnosed**, and diagnosing it needs the endpoint owner.
+
+The embedding side already has a workaround: probe `/v1/embeddings` until
+it returns 200 before starting an arm, which fixed three arms that had
+died on `503 Loading model`. The chat side has no equivalent and should
+get one -- a warm probe per arm against the *chat* model, same shape.
+
+Do not add blind retries instead. The openai client already retries every
+`>=500`, and it retried here; the failures outlasted it. A retry count
+tuned without knowing whether the model can be served at all is the kind
+of fix that looks like a fix.

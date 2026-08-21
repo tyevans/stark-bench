@@ -228,6 +228,26 @@ def _retrieval(cost: dict) -> str:
     return f"hnsw/ef={cost.get('hnsw_ef_search', '?')}"
 
 
+def _chat_context(cost: dict) -> str:
+    """The per-slot context the chat peer accepted, in thousands of tokens.
+
+    Rendered beside the chat model because the model id does not determine
+    it: `qwen3.8-27b-64k-txt` is one `--ctx-size 65536` process divided by
+    `-np`, so the same id served 16,384 tokens per request at `-np 4` and
+    65,536 at `-np 1` within one afternoon. A `rerank40` arm over whole
+    documents fits the second and loses most of its LLM calls to the first.
+
+    `--` for retrieval-only arms, which make no chat call, and for reports
+    written before the probe existed -- including the 0.46323 `rerank40`
+    row, whose 280/280 successful calls prove it ran well above 16k without
+    recording which setting it had.
+    """
+    n_ctx = cost.get("chat_n_ctx")
+    if not isinstance(n_ctx, int):
+        return "--"
+    return f"{n_ctx // 1024}k"
+
+
 def render(rows: Iterable[Row]) -> str:
     """One markdown document, one section per dataset."""
     rows = list(rows)
@@ -260,11 +280,11 @@ def render(rows: Iterable[Row]) -> str:
         section = [row for row in rows if row.dataset == dataset]
         out += [f"## `{dataset}`", ""]
         out += [
-            "| config | agent | embed model | chat model | chunker "
+            "| config | agent | embed model | chat model | ctx | chunker "
             "| chunks/node | mrr | hit@1 "
             "| hit@5 | recall@20 | llm calls/query | tokens/query "
             "| gpu seconds | wall seconds | conc | cut off | retrieval |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in sorted(
             section, key=lambda r: (-r.metrics.get("mrr", 0.0), r.config, r.agent)
@@ -272,7 +292,8 @@ def render(rows: Iterable[Row]) -> str:
             cpn = row.chunks_per_node
             out.append(
                 f"| `{row.config}` | {row.agent} | {row.embeddings} "
-                f"| {row.chat_model} | {row.chunker} | {_fmt(cpn, 3)} | "
+                f"| {row.chat_model} | {_chat_context(row.cost)} "
+                f"| {row.chunker} | {_fmt(cpn, 3)} | "
                 + " | ".join(_fmt(row.metrics.get(m)) for m in _METRICS)
                 + f" | {_fmt(row.cost.get('llm_calls_per_query'), 2)} "
                 f"| {_fmt(row.cost.get('tokens_per_query'))} "
