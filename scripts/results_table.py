@@ -38,7 +38,13 @@ def load() -> list[dict]:
     # Not rglob: `results/archive/` holds reports measured against
     # configurations that no longer exist, kept deliberately. See its README.
     for path in sorted(RESULTS.glob("*.json")):
-        if path.name.endswith(".ingest.json"):
+        # `.predictions.json` is raw rankings, written before scoring so a
+        # sidecar failure cannot discard a completed run. It is not a
+        # report: it has no `metrics`, so it rendered as an arm named
+        # `<config>.<agent> | predictions` with every cell `--`. That is
+        # precisely the "looks like a broken run" shape `--check` exists to
+        # flag, and it was flagging itself.
+        if path.name.endswith((".ingest.json", ".predictions.json")):
             continue
         stem = path.stem  # "<config>.<agent>"
         config, _, agent = stem.rpartition(".")

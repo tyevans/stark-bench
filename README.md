@@ -76,6 +76,12 @@ what the tenant holds. It found a 189-chunk discrepancy the first time it
 ran. A `--run` against an empty store now refuses up front, rather than
 scoring nothing retrieved as a bad retriever.
 
+`scripts/results_table.py --check` is the other half: it exits non-zero when
+a cell looks like a *broken* run rather than a bad one -- all-zero metrics,
+an unbacked cost column, a `deep` arm on an edgeless corpus, or a report
+written against a different config than the one now on disk. `--summarise`
+renders; this one judges.
+
 ## Arms
 
 Seventeen configs live in `config/`. The two carrying the current results:
