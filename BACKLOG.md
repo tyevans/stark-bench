@@ -2,39 +2,6 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
-## B-SUMMARISE-1: `--summarise` is not implemented
-
-Task 14 step 4 of the plan
-(`docs/superpowers/plans/2026-08-18-stark-benchmark-harness.md`) ends with:
-
-```
-uv run python -m stark_bench.composition.cli --summarise results/ > RESULTS.md
-```
-
-`src/stark_bench/composition/cli.py` has no `--summarise` flag. The four
-per-architecture report files now exist (`{config}.{agent}.json`), so the
-input to it is in place and the work left is the reading side: load every
-`*.json` under a directory that is not `*.ingest.json`, and emit one row per
-file with `metrics` and `cost` side by side. Cost belongs in the same table as
-accuracy, per the plan -- a number without its cost beside it is not
-actionable.
-
-## B-BUDGET-REPORT-1: budget exhaustion is not in the report
-
-`PerQueryDeepAgent.exhausted_queries` (`src/stark_bench/harness/agents.py`)
-counts how many queries ended at the cap, and nothing reads it.
-`_do_run` in `cli.py` calls `summarise_cost(tools.calls, ...)`, which counts
-calls but cannot distinguish "the agent decided it was finished" from "the
-agent was cut off". Those are different findings: a deep run where 90% of
-queries hit the cap is a run whose accuracy number is about
-`MAX_TOOL_CALLS`, not about the architecture.
-
-The fix is small and was left out to keep the wiring commit narrow: thread
-the agent back out of `run(...)` (or read it off the built agent, which
-`_do_run` still holds) and pass `exhausted_queries` into `write_report`.
-`write_report` takes a fixed keyword set, so it needs one more parameter --
-that is the only reason this is not a one-liner.
-
 ## B-BUDGET-CAPS-1: the per-query budget caps are constants, not config
 
 `MAX_TOOL_CALLS`, `MAX_LLM_CALLS` and `MAX_SECONDS` in

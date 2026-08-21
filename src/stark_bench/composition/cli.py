@@ -699,6 +699,17 @@ async def _do_run(config: RunConfig) -> None:
             # times. `query_embed_live_calls: 0` on a dense run is the only
             # artifact that proves a byte of this reached the wire.
             cost.update(embeddings.stats())
+
+        # How many queries ended at the budget cap rather than because the
+        # agent decided it was finished. Those are different findings: a
+        # `deep` run where most queries are cut off has an accuracy number
+        # about MAX_TOOL_CALLS, not about the architecture (B-BUDGET-CAPS-1
+        # records that the caps are not yet in the config either).
+        #
+        # `None` rather than 0 for an agent with no budget: `dense` never
+        # exhausts, and reporting 0 would claim it ran to completion under a
+        # cap it does not have. Same rule as `tokens_per_query`.
+        cost["exhausted_queries"] = getattr(agent, "exhausted_queries", None)
     finally:
         await chunks.close()
         await graph.close()
