@@ -145,6 +145,24 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
         pair_scores=True,
         passage_mode="title_rel_ranked",
     ),
+    # Twice the candidates, on the encoding that made them affordable.
+    #
+    # `fetch` is the ceiling on what reranking can fix -- it can only
+    # reorder what retrieval found -- and the measured curve has not
+    # flattened: recall@20 was 0.4651 at fetch=20 (identical to `hybrid`, by
+    # construction: same 20 candidates, k=20, so only the order changes),
+    # and 0.5369 at fetch=40 on full documents.
+    #
+    # Doubling used to mean doubling a 13,133-token prompt. On titles it is
+    # ~350 extra prefill tokens, well under a second at aggregate rates.
+    # Decode roughly doubles, which is the real bill.
+    "rerank80titlerelranked": lambda config: RerankAgent(
+        k=config.k,
+        fetch=80,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_ranked",
+    ),
 }
 
 

@@ -74,6 +74,7 @@ def test_every_architecture_is_reachable_by_name():
         "rerank40title",
         "rerank40titlerel",
         "rerank40titlerelranked",
+        "rerank80titlerelranked",
     }
 
 
