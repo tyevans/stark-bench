@@ -629,48 +629,71 @@ Not filed as a defect -- nothing is wrong -- but the cost model this project
 has been reasoning with ("chars/min is a constant") is wrong, and it produced
 two ETAs today that were out by 3x in opposite directions.
 
-## B-QUERY-LATENCY-SPLIT-1 -- how much of a query's 0.28s was the embed?
+## B-QUERY-LATENCY-SPLIT-1 — ANSWERED: dense 0.281s, lexical 0.575s
 
-`PrewarmedQueryEmbeddings` removes one HTTP round-trip per query, and the
-round-trip was demonstrably there: `run_queries.run:47` is a serial loop and
-`ChunkRetriever.retrieve_chunks` embedded inside it. What is **not** measured
-is how the 0.28s/query `dense` was paying divides between that round-trip and
-the pgvector search it precedes (`k*4` = 80 chunks overfetched, then folded).
+"How much of a query's 0.28s was the embed?" -- answered from the reports
+rather than by instrumenting anything, since `seconds_total` on a
+retrieval-only arm IS the retrieval time.
 
-If pgvector is the larger half, this change buys less than it looks like it
-should, and the next lever is the index or the overfetch -- not the endpoint.
+| arm | per query | what it contains |
+|---|---|---|
+| `dense` | 0.281s | one query embed + pgvector search |
+| `lexical` | 0.575s | BM25 over the 5.7M-row terms table, no embed |
+| `hybrid` | 0.890s | both, and 0.575 + 0.281 = 0.856 |
 
-Deliberately not measured when written: the `qwen-rel-sliding1k` ingest was
-running, and both halves of the probe contend with it. CLAUDE.md records a
-scoring pass costing an in-flight ingest 36% of its rate by touching
-Postgres, so a number taken now would be wrong in the direction that flatters
-the change.
+Two things worth keeping:
 
-The measurement, once the stores are quiet: time `embed_query` for one query
-and one `retrieve_chunks` separately against `qwen-rel-whole`, then re-run
-`dense` and compare wall time against the recorded 78.66s. The report now
-carries `query_embed_live_calls`, which must read `0` -- a non-zero value
-means the prewarm missed and the wall-clock comparison is measuring something
-else.
+- **Lexical is twice dense.** BM25 over that terms table costs more than a
+  vector search plus an embedding round trip. The intuition that the
+  network call dominates is wrong here.
+- **The channels are additive**, so `hybrid` is not sharing work between
+  them. Whether it could is a separate question nobody has asked.
 
-## B-RERANK-RETRIEVAL-FLOOR-1
+The embed's own share is now smaller than the 0.281s suggests: those
+figures predate `PrewarmedQueryEmbeddings`, which batches all 280 query
+embeddings into 3 requests before the run and reports
+`query_embed_live_calls: 0`. A dense arm re-run today would be nearly all
+pgvector. That re-run needs the endpoint and has not happened.
 
-`agents/rerank.py`, and any future work on prompt size.
+## B-RERANK-RETRIEVAL-FLOOR-1 — CORRECTED: retrieval is ~0.9s, not ~8.8s
 
-Measured 2026-08-20 from a raw endpoint response during `rerank40lean`:
-prefill 13,133 tok / 10.56s, decode 627 tok / 9.27s -- **19.8s of LLM
-against 28.6s observed per query**. The residual **~8.8s is retrieval**
-(hybrid = pgvector + BM25 over the 5.7M-row terms table), and nothing in
-any report shows it.
+**The original claim in this entry was wrong and is worth keeping as an
+example of how.** It said: prefill 13,133 tok / 10.56s plus decode 627 tok
+/ 9.27s is 19.8s of LLM against 28.6s observed per query, so "~8.8s is
+retrieval".
 
-Why this matters before the next lean arm: `rerank40title` cuts prefill
-from 10.6s to ~0.3s, which makes retrieval roughly two-thirds of the
-remaining query. Further prompt work has a hard floor there.
+Measured directly from the reports' own `seconds_total`, which is the sum
+of tool-call durations and for a retrieval-only arm is exactly retrieval:
 
-Deferred because measuring it needs the database quiet, and an ingest plus
-a scoring run were in flight. Subsumes the query-embedding half of
-B-QUERY-LATENCY-SPLIT-1, which the prewarm already answered:
-`prewarmed 280 query vectors in 3 requests`.
+| arm | retrieval, per query |
+|---|---|
+| `dense` (pgvector + query embed) | 0.281s |
+| `lexical` (BM25 over the 5.7M-row terms table) | 0.575s |
+| **`hybrid` (what the reranker fetches with)** | **0.890s** |
+
+Almost exactly additive: 0.575 + 0.281 = 0.856 against 0.890 measured. The
+reranker fetches 40 rather than 20, so its retrieval is somewhat more than
+0.890s -- and nowhere near 8.8s.
+
+### The mistake
+
+A residual was computed by subtracting ONE sampled query's LLM time from
+the AVERAGE per-query wall time. Those are not the same population.
+Candidate documents on this corpus run from 357 to 133,778 characters, so
+prompt size varies enormously between queries; the sampled response had
+13,133 prompt tokens and was cheaper than the mean. The residual absorbed
+that difference and got attributed to retrieval.
+
+This is the mistake CLAUDE.md already records under "two rates from two
+different windows are not comparable", in a new costume. **Sample both
+sides of a subtraction from the same population, or do not subtract.**
+
+### What still stands
+
+Retrieval IS now a meaningful share: at `rerank40title`'s 1.70s/query with
+concurrency 4, roughly 0.9-1.4s of retrieval per query is most of it. The
+conclusion "further prompt work has a floor at retrieval" survives -- it was
+right for the wrong reason, and the floor is lower than claimed.
 
 ## B-RERANK-OUTPUT-ENCODING-1
 
