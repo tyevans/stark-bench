@@ -46,33 +46,6 @@ tell you: that `self_loops_dropped` is non-zero (STaRK's PRIME has them, so
 a zero is more likely a loader that stopped looking than a clean corpus),
 and that `edges` matches the line count of `edges.jsonl` minus those drops.
 
-## B-ADA002-TABLE-1: the `vss-control` corpus is orphaned in the pre-rename `kg_chunks` table
-
-`_table_for` in `src/stark_bench/composition/cli.py` derives a per-embedding-model
-chunk table (`kg_chunks_precomputed_ada002` for `vss-control`). It landed in
-e6411e3 (17:14). The `vss-control` ingest ran at 17:05 and the dense run at
-17:08, both against the hardcoded `kg_chunks` of the time -- so
-`results/vss-control.dense.json` (mrr 0.23057) was measured against a table
-the harness no longer reads.
-
-Today: `kg_chunks` holds 129,375 rows for tenant
-`9ef286ae-92c2-5655-8d1a-47a9ff4d0892`, which is exactly
-`_tenant_for(vss-control)`. `kg_chunks_precomputed_ada002` holds **zero** rows;
-`ensure_schema` creates it empty on every run. Every one of the 280 queries
-therefore retrieves nothing, in *all three* retrieval modes -- this is not a
-hybrid-vs-dense difference, and any future `vss-control` number is a data
-finding until the corpus is back.
-
-Two ways out, both a decision rather than a fix:
-
-- rename the data across (`kg_chunks` also holds 200 rows for a second tenant,
-  `5a7ba3cf-...`, and there is a companion `kg_chunks_terms`), or
-- re-ingest `vss-control`, which is cheap because its embeddings are
-  precomputed -- no endpoint time.
-
-Until then `results/vss-control.dense.json` is not comparable with anything
-produced after e6411e3 and should not be quoted beside a post-rename number.
-
 ## B-SLIDING-REDUNDANT-1 — SlidingWindowChunker emits one fully-redundant tail chunk
 
 `redstring/extraction/chunkers/sliding_window_chunker.py`. For every document
@@ -238,24 +211,6 @@ What to do:
   `EmbeddingProviderError`, so a caller *can* distinguish these — it just
   has to parse the message, which argues for a status code on the error
   rather than a retry loop in this repo.
-
-## B-RESUME-COMPLETE-1 — PARTLY DONE: completion is recorded; the count check is not
-
-`IngestOutcome.complete` now exists, the report is written twice (before the
-load with `False`, after with `True`), and `resume_is_safe` requires it. A
-report predating the field refuses, because it cannot vouch for having
-finished.
-
-**What is still open** is the second half of the original entry: a count
-assertion. The report records `nodes`, so a resumed run could compare the
-chunk rows actually present for its tenant against what the report claims
-and refuse on a mismatch. That catches a case the completion flag cannot --
-a run that finished, wrote `complete: True`, and had its rows partially
-removed or never committed afterwards.
-
-Lower value than the flag was: it needs a live Postgres to check, so it
-belongs at ingest start rather than in `resume_is_safe`, which is a pure
-file-reading script and is better for being one.
 
 ## B-EMBED-COLDSTART-1 — one embedding timeout kills a two-hour ingest
 
@@ -811,3 +766,44 @@ exist: `ToolCall` carries cost and nothing carries per-query observations.
 Deferred for that reason -- it is a real design addition, not a one-line
 change, and inventing the channel casually is how the agent seam stops
 being a seam.
+
+## B-CHUNK-COUNT-OVERSTATED-1 — reported chunks count writes, not rows
+
+`scripts/verify_corpus.py` compares each ingest report's `chunks + skipped`
+against `count(*)` for the arm's tenant. Every whole-document and
+boundary arm agrees exactly. Both sliding-window arms do not:
+
+| arm | claimed | actual | gap |
+|---|---|---|---|
+| `qwen-rel-sliding1k` | 549,886 | 549,697 | **189** |
+| `qwen-mini-sliding1k` | 24,284 | 24,274 | 10 |
+
+**Mechanism, reproduced exactly.** `stark_ingest_engine.py:507` builds
+`id=chunk_id(source_id, piece.text)` -- source and TEXT, with no
+`start_char`. A sliding window over repetitive text produces windows whose
+text is byte-identical, those share an id, and the upsert merges them.
+
+Re-chunking `prime-rel` offline: 38,964 documents over 1000 characters
+produce 459,475 chunks, of which **189 collapse across 78 documents** --
+the observed gap, to the unit.
+
+**The dedup is right; the reporting is wrong.** Two identical chunk texts
+embed to the same vector and `aggregation: max` takes the best, so a second
+copy adds nothing to retrieval and costs a row. Adding `start_char` to the
+id would "fix" the count by storing redundant duplicates, which is worse.
+
+So the defect is that `chunks` counts writes ATTEMPTED and is reported as
+if it counted rows. `chunks/node` for `qwen-rel-sliding1k` is 4.250 as
+reported and 4.249 in fact -- immaterial here, and only immaterial because
+the collision rate is 0.034%. A chunker that produced many duplicates would
+lose a lot of them silently, and nothing would say so.
+
+Fix: report rows actually present alongside writes attempted, the same
+split `seconds_total` and `seconds_wall` now make. Deferred because it
+needs the ingest to read back its own tenant count, and the standalone
+script already answers the question for anyone who asks it.
+
+Related: B-SLIDING-REDUNDANT-1 is a DIFFERENT defect with a similar smell.
+Its redundant tail chunk has a distinct `start_char` but identical text to
+part of its predecessor -- not byte-identical to a whole chunk, so it does
+NOT collide, and it is still written.
