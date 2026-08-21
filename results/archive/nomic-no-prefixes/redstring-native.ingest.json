@@ -1,0 +1,11 @@
+{
+  "nodes": 129375,
+  "chunks": 0,
+  "skipped": 147329,
+  "edges": 8100498,
+  "self_loops_dropped": 0,
+  "edges_ingested": true,
+  "resume": true,
+  "existing_ids_load_s": 0.2547930380096659,
+  "wall_time_s": 2107.0272133810213
+}

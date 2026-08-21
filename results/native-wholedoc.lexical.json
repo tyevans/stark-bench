@@ -1,0 +1,29 @@
+{
+  "config_name": "native-wholedoc",
+  "config_verbatim": "# The confound-separating cell.\n#\n# NOTE: the chunker is `capped-whole-5000`, not `whole-document`. The\n# embedding server serves Nemotron-3-Embed-1B with a 4096-token per-slot\n# context and a 2048-token ubatch, so 4,748 of 129,375 documents (3.67%)\n# cannot be embedded whole. They are SPLIT (zero overlap), not truncated, so\n# this arm holds exactly the same text as the chunked arms -- see the\n# CHUNKERS entry in harness/cli.py. Costs 1.057 chunks/node against 1.000.\n#\n# `redstring-native` differs from `vss-control` in TWO ways at once: the\n# embedding model (ada-002 1536d -> Nemotron 2048d) and the chunking\n# (whole-document -> boundary-preference). A gap between them cannot be\n# attributed to either.\n#\n# This config holds the chunking fixed at whole-document, matching\n# vss-control, and varies only the embedding model. vss-control minus this\n# is the model's contribution; this minus redstring-native is chunking's.\n#\n# Shares one chunk table with redstring-native -- same model, same\n# dimension and prefixes, so ADR 0002 and 0043 are satisfied -- and is\n# isolated from it by tenant_id, which is derived from `name`.\nname: native-wholedoc\ndataset: prime\nsplit: test-0.1\nchunker: capped-whole-5000\nembeddings: Nemotron-3-Embed-1B\ndimension: 2048\naggregation: max\nagent: dense\nk: 20\n\n# nomic-embed-text-v1.5 is asymmetric: it was trained with these exact task\n# prefixes and expects them at inference. Omitting them is silent -- the\n# vectors are well-formed and score plausibly, just worse than the model can\n# do -- which is why every nomic config states them rather than relying on a\n# default.\ndocument_prefix: \"passage: \"\nquery_prefix: \"query: \"\n",
+  "queries": 280,
+  "metrics": {
+    "mrr": 0.19440869212682757,
+    "hit@1": 0.14642857142857144,
+    "hit@5": 0.2714285714285714,
+    "recall@20": 0.21967732733381645
+  },
+  "cost": {
+    "tool_calls_per_query": 1.0,
+    "llm_calls_per_query": 0.0,
+    "tokens_per_query": null,
+    "seconds_total": 123.4127949468093
+  },
+  "ingest": {
+    "nodes": 129375,
+    "chunks": 49280,
+    "skipped": 87523,
+    "edges": 8100498,
+    "self_loops_dropped": 0,
+    "edges_ingested": true,
+    "resume": true,
+    "existing_ids_load_s": 0.10990757402032614,
+    "wall_time_s": 2566.9451638599858,
+    "config_verbatim": "# The confound-separating cell.\n#\n# NOTE: the chunker is `capped-whole-5000`, not `whole-document`. The\n# embedding server serves Nemotron-3-Embed-1B with a 4096-token per-slot\n# context and a 2048-token ubatch, so 4,748 of 129,375 documents (3.67%)\n# cannot be embedded whole. They are SPLIT (zero overlap), not truncated, so\n# this arm holds exactly the same text as the chunked arms -- see the\n# CHUNKERS entry in harness/cli.py. Costs 1.057 chunks/node against 1.000.\n#\n# `redstring-native` differs from `vss-control` in TWO ways at once: the\n# embedding model (ada-002 1536d -> Nemotron 2048d) and the chunking\n# (whole-document -> boundary-preference). A gap between them cannot be\n# attributed to either.\n#\n# This config holds the chunking fixed at whole-document, matching\n# vss-control, and varies only the embedding model. vss-control minus this\n# is the model's contribution; this minus redstring-native is chunking's.\n#\n# Shares one chunk table with redstring-native -- same model, same\n# dimension and prefixes, so ADR 0002 and 0043 are satisfied -- and is\n# isolated from it by tenant_id, which is derived from `name`.\nname: native-wholedoc\ndataset: prime\nsplit: test-0.1\nchunker: capped-whole-5000\nembeddings: Nemotron-3-Embed-1B\ndimension: 2048\naggregation: max\nagent: dense\nk: 20\n\n# nomic-embed-text-v1.5 is asymmetric: it was trained with these exact task\n# prefixes and expects them at inference. Omitting them is silent -- the\n# vectors are well-formed and score plausibly, just worse than the model can\n# do -- which is why every nomic config states them rather than relying on a\n# default.\ndocument_prefix: \"passage: \"\nquery_prefix: \"query: \"\n"
+  }
+}

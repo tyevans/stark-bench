@@ -1,0 +1,29 @@
+{
+  "config_name": "qwen-mini-boundary",
+  "config_verbatim": "# Pipeline smoke-test cell -- NOT a reportable number.\n#\n# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are\n# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors\n# sampled from the candidate list (seed 20260819). `candidates.json` is\n# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with\n# both endpoints inside the subset, so `upsert_relationships` cannot raise\n# `MissingEntityError`. The query files are symlinks -- there is one copy.\n#\n# ## Read the scores as a floor on nothing and a check on everything\n#\n# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's\n# 129,375, so every metric here is INFLATED against the real arms and the two\n# must never appear in the same table. What this cell is for is the other\n# thing: it exercises prefixes, dimension, table keying, the chunker, the\n# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather\n# than ~90, on a model no arm in this repo has ever run.\n#\n# Every real bug in this project has been silent and surfaced only because a\n# number looked wrong. This is the cheapest place to find the next one.\n#\n# Arm against arm within the mini set is still meaningful -- the three mini\n# configs differ only in chunker, exactly as the full sweep does.\nname: qwen-mini-boundary\ndataset: prime-mini\nsplit: test-0.1\nchunker: boundary-preference\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# See `qwen-wholedoc.yaml` for why the document side is empty and the query\n# side carries an instruction. Every qwen config states both.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n",
+  "queries": 280,
+  "metrics": {
+    "mrr": 0.3875706127711705,
+    "hit@1": 0.30714285714285716,
+    "hit@5": 0.48928571428571427,
+    "recall@20": 0.5391590660704034
+  },
+  "cost": {
+    "tool_calls_per_query": 1.0,
+    "llm_calls_per_query": 0.0,
+    "tokens_per_query": null,
+    "seconds_total": 60.55188938113861
+  },
+  "ingest": {
+    "nodes": 10000,
+    "chunks": 11639,
+    "skipped": 0,
+    "edges": 85524,
+    "self_loops_dropped": 0,
+    "edges_ingested": true,
+    "resume": true,
+    "existing_ids_load_s": 0.03908820892684162,
+    "wall_time_s": 350.1830170030007,
+    "config_verbatim": "# Pipeline smoke-test cell -- NOT a reportable number.\n#\n# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are\n# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors\n# sampled from the candidate list (seed 20260819). `candidates.json` is\n# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with\n# both endpoints inside the subset, so `upsert_relationships` cannot raise\n# `MissingEntityError`. The query files are symlinks -- there is one copy.\n#\n# ## Read the scores as a floor on nothing and a check on everything\n#\n# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's\n# 129,375, so every metric here is INFLATED against the real arms and the two\n# must never appear in the same table. What this cell is for is the other\n# thing: it exercises prefixes, dimension, table keying, the chunker, the\n# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather\n# than ~90, on a model no arm in this repo has ever run.\n#\n# Every real bug in this project has been silent and surfaced only because a\n# number looked wrong. This is the cheapest place to find the next one.\n#\n# Arm against arm within the mini set is still meaningful -- the three mini\n# configs differ only in chunker, exactly as the full sweep does.\nname: qwen-mini-boundary\ndataset: prime-mini\nsplit: test-0.1\nchunker: boundary-preference\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# See `qwen-wholedoc.yaml` for why the document side is empty and the query\n# side carries an instruction. Every qwen config states both.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n"
+  }
+}

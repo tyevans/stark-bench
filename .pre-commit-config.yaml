@@ -3,11 +3,20 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        # results/ holds machine-written artifacts; store them
+        # byte-for-byte as the harness emitted them.
+        exclude: ^results/
       - id: end-of-file-fixer
+        # results/ holds machine-written artifacts; store them
+        # byte-for-byte as the harness emitted them.
+        exclude: ^results/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
+        # results/ holds machine-written artifacts; store them
+        # byte-for-byte as the harness emitted them.
+        exclude: ^results/
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.8.4
     hooks:

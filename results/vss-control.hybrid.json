@@ -1,0 +1,28 @@
+{
+  "config_name": "vss-control",
+  "config_verbatim": "name: vss-control\ndataset: prime\nsplit: test-0.1\n# One chunk per node: STaRK's precomputed vectors are one per node document,\n# so the control path must present each document whole for them to apply.\nchunker: whole-document\nembeddings: precomputed-ada002\ndimension: 1536\naggregation: max\nagent: dense\nk: 20\n",
+  "queries": 280,
+  "metrics": {
+    "mrr": 0.23110529664637788,
+    "hit@1": 0.16428571428571428,
+    "hit@5": 0.32142857142857145,
+    "recall@20": 0.3709588533666517
+  },
+  "cost": {
+    "tool_calls_per_query": 1.0,
+    "llm_calls_per_query": 0.0,
+    "tokens_per_query": null,
+    "seconds_total": 176.3127780490322
+  },
+  "ingest": {
+    "nodes": 129375,
+    "chunks": 129375,
+    "skipped": 0,
+    "edges": 0,
+    "self_loops_dropped": 0,
+    "edges_ingested": false,
+    "resume": false,
+    "existing_ids_load_s": 0.0,
+    "wall_time_s": 296.9556981920032
+  }
+}

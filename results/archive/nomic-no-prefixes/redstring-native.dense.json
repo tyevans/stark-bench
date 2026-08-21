@@ -1,0 +1,18 @@
+{
+  "config_name": "redstring-native",
+  "config_verbatim": "name: redstring-native\ndataset: prime\nsplit: test-0.1\nchunker: boundary-preference\nembeddings: nomic-embed-text\ndimension: 768\naggregation: max\nagent: hybrid\nk: 20\n",
+  "queries": 280,
+  "metrics": {
+    "mrr": 0.19481086369071687,
+    "hit@1": 0.13214285714285715,
+    "hit@5": 0.2642857142857143,
+    "recall@20": 0.31112375796905584
+  },
+  "cost": {
+    "tool_calls_per_query": 1.0,
+    "llm_calls_per_query": 0.0,
+    "tokens_per_query": null,
+    "seconds_total": 116.85604477545712
+  },
+  "ingest": {}
+}

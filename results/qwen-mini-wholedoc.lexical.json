@@ -1,0 +1,29 @@
+{
+  "config_name": "qwen-mini-wholedoc",
+  "config_verbatim": "# Pipeline smoke-test cell -- NOT a reportable number.\n#\n# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are\n# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors\n# sampled from the candidate list (seed 20260819). `candidates.json` is\n# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with\n# both endpoints inside the subset, so `upsert_relationships` cannot raise\n# `MissingEntityError`. The query files are symlinks -- there is one copy.\n#\n# ## Read the scores as a floor on nothing and a check on everything\n#\n# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's\n# 129,375, so every metric here is INFLATED against the real arms and the two\n# must never appear in the same table. What this cell is for is the other\n# thing: it exercises prefixes, dimension, table keying, the chunker, the\n# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather\n# than ~90, on a model no arm in this repo has ever run.\n#\n# Every real bug in this project has been silent and surfaced only because a\n# number looked wrong. This is the cheapest place to find the next one.\n#\n# Arm against arm within the mini set is still meaningful -- the three mini\n# configs differ only in chunker, exactly as the full sweep does.\nname: qwen-mini-wholedoc\ndataset: prime-mini\nsplit: test-0.1\nchunker: capped-whole-2400\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# Qwen3-Embedding is asymmetric in a different shape from every other model\n# here. The corpus side takes NO prefix -- the empty string is the correct\n# value, not an omission -- and the query side takes a one-line instruction\n# followed by `Query: `, which is the format the model was trained with.\n# Getting this wrong is silent in the usual way: the vectors stay well-formed\n# and score plausibly, just below what the model can do.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n",
+  "queries": 280,
+  "metrics": {
+    "mrr": 0.36617571106180546,
+    "hit@1": 0.32142857142857145,
+    "hit@5": 0.41785714285714287,
+    "recall@20": 0.4133977141763483
+  },
+  "cost": {
+    "tool_calls_per_query": 1.0,
+    "llm_calls_per_query": 0.0,
+    "tokens_per_query": null,
+    "seconds_total": 18.493469503009692
+  },
+  "ingest": {
+    "nodes": 10000,
+    "chunks": 11981,
+    "skipped": 0,
+    "edges": 85524,
+    "self_loops_dropped": 0,
+    "edges_ingested": true,
+    "resume": true,
+    "existing_ids_load_s": 0.035725857014767826,
+    "wall_time_s": 345.6456299459096,
+    "config_verbatim": "# Pipeline smoke-test cell -- NOT a reportable number.\n#\n# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are\n# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors\n# sampled from the candidate list (seed 20260819). `candidates.json` is\n# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with\n# both endpoints inside the subset, so `upsert_relationships` cannot raise\n# `MissingEntityError`. The query files are symlinks -- there is one copy.\n#\n# ## Read the scores as a floor on nothing and a check on everything\n#\n# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's\n# 129,375, so every metric here is INFLATED against the real arms and the two\n# must never appear in the same table. What this cell is for is the other\n# thing: it exercises prefixes, dimension, table keying, the chunker, the\n# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather\n# than ~90, on a model no arm in this repo has ever run.\n#\n# Every real bug in this project has been silent and surfaced only because a\n# number looked wrong. This is the cheapest place to find the next one.\n#\n# Arm against arm within the mini set is still meaningful -- the three mini\n# configs differ only in chunker, exactly as the full sweep does.\nname: qwen-mini-wholedoc\ndataset: prime-mini\nsplit: test-0.1\nchunker: capped-whole-2400\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# Qwen3-Embedding is asymmetric in a different shape from every other model\n# here. The corpus side takes NO prefix -- the empty string is the correct\n# value, not an omission -- and the query side takes a one-line instruction\n# followed by `Query: `, which is the format the model was trained with.\n# Getting this wrong is silent in the usual way: the vectors stay well-formed\n# and score plausibly, just below what the model can do.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n"
+  }
+}

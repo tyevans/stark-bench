@@ -1,0 +1,29 @@
+{
+  "config_name": "redstring-native",
+  "config_verbatim": "name: redstring-native\ndataset: prime\nsplit: test-0.1\nchunker: boundary-preference\nembeddings: Nemotron-3-Embed-1B\ndimension: 2048\naggregation: max\nagent: hybrid\nk: 20\n\n# nomic-embed-text-v1.5 is asymmetric: it was trained with these exact task\n# prefixes and expects them at inference. Omitting them is silent -- the\n# vectors are well-formed and score plausibly, just worse than the model can\n# do -- which is why every nomic config states them rather than relying on a\n# default.\ndocument_prefix: \"passage: \"\nquery_prefix: \"query: \"\n",
+  "queries": 280,
+  "metrics": {
+    "mrr": 0.2014099296448486,
+    "hit@1": 0.14285714285714285,
+    "hit@5": 0.275,
+    "recall@20": 0.24017468714820486
+  },
+  "cost": {
+    "tool_calls_per_query": 1.0,
+    "llm_calls_per_query": 0.0,
+    "tokens_per_query": null,
+    "seconds_total": 123.12363959499635
+  },
+  "ingest": {
+    "nodes": 129375,
+    "chunks": 147329,
+    "skipped": 0,
+    "edges": 8100498,
+    "self_loops_dropped": 0,
+    "edges_ingested": true,
+    "resume": false,
+    "existing_ids_load_s": 0.0,
+    "wall_time_s": 5066.5038119320525,
+    "config_verbatim": "name: redstring-native\ndataset: prime\nsplit: test-0.1\nchunker: boundary-preference\nembeddings: Nemotron-3-Embed-1B\ndimension: 2048\naggregation: max\nagent: hybrid\nk: 20\n\n# nomic-embed-text-v1.5 is asymmetric: it was trained with these exact task\n# prefixes and expects them at inference. Omitting them is silent -- the\n# vectors are well-formed and score plausibly, just worse than the model can\n# do -- which is why every nomic config states them rather than relying on a\n# default.\ndocument_prefix: \"passage: \"\nquery_prefix: \"query: \"\n"
+  }
+}
