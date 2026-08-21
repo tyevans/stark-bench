@@ -2,6 +2,44 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-EXTRACT-USAGE-1 -- the cost half of every LLM arm is unmeasured
+
+`adapters/redstring_toolset.py:341` records `tokens=None` for every
+`extract` call, with an accurate comment: redstring's `LlmProvider.extract`
+returns the parsed model and no usage. So `tokens_per_query` is `None` on
+all sixteen LLM arms in `results/`, and `RESULTS.md` renders `--`.
+
+That was tolerable while the question was "which architecture scores
+highest". It stopped being tolerable on 2026-08-21, when the question
+became **accuracy per token**: `rerank40titlerelmatrix` scores 0.41771
+against `rerank40`-on-whole-documents at 0.46323, and the entire argument
+for the lean arm is that it buys 90% of the accuracy for a small fraction
+of the prompt. **We cannot currently state that fraction.** Wall time is
+the only proxy in the file (800s against ~8400s projected), and wall time
+moves with `-np`, batching and page cache, none of which are the
+architecture.
+
+Two ways to close it, and the choice is not obvious:
+
+1. **Widen the port.** `extract` returns usage alongside the model, the way
+   `EmbeddingProvider` grew `embed_query` for the prefix gap (redstring ADR
+   0043). Correct, reusable, and needs a redstring PR -- the third design
+   gap this project has found in that port, which is itself worth noting.
+2. **Record `len(prompt)` at the call site**, which the toolset already
+   has. Exact rather than estimated, free, and directly comparable across
+   arms -- but characters, not tokens, so it cannot be compared to a
+   provider's bill or to a context limit.
+
+(2) is not a worse version of (1); it measures a different thing. Prompt
+characters are what the *architecture* controls, and they are the same
+number whatever tokenizer is downstream. Completion tokens are what the
+*server* spends. An honest cost column probably wants both.
+
+**Do not synthesise tokens from characters.** That is the estimate-beside-
+the-real-thing mistake CLAUDE.md records for the chunk cap, where three
+wrong caps in a row came from reasoning about tokenization instead of
+asking the server.
+
 ## B-CHAT-CTX-UNRECORDED-1 -- a number's context budget was never in its report
 
 `src/stark_bench/adapters/model_preflight.py:chat_context_window` now probes

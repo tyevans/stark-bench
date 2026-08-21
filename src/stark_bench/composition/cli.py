@@ -281,36 +281,72 @@ CHUNKERS = {
 LIVE_EMBEDDINGS = {"Nemotron-3-Embed-1B", "nomic-embed-text", "qwen3-embedding-0.6b"}
 
 
+#: Substrings marking a warning that means **this query was not ranked by
+#: the architecture under test**. The agent survived and fell back to
+#: retrieval order, which scores like a slightly-worse `hybrid` -- the one
+#: failure of a reranker that looks like a result.
+#:
+#: Matched on the format string, not the formatted message, so a query id
+#: cannot accidentally contain one.
+_DEGRADING_WARNINGS = (
+    # The LLM call raised. Seen at 91% when the chat peer's per-slot
+    # context was `--ctx-size / -np` rather than the number in its id.
+    "extract failed",
+    # The call succeeded and returned `{"scores": []}`. `llm_calls_per_query`
+    # stays a clean 1.0, because the call did happen -- this is the only
+    # signal that it accomplished nothing. Seen at 45% on
+    # `qwen3.8-27b-64k-txt` under the matrix schema on 2026-08-21, and at
+    # ~100% on 2026-08-20 when the schema docstrings were stripped.
+    "empty scores",
+)
+
+
 class _AgentWarnings(logging.Handler):
-    """Counts warnings an agent emitted, so a degraded run cannot look clean.
+    """Separates a degraded run from a run that merely reported on itself.
 
     The convention in `agents/` is that a failure the agent survives is
-    logged at WARNING and execution continues -- `rerank: extract failed`
-    is the important one, because a reranker whose every call fails returns
-    retrieval order and scores like a slightly-worse `hybrid`. That is the
-    one failure of this agent that looks like a result.
+    logged at WARNING and execution continues. Counting the log rather than
+    asking each agent for a tally needs nothing from the `Agent` protocol,
+    works for an agent written tomorrow, and cannot drift from the warning
+    it counts because it *is* the warning.
 
-    Twice on 2026-08-21 a rerank arm did exactly that and wrote a report
-    reporting success. Once the chat peer answered `502 Bad Gateway` to
-    every call for a model llama-swap could not serve, giving
-    `llm_calls_per_query = 0.0` and an mrr that read as a plausible
-    architecture result; once it answered 502 to 8.2% of them, giving a
-    number quietly depressed by an eighth of its queries being unranked.
-    `run_queries` logged `0 empty` both times, because retrieval order is
-    not empty.
+    ## Why two counters and not one
 
-    Counting the log rather than asking each agent for a tally is
-    deliberate: it needs nothing from the `Agent` protocol, works for an
-    agent written tomorrow, and cannot drift from the warning it counts
-    because it *is* the warning.
+    This started as a single count of every WARNING, and that was wrong in
+    both directions on its first real outing (2026-08-21, four
+    `rerank40titlerelmatrix` arms).
+
+    Two gemma cells logged 171 and 206 warnings and were **clean**: every
+    one was `dimensions are not behaving orthogonally`, which reports that
+    the model gave one number three times. That is a finding *about the
+    encoding*, produced by an arm that ran correctly, and failing the arm
+    for it would train everyone to pass `--force`.
+
+    Two qwen cells logged similar totals and were **44.6% and 47.1%
+    fallback to retrieval order** -- unusable. A single number could not
+    tell those apart, and the mrr could not either: 0.36942 sits in exactly
+    the range a slightly-worse reranker would produce.
+
+    So `degraded` gates the run and `diagnostics` is recorded beside it.
+    A diagnostic is not a lesser defect; it is a different kind of fact.
     """
 
     def __init__(self) -> None:
         super().__init__(level=logging.WARNING)
-        self.count = 0
+        self.degraded = 0
+        self.diagnostics = 0
+
+    @property
+    def count(self) -> int:
+        """Every warning, for continuity with reports written before the split."""
+        return self.degraded + self.diagnostics
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.count += 1
+        template = str(record.msg)
+        if any(marker in template for marker in _DEGRADING_WARNINGS):
+            self.degraded += 1
+        else:
+            self.diagnostics += 1
 
 
 def _tenant_for(config: RunConfig) -> TenantId:
@@ -808,6 +844,11 @@ async def _do_run(config: RunConfig) -> None:
         # See `_AgentWarnings`. Recorded rather than only printed, because
         # the number that matters is read off the file months later.
         cost["agent_warnings"] = warnings.count
+        # Split, because a run that reported on itself and a run that
+        # did not rank half its queries are different facts that the
+        # single total could not distinguish. See `_AgentWarnings`.
+        cost["agent_warnings_degraded"] = warnings.degraded
+        cost["agent_warnings_diagnostic"] = warnings.diagnostics
         # The per-slot context the chat peer accepted, probed rather
         # than inferred from the model id -- see `chat_context_window`.
         # Recorded on every run, including retrieval-only ones where it
@@ -837,14 +878,18 @@ async def _do_run(config: RunConfig) -> None:
     # worked. `score_predictions` already refuses empty predictions up
     # front; this is the same rule for predictions that are present and
     # wrong.
-    if warnings.count:
+    if warnings.degraded:
         raise SystemExit(
-            f"{warnings.count} agent warning(s) during the run -- this arm is "
+            f"{warnings.degraded} degrading warning(s) during the run -- this arm is "
             f"DEGRADED and its number should not be reported. "
             f"llm_calls_per_query={cost.get('llm_calls_per_query')}; a rerank "
             f"agent whose extract calls fail returns retrieval order, which "
             f"scores like a slightly-worse `hybrid`. Check the run log for "
-            f"'extract failed' and the endpoint for 5xx."
+            f"'extract failed' (the call raised) and 'empty scores' (the call "
+            f"returned nothing usable, which leaves llm_calls_per_query at a "
+            f"clean 1.0 and is invisible everywhere else). "
+            f"{warnings.diagnostics} further warning(s) were diagnostics and "
+            f"did not gate this run."
         )
 
 
