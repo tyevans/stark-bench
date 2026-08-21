@@ -1,0 +1,75 @@
+name: ci
+
+# `redstring` is a PATH dependency (`../redstring`, editable), so a bare
+# checkout cannot resolve it. Both repositories are checked out as siblings
+# under the workspace and every step runs from `stark-bench/`, which is what
+# makes `path = "../redstring"` in pyproject.toml resolve.
+#
+# Editability is load-bearing and is not a CI concern here: installed as a
+# plain path copy, a redstring change does not reach the venv until
+# something forces a reinstall, which has cost a calibration run before.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A second push to the same branch makes the first run's answer stale.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: stark-bench
+
+      - uses: actions/checkout@v4
+        with:
+          repository: tyevans/redstring
+          ref: main
+          path: redstring
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: stark-bench/uv.lock
+
+      - name: Record what redstring commit this ran against
+        # The benchmark measures redstring, and redstring's chunking has
+        # already changed once mid-campaign. A CI result that does not say
+        # which redstring it tested cannot be compared with another one.
+        working-directory: redstring
+        run: |
+          echo "redstring $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          git --no-pager log -1 --format='%s' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install
+        working-directory: stark-bench
+        run: uv sync
+
+      - name: Tests
+        working-directory: stark-bench
+        # No `-p no:randomly`. Random ordering is the point in CI: it is the
+        # cheapest check that no test depends on another having run first,
+        # and a failure here is a real finding rather than flakiness. The
+        # `integration` marker is deselected by `addopts` -- those need
+        # Postgres, Neo4j or the stark-qa sidecar, none of which exist here.
+        run: uv run pytest -q
+
+      - name: Architecture contracts
+        working-directory: stark-bench
+        # The one that matters: `agents/` may not import `harness`. The
+        # runner holds each query's `answer_ids`, so an agent that can reach
+        # it is one attribute access from a perfect score.
+        run: uv run lint-imports
+
+      - name: Format, lint and file hygiene
+        working-directory: stark-bench
+        # The same hooks that run on commit, so a bypassed hook cannot land
+        # silently. Runs on every file, not just the diff.
+        run: uv run pre-commit run --all-files --show-diff-on-failure
