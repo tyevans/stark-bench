@@ -451,8 +451,28 @@ handful of near-tied argmaxes flip and the ranking moves.
 hit@5 should not be quoted precisely on these arms at all** — its floor is
 ~0.011, about 2.5% relative.
 
-Retrieval-only arms are unaffected — no LLM — and `vss-control`
-reproducing `0.23057383129905376` to every digit remains a valid check.
+**Retrieval-only arms are NOT unaffected. This paragraph used to say they
+were, and that was falsified on 2026-08-21.** Two runs of
+`qwen-rel-sliding1k` dense — same code, same rows, no index in either —
+disagreed on **103 of 280 queries**, moving mrr by 0.000054 and recall@20
+by 0.000397.
+
+The cause is upstream of the database: the same text embedded twice
+against the endpoint, alone, back to back, returns **different vectors**
+(max component delta 3.3e-03, cosine 0.99981). Calls 2, 3 and 4 agree with
+each other and differ from call 1, so it is the first call after idle
+rather than per-call jitter; the mechanism is not pinned down.
+
+The noise source was never "an LLM" — it is a batched inference server,
+and the query embedder is one of those too. So **a dense or hybrid mrr
+difference below ~0.0002 is noise.** The LLM floor above still dominates
+and is unchanged.
+
+`vss-control` reproducing `0.23057383129905376` to every digit remains a
+valid check, and this explains why: its vectors are precomputed, so it
+makes no live embedding call. That is also why it is deliberately left
+**unindexed** while every other arm is indexed — it is the one arm whose
+exactness is the check. See B-QUERY-EMBED-NONDETERMINISM-1.
 
 Whether `--query-concurrency 1` restores determinism is unresolved and
 cheap to settle: two serial runs of one arm. If it does, the cause is
@@ -571,6 +591,70 @@ long tail can move. And `native-wholedoc` splits rather than truncates the
 2.07% of documents the endpoint will not take whole, deliberately — truncating
 would make that arm hold less *text* than the others, measuring content loss
 and calling it granularity.
+
+## Retrieval is indexed now, and that is a basis, not a detail
+
+As of 2026-08-21 each live tenant has a **partial HNSW index** built by
+`scripts/build_ann_indexes.py`, and the database is set to
+`hnsw.ef_search = 200`. Every report records `ann_index`,
+`ann_index_scans_cumulative`, `hnsw_ef_search` and `retrieval_is_exact` in
+its cost block, because an approximate number and an exact one are
+otherwise indistinguishable on disk.
+
+**Numbers taken on this basis are not comparable to numbers taken before
+it.** Against an exact scan, `ef_search = 200` costs about 0.004 mrr; 800
+matches exact to every digit; the pgvector default of 40 loses 0.0117 of
+recall@20, which is larger than several differences this project reports
+between architectures. Check `retrieval_is_exact` before comparing two
+rows.
+
+`vss-control` is deliberately **not** indexed. See the reproducibility
+section above.
+
+### Why partial, and why it took a redstring change
+
+A single ANN index over the shared multi-tenant chunk table is the trap
+redstring's own docstring describes: the planner either takes the `k`
+globally nearest rows and drops other tenants' afterwards, or ignores the
+index entirely. `WHERE tenant_id = '...'` makes it usable only for queries
+carrying that predicate, which is redstring BACKLOG B10k's option (3) and
+fits because there are six tenants, not six thousand.
+
+That alone was not enough. redstring's `_semantic_candidates_sql` ordered
+by `1 - (embedding <=> $2) / 2 DESC`, which no pgvector opclass can serve,
+so the first three indexes built here went **completely unused** — 5.7GB,
+`idx_scan = 0` on all three — and made dense retrieval **3.1x slower**
+(165.8s -> 519.1s) by evicting the table from the page cache. redstring
+PR #71 changes the ordering to the raw distance ascending. Same order,
+same tie-break, servable by an index.
+
+**Verify with `idx_scan`, never with `EXPLAIN` of a query you wrote
+yourself.** `EXPLAIN` on the simplified `ORDER BY embedding <=> $1 LIMIT
+20` shows a beautiful index scan and is about a query this codebase never
+issues; that is how the above survived an hour.
+
+```
+select indexrelname, idx_scan from pg_stat_user_indexes
+ where indexrelname like '%hnsw%';
+```
+
+### Building them
+
+`uv run python scripts/build_ann_indexes.py <config-name>...`, roughly one
+minute per 130k rows at 1024 dimensions. Three traps, all hit:
+
+- Docker's default `/dev/shm` is 64M and defeats a parallel build. It must
+  also **exceed `maintenance_work_mem`**, because a parallel build
+  allocates that much *shared* memory — 12G of work mem against 2G of shm
+  fails with `DiskFullError` on a host with 131G free. `docker-compose.yml`
+  now sets `shm_size: 16gb`.
+- The memory cliff is real but not a cliff: at 2G (under the 2.25GB of raw
+  vectors) the build fell back to disk and ran at 0.9%/min; at 12G it ran
+  at 2.4%/min. Better by 2.6x, not by an order of magnitude.
+- **Killing the client does not cancel `CREATE INDEX`.** The backend runs
+  on and finishes. Cancel it with `pg_cancel_backend`, and do not assume a
+  build died because its launcher did — one index here completed after its
+  process was written off, and the relaunch collided with it.
 
 ## Chunk tables are keyed on the embedding model
 
