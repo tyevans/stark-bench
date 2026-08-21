@@ -116,6 +116,64 @@ nothing.
 
 ---
 
+## 1b. Relational text only helps if you choose *which* relations
+
+The strongest result of 2026-08-20, and it inverts the obvious reading of
+finding 1.
+
+`rerank40title` sends each candidate as `name (type)` and nothing else --
+~37 characters against a full document's 3,415. The two arms below add
+**eight neighbour names** to that (one per relation type, capped at eight
+types), identical in count, in shape and in token cost. They differ only in
+*which* eight: document order, or BM25 against the query. Measured on real
+candidates, the kept names differ on **48.2%** of them.
+
+All four arms: `qwen-rel-whole`, `test-0.1`, k=20, fetch=40,
+`gemma-4-26b-qat`, official evaluator.
+
+| passages shown to the reranker | mrr | hit@1 | hit@5 | recall@20 |
+|---|---|---|---|---|
+| none (`hybrid`, no reranking) | 0.28214 | 0.1679 | 0.4286 | 0.4651 |
+| title only | 0.33975 | 0.2536 | 0.4500 | 0.4721 |
+| **+8 relations, document order** | **0.31010** | 0.2071 | 0.4643 | 0.4719 |
+| **+8 relations, BM25-ranked** | **0.39343** | 0.3071 | 0.4964 | 0.5067 |
+
+**Arbitrary relational text is worse than none.** Adding eight neighbour
+names chosen by document order costs **0.030 mrr** against showing no
+relations at all, and hit@1 falls from 0.2536 to 0.2071. Choosing the same
+number of names by BM25 gains **0.054** over titles. The swing attributable
+to selection alone is **+0.083 mrr**, roughly eighty times the run-to-run
+noise floor established in B-LLM-RUN-NOISE-1.
+
+So "more context helps the reranker" is false here. Names of entities
+unrelated to the query are noise the model spends attention on, and it
+mis-ranks as a result.
+
+### Why this does not contradict finding 1
+
+Finding 1 measured *whole* relation blocks reaching the retriever, where
+BM25 does the selecting at retrieval time -- the matching neighbour names
+are why those documents scored. Nothing had to choose.
+
+Reranking on a lean encoding removes that: eight names must be picked
+before the model sees anything, and the picking is the whole signal. The
+two findings agree on the mechanism (neighbour names matter, lexically) and
+differ on what carries it (retrieval scoring, versus an explicit selector).
+
+### What it implies for the next arm
+
+The selector, not the channel, is where the value is. That reverses an
+argument made earlier the same day: relations moved lexical +22% and dense
++2%, which suggested a dense selector would be dead weight. That reasoning
+was about the *channel*. This result is about the *selector*, and it shows
+selection is worth 0.083 -- so a better selector is the highest-value lever
+available, and the embedding-plus-BM25 hybrid is worth its port addition.
+
+Two cheaper things are untested and should come first: `per_type` and
+`max_types` have never been varied, so we do not know whether eight ranked
+names is near a plateau or on a steep part of the curve; and recall@20 rose
+0.4651 -> 0.5067 as `fetch` went 20 -> 40 without flattening.
+
 ## 2. The hypothesis this campaign falsified
 
 `qwen-wholedoc` dense (0.183) against `vss-control` dense (0.231) was read

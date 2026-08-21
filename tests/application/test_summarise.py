@@ -96,6 +96,7 @@ def test_chunks_per_node_counts_skipped_chunks():
         dataset="prime",
         chunker="w",
         embeddings="m",
+        chat_model="c",
         metrics={"mrr": 0.2},
         cost={},
         ingest={"nodes": 129375, "chunks": 49280, "skipped": 87523},
@@ -121,3 +122,63 @@ def test_rows_are_ordered_by_mrr_within_a_corpus(tmp_path):
     )
     out = render(read_rows(tmp_path))
     assert out.index("`high`") < out.index("`low`")
+
+
+def test_the_chat_model_is_rendered_and_comes_from_the_report() -> None:
+    """Two arms differing only by `--chat-model` were indistinguishable in
+    this table: the `model` column is the EMBEDDING model, which is shared.
+
+    Read from the report rather than `config_verbatim`, because the flag
+    overrides the file and the file's bytes name the model that did not run.
+    """
+    import json
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from stark_bench.application.summarise import read_rows, render
+
+    with TemporaryDirectory() as tmp:
+        Path(tmp, "c.rerank.json").write_text(
+            json.dumps(
+                {
+                    "config_name": "c",
+                    "config_verbatim": (
+                        "dataset: prime-rel\nembeddings: e\n"
+                        "chat_model: the-one-in-the-file\n"
+                    ),
+                    "chat_model": "the-one-that-ran",
+                    "metrics": {"mrr": 0.5},
+                    "cost": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        rows = read_rows(Path(tmp))
+    assert rows[0].chat_model == "the-one-that-ran"
+    assert "the-one-that-ran" in render(rows)
+    assert "the-one-in-the-file" not in render(rows)
+
+
+def test_a_report_without_a_chat_model_renders_a_dash() -> None:
+    """Arms scored before the field existed. `--` is honest; inventing the
+    composition default would assert something the report does not say."""
+    import json
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    from stark_bench.application.summarise import read_rows
+
+    with TemporaryDirectory() as tmp:
+        Path(tmp, "c.dense.json").write_text(
+            json.dumps(
+                {
+                    "config_name": "c",
+                    "config_verbatim": "dataset: prime\nembeddings: e\n",
+                    "metrics": {"mrr": 0.1},
+                    "cost": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        rows = read_rows(Path(tmp))
+    assert rows[0].chat_model == "--"

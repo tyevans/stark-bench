@@ -81,6 +81,7 @@ def test_summarise_renders_both_columns_and_the_concurrency() -> None:
         dataset="d",
         chunker="k",
         embeddings="e",
+        chat_model="m",
         metrics={"mrr": 0.5},
         cost={"seconds_total": 1933.0, "seconds_wall": 480.0, "query_concurrency": 4},
         ingest={},

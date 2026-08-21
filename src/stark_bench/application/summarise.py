@@ -92,6 +92,7 @@ class Row:
     dataset: str
     chunker: str
     embeddings: str
+    chat_model: str
     metrics: dict[str, float]
     cost: dict[str, object]
     ingest: dict[str, object]
@@ -164,6 +165,15 @@ def read_rows(directory: Path) -> list[Row]:
                 dataset=_config_field(verbatim, "dataset") or "unknown",
                 chunker=_config_field(verbatim, "chunker") or "?",
                 embeddings=_config_field(verbatim, "embeddings") or "?",
+                # The chat model that RAN, recorded by the report rather
+                # than read from `config_verbatim` -- `--chat-model`
+                # overrides the file, and two arms differing only by it
+                # were otherwise indistinguishable in this table.
+                chat_model=str(
+                    report.get("chat_model")
+                    or _config_field(verbatim, "chat_model")
+                    or "--"
+                ),
                 metrics={
                     k: v for k, v in metrics.items() if isinstance(v, int | float)
                 },
@@ -218,18 +228,19 @@ def render(rows: Iterable[Row]) -> str:
         section = [row for row in rows if row.dataset == dataset]
         out += [f"## `{dataset}`", ""]
         out += [
-            "| config | agent | model | chunker | chunks/node | mrr | hit@1 "
+            "| config | agent | embed model | chat model | chunker "
+            "| chunks/node | mrr | hit@1 "
             "| hit@5 | recall@20 | llm calls/query | tokens/query "
             "| gpu seconds | wall seconds | conc |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in sorted(
             section, key=lambda r: (-r.metrics.get("mrr", 0.0), r.config, r.agent)
         ):
             cpn = row.chunks_per_node
             out.append(
-                f"| `{row.config}` | {row.agent} | {row.embeddings} | "
-                f"{row.chunker} | {_fmt(cpn, 3)} | "
+                f"| `{row.config}` | {row.agent} | {row.embeddings} "
+                f"| {row.chat_model} | {row.chunker} | {_fmt(cpn, 3)} | "
                 + " | ".join(_fmt(row.metrics.get(m)) for m in _METRICS)
                 + f" | {_fmt(row.cost.get('llm_calls_per_query'), 2)} "
                 f"| {_fmt(row.cost.get('tokens_per_query'))} "
