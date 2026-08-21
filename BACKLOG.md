@@ -120,66 +120,6 @@ reproduce in direction, not bit-for-bit). That catches a model swap, a
 quantisation change, and a pooling-flag change, none of which any name
 comparison can see.
 
-## B-CORESIDENCE-1 — RESOLVED: both models are resident together
-
-**Resolved 2026-08-19.** The embedding endpoint now runs concurrently with
-the chat model — confirmed operationally, not inferred — so there is no
-swapping and the LLM arms are runnable. The analysis below is kept because
-it is why the endpoint is configured the way it is, and because the
-prediction it makes about the fix held.
-
-Two things downstream of this were wrong while it was open and have been
-corrected: `composition/cli.py` carried a comment claiming one model is
-resident at a time, and run queues were ordering `rerank` last to avoid a
-thrash that cannot happen. Neither is true.
-
-The 36.9s cold-start latencies seen during ingest are a *first load* after
-the model has been evicted for idleness, not swap churn between models.
-
-### Original entry
-
-`zero_shot` and `deep` cannot run against the current endpoint. Both search
-with text the LLM produced moments earlier -- `zero_shot` rewrites the query
-(`agents/zero_shot.py:42-51`) and `deep` searches on `step.argument` chosen
-per round (`agents/deep.py:101,127`) -- so the embedding model has to answer
-*during* the agent loop, interleaved with chat completions.
-
-Nemotron-3-Embed-1B does not fit in VRAM beside `qwen3.8-27b-mtp`, so
-llama-swap unloads one to serve the other. `deep` is budgeted at 8 LLM calls
-and 8 tool calls per query, which is up to 16 alternating swaps per query,
-280 queries, three configs. That is not a slow run, it is a non-starter.
-
-The obvious workaround does not work, and it is worth writing down so nobody
-spends an afternoon on it: precomputing the 280 query vectors while the
-embedder is loaded and serving them from `PrecomputedEmbeddingProvider`
-covers `dense` and `hybrid` exactly, and covers neither LLM agent at all,
-because neither one ever embeds the original query text.
-
-**Resolved in approach, not yet run.** The embedding model is not what
-fills the VRAM -- it is ~700MB at Q4_K_M. The KV cache is: 32 slots at 4096
-tokens each. Dropping the embedding server to `-np 1` with a 4096-token
-context shrinks that cache by 32x and both models fit, with no swapping, no
-weaker chat model, and no loss of comparability against the `dense` and
-`hybrid` arms.
-
-It costs nothing for this workload, which is the part worth noticing: the
-agent loop embeds one short query at a time and waits for it, so 31 of the
-32 slots were never going to be used during an LLM run. High concurrency is
-an *ingest* setting. The two phases want opposite server configurations, and
-the plan is now to run them as two phases:
-
-  - ingest and the `dense`/`hybrid` scoring at `-np 32`, embeddings alone;
-  - the `zero_shot`/`deep` scoring at `-np 1`, both models resident.
-
-Rejected, and worth recording so they are not retried: precomputing the 280
-query vectors covers neither LLM agent, because neither embeds the original
-query text; a smaller chat model would have made "deep beat dense" mean
-something different from what it says; and accepting the swap cost on a
-reduced subset would have produced a number comparable to nothing else here.
-
-Nothing here is blocked on it: the control plus three arms times
-`dense`/`hybrid` is seven of the numbers, and none of them make an LLM call.
-
 ## B-EMBED-RETRY-1 — a transient 503 from the embedding server kills a whole ingest
 
 `src/stark_bench/skb/ingest.py` makes embedding calls through redstring's
@@ -288,64 +228,6 @@ nomic was already justified on the ada-002 comparison
 What is NOT confounded, and is the reason the MAG run exists: PRIME against
 MAG, both on nomic at `capped-whole-2400`. That comparison holds the model
 and the chunker fixed and varies only the corpus.
-
-## B-TOKEN-CAP-1 — RESOLVED by catch-and-re-split
-
-**Resolved 2026-08-20.** The cap is no longer required to be right. When the
-provider rejects a text for length, `stark_ingest_engine` re-chunks that
-group at half the size and retries, up to `MAX_RESPLIT_ATTEMPTS`. A correct
-cap costs nothing, because the path only runs on rejection.
-
-Option 1 from the original entry (cap by tokens with nomic's vocabulary) was
-NOT taken, and the reason is worth keeping: it needs a `tokenizers`
-dependency and a downloaded vocabulary, and it would put a *second* estimate
-of the model's tokenization next to the server's real one. `all-MiniLM-L6-v2`
-is in the local HF cache and shares BERT WordPiece, so it was available as a
-stand-in -- and using it would have been the same "close enough" reasoning
-that produced the three wrong caps. The server's own 400 is the only oracle
-that cannot disagree with the server.
-
-`/tokenize` was probed first and is not routed by llama-swap; only the
-`/v1/*` surface is reachable.
-
-Still worth doing eventually: the cap now sits at 2400 characters, which is
-67% of the ceiling at the measured worst ratio, so every document pays a
-granularity cost for a tail of a few hundred. Token-exact chunking would
-recover that. It is an optimisation now rather than a correctness fix.
-
-### Original entry
-
-`CHUNKERS["capped-whole-2400"]` exists because nomic-embed-text rejects
-anything over 2048 tokens and the chunker measures characters. The conversion
-is an estimate, and it was wrong three times running: 5000 chars (from 4.0
-chars/token, measured on chat prompts through a different tokenizer), then
-4000 (from 2.4, the ratio the first failure implied), then 2400 (from 1.754,
-measured over the 250 densest of 607,292 documents).
-
-Each estimate was defensible and each was too high, because the worst case
-lives in a tail that sampling keeps missing. 2400 has a large enough margin
-to survive ratios down to 1.17 chars/token, which is why it is expected to
-hold -- but it is still a guess with a bigger cushion, not a fix.
-
-Two real fixes, either of which ends it:
-
-1. **Cap by tokens.** Load nomic's WordPiece vocabulary with `tokenizers`
-   and split on token count. Exact, and it lets the cap sit near 2048 rather
-   than at 67% of it, which recovers the chunks/node the margin costs.
-2. **Catch and split.** The server returns a specific, machine-readable 400
-   (`exceed_context_size_error`, with `n_prompt_tokens`). Catching it and
-   re-splitting just that chunk makes any cap safe.
-
-(1) is better: it keeps failures out of the hot path and makes chunks/node
-predictable. (2) is a smaller change and would also have saved the three
-ingests lost to this.
-
-Cost of not doing it: each wrong cap costs a full re-ingest, ~30 min for
-PRIME at 218 chunks/s and ~1h for MAG.
-
-Note the cap also widens B-NOMIC-CONFOUND-1: nomic now runs at 2400
-characters against Nemotron's 5000, so the two arms differ more in chunking
-than the original swap intended.
 
 ## B-QWEN-UNCAPPED-1: qwen's whole-document arm is capped for a reason that is not qwen's
 

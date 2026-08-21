@@ -99,7 +99,9 @@ NEO4J_AUTH = ("neo4j", "starkbench")
 #: One port, both models resident together: the embedding server runs
 #: concurrently with the chat model, so an agent that interleaves embedding
 #: and chat does NOT cause a swap. This comment previously claimed the
-#: opposite and it was wrong -- see B-CORESIDENCE-1, which is resolved.
+#: opposite and it was wrong; confirmed operationally on 2026-08-19, not
+#: inferred. Run queues once ordered `rerank` last to avoid a thrash that
+#: cannot happen.
 #:
 #: Cold-start latency is still real (~37s) but it is an idle eviction and
 #: first load, not churn between two models.

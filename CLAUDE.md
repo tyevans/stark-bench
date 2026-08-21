@@ -325,6 +325,25 @@ zero disagreed with each other about how many entities a document held,
 while two thinking-off runs did not. Every accuracy number in this
 repository is a difference between two runs.
 
+## A chunk the server rejects is re-split, so the cap need not be right
+
+When the embedding provider rejects a text for length, `stark_ingest_engine`
+re-chunks that group at half the size and retries, up to
+`MAX_RESPLIT_ATTEMPTS`. The path only runs on rejection, so a correct cap
+costs nothing and a wrong one costs a retry rather than a run.
+
+**Why the cap is not computed instead.** Capping by tokens with the model's
+own vocabulary was considered and rejected: it needs a `tokenizers`
+dependency and a downloaded vocabulary, and it would put a *second*
+estimate of the model's tokenization next to the server's real one.
+`all-MiniLM-L6-v2` was available locally as a stand-in and shares BERT
+WordPiece — using it would have been the same "close enough" reasoning that
+produced three wrong caps in a row. **The server's own 400 is the only
+oracle that cannot disagree with the server.**
+
+`/tokenize` was probed first and is not routed by llama-swap; only the
+`/v1/*` surface is reachable.
+
 ## Embedding models need task prefixes, and the port cannot express them
 
 **Read this before trusting any retrieval number.**
