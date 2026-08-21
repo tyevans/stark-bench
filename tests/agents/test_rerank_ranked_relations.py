@@ -108,3 +108,37 @@ def test_the_registry_exposes_the_ranked_arm() -> None:
     from stark_bench.composition.agent_registry import AGENTS
 
     assert "rerank40titlerelranked" in AGENTS
+
+
+def test_per_type_is_threaded_from_the_agent() -> None:
+    """The budget knob is useless if the agent field never reaches the
+    helper -- this repo's signature defect, and the helpers here all take
+    a default that would quietly win."""
+    doc = "- name: X\n- type: t\n- relations:\n" "  rel: {t: (DCC, RAC1, NTN1)}\n"
+    one = RerankAgent(passage_mode="title_rel_ranked", relation_per_type=1)
+    two = RerankAgent(passage_mode="title_rel_ranked", relation_per_type=2)
+    assert one._render_passage(doc, "DCC") != two._render_passage(doc, "DCC")
+    assert two._render_passage(doc, "DCC").count(",") > one._render_passage(
+        doc, "DCC"
+    ).count(",")
+
+
+def test_max_types_is_threaded_from_the_agent() -> None:
+    doc = "- name: X\n- type: t\n- relations:\n" + "".join(
+        f"  rel{i}: {{t: (N{i})}}\n" for i in range(12)
+    )
+    few = RerankAgent(passage_mode="title_rel_ranked", relation_max_types=2)
+    many = RerankAgent(passage_mode="title_rel_ranked", relation_max_types=10)
+    assert few._render_passage(doc, "q").count(";") == 1
+    assert many._render_passage(doc, "q").count(";") == 9
+
+
+def test_the_unranked_mode_honours_the_same_budget() -> None:
+    """Or the ranked/unranked comparison stops being controlled: the arms
+    would differ in how much text they carry, not only in which names."""
+    doc = "- name: X\n- type: t\n- relations:\n" "  rel: {t: (A, B, C)}\n"
+    unranked = RerankAgent(passage_mode="title_rel", relation_per_type=2)
+    ranked = RerankAgent(passage_mode="title_rel_ranked", relation_per_type=2)
+    assert unranked._render_passage(doc, "q").count(",") == ranked._render_passage(
+        doc, "q"
+    ).count(",")

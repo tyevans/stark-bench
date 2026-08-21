@@ -168,6 +168,32 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # retrieval order, and 10% of queries carry a run of >=10 candidates
     # ordered that way. It also matches the queries, which are conjunctive
     # -- "a drug that targets X and is indicated for Y" is two judgements.
+    # Budget arms. FINDINGS 1b measured SELECTION as worth +0.083 mrr at
+    # one name per relation type -- which says nothing about whether one is
+    # the right number.
+    #
+    # The prediction is genuinely uncertain, which is what makes these worth
+    # running. A second name is BY DEFINITION a worse match than the first,
+    # and arbitrary names were measured 0.030 BELOW showing none at all. So
+    # per_type=2 might gain (more evidence) or lose (the second name is
+    # closer to noise than to signal). Same argument for showing more
+    # relation types.
+    "rerank40titlerel2ranked": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_ranked",
+        relation_per_type=2,
+    ),
+    "rerank40titlerelwide": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        pair_scores=True,
+        passage_mode="title_rel_ranked",
+        relation_max_types=16,
+    ),
     "rerank40titlerelmatrix": lambda config: RerankAgent(
         k=config.k,
         fetch=40,

@@ -628,6 +628,20 @@ class RerankAgent:
     #: `MatrixRelevances`. Wins over `pair_scores` when both are set,
     #: because it is the strictly richer encoding.
     matrix_scores: bool = False
+    #: Neighbour names kept per relation type, and relation types shown.
+    #:
+    #: Never varied before 2026-08-20 and worth varying now: FINDINGS 1b
+    #: measured selection as worth +0.083 mrr at `per_type=1`, which says
+    #: nothing about whether one name is the right budget. Two names might
+    #: gain more, or might reintroduce the noise that made the unranked arm
+    #: score BELOW titles-only -- a second name is by definition a worse
+    #: match than the first.
+    #:
+    #: `max_types` bounds the pathological node: PRIME hubs carry dozens of
+    #: relation types and one candidate would otherwise cost more than the
+    #: rest of the prompt together.
+    relation_per_type: int = 1
+    relation_max_types: int = 8
     passage_mode: str = "full"
     name: str = "rerank"
 
@@ -650,15 +664,29 @@ class RerankAgent:
                     "rank_texts; rendering without them would silently fall "
                     "back to document order and score as the unranked arm"
                 )
-            rels = relations_by_score(text, scores)
+            rels = relations_by_score(
+                text,
+                scores,
+                per_type=self.relation_per_type,
+                max_types=self.relation_max_types,
+            )
             return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode == "title":
             return title_of(text)
         if self.passage_mode == "title_rel":
-            rels = first_relations(text)
+            rels = first_relations(
+                text,
+                per_type=self.relation_per_type,
+                max_types=self.relation_max_types,
+            )
             return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode == "title_rel_ranked":
-            rels = ranked_relations(text, query)
+            rels = ranked_relations(
+                text,
+                query,
+                per_type=self.relation_per_type,
+                max_types=self.relation_max_types,
+            )
             return f"{title_of(text)} | {rels}" if rels else title_of(text)
         if self.passage_mode != "full":
             # Not a warning. An unrecognised mode silently falling back to
@@ -684,7 +712,7 @@ class RerankAgent:
             # makes a name distinctive is the other candidates' names.
             names: list[str] = []
             for passage in passages:
-                names += relation_names(passage.text)
+                names += relation_names(passage.text, max_types=self.relation_max_types)
             unique = list(dict.fromkeys(names))
             if unique:
                 values = await tools.rank_texts(
