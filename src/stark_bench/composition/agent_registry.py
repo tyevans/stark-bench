@@ -162,6 +162,19 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # channels -- the lexical one differs from `rerank40titlerelranked`
     # only in where idf is computed (across all candidates, not within one
     # document), which is itself worth a number.
+    # Three orthogonal scores per candidate, averaged. Addresses a
+    # measured defect: the model quantises hard onto a few integers (one
+    # response used 5 nine times across 40 candidates), ties break on
+    # retrieval order, and 10% of queries carry a run of >=10 candidates
+    # ordered that way. It also matches the queries, which are conjunctive
+    # -- "a drug that targets X and is indicated for Y" is two judgements.
+    "rerank40titlerelmatrix": lambda config: RerankAgent(
+        k=config.k,
+        fetch=40,
+        terse_scores=True,
+        matrix_scores=True,
+        passage_mode="title_rel_ranked",
+    ),
     "rerank40titlerelhybrid": lambda config: RerankAgent(
         k=config.k,
         fetch=40,
