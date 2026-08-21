@@ -174,6 +174,65 @@ Two cheaper things are untested and should come first: `per_type` and
 names is near a plateau or on a steep part of the curve; and recall@20 rose
 0.4651 -> 0.5067 as `fetch` went 20 -> 40 without flattening.
 
+## 1c. Chunking helps the lexical channel a lot, and we predicted otherwise
+
+`qwen-rel-sliding1k` -- the arm ingested to answer "does redstring's
+chunking help on the corpus that matters" -- against `qwen-rel-whole`. Same
+model, same corpus, same tenant scheme; the only difference is
+`sliding-1000-500` versus `whole-document`, 4.250 chunks/node against 1.002.
+
+| metric | whole-document | sliding-1000-500 | change |
+|---|---|---|---|
+| mrr | 0.24913 | **0.32131** | **+0.072 (+29%)** |
+| hit@1 | 0.18214 | 0.23929 | +0.057 |
+| hit@5 | 0.33571 | 0.42500 | +0.089 |
+| recall@20 | 0.33724 | 0.40363 | +0.066 |
+
+**The config predicted this would not happen.** Its own comment, written
+before the run: *"Lexical may DEGRADE, or not move. BM25 already sees every
+term in the document whether it is one chunk or four; what changes is the
+length normalisation and the per-chunk idf."*
+
+The premise was right and the conclusion was wrong. BM25 does see every
+term either way -- but length normalisation is not a detail here, it is the
+mechanism. A matching term in a 12,000-character document is heavily
+discounted; the same term in a 1,000-character chunk is not, and
+`aggregation: max` lets the node take its best chunk's score.
+
+Supporting evidence, splitting the 280 queries by how long their gold
+answer's document is:
+
+| gold document length | mean change in reciprocal rank |
+|---|---|
+| shortest third (median 959 ch) | +0.061 |
+| middle third (median 3,846 ch) | +0.055 |
+| **longest third (median 14,326 ch)** | **+0.101** |
+
+The gain is broad but roughly 1.7x larger where the gold document is
+longest, which is what length normalisation predicts. It is not the whole
+story -- the shortest third gains substantially too -- so treat this as
+consistent with the mechanism rather than as isolating it.
+
+### Why this did not show up in the earlier chunking sweep
+
+FINDINGS 3 measured chunking on `prime`, where documents carry no
+`- relations:` block. Median document there is 103 characters against
+`prime-rel`'s 357, and the long tail is far shorter. Chunking cannot help
+length normalisation on documents that were never long enough to be
+penalised. **The chunking sweep answered its question for the corpus it
+ran on, and that corpus was the one where chunking had the least to do.**
+
+### Standing caveat
+
+Only the LEXICAL arm is measured. `dense` and `hybrid` on this corpus need
+the embedding endpoint and are unrun. The config's other prediction -- that
+dense may IMPROVE, because a 1000-character window isolates the relations
+block into its own chunk for the 19.5% of documents over 2,400 characters
+-- is still open, and it is the more interesting half.
+
+Worth noting for scale: `qwen-rel-sliding1k` lexical at 0.32131 already
+beats `qwen-rel-whole` **hybrid** at 0.28214.
+
 ## 2. The hypothesis this campaign falsified
 
 `qwen-wholedoc` dense (0.183) against `vss-control` dense (0.231) was read
