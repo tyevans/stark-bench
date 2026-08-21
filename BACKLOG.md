@@ -713,3 +713,30 @@ queries in 3 requests. Caching them would make repeat runs of an arm exact
 against each other, at the cost of hiding a genuine model change behind a
 stale key, which is the same trade the chunk cache already makes and
 manages with `--no-cache`.
+
+## B-ANN-RECALL-KNEE-1 — ANSWERED: sweep on the largest corpus, and 800 is the answer
+
+Whether HNSW recall held at scale, validated originally at one corpus size,
+one k and one `ef_search`. Settled 2026-08-21, and not the way the first
+measurement implied.
+
+On `qwen-rel-whole` (129,656 rows) `ef_search = 200` costs 0.0040 mrr
+against an exact scan. On `qwen-rel-sliding1k` (549,697 rows) the same
+setting costs **0.0110** -- 2.8x more, and larger than the entire measured
+effect of several architecture changes in FINDINGS. 400 costs 0.0028 on
+dense; 800 lands at +0.0003, which is query-embedding noise rather than a
+gain (B-QUERY-EMBED-NONDETERMINISM-1).
+
+800 is not slower in any way that matters: `qwen-rel-sliding1k` dense is
+8.0s at 800, ~30s at 200, and 165.8s exact. A wider graph walk still beats
+scanning 2.25GB of vectors, so the lower setting bought nothing.
+
+**Standing rule, which is why this entry stays instead of being deleted:
+sweep a recall knob on the largest corpus you have.** The small corpus
+answers in a minute and gives a number wrong by 3x for the corpus that
+matters. This campaign standardised on 200 off the fast sweep and had
+started the LLM arms -- which consume retrieval output -- before the large
+corpus was measured; they were stopped and restarted.
+
+Still open: whether 800 suffices at MAG scale, another order of magnitude
+up. The rule above says measure it there rather than extrapolating this row.

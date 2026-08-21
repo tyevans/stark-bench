@@ -5,7 +5,11 @@
   "edges": 0,
   "self_loops_dropped": 0,
   "edges_ingested": false,
-  "resume": false,
-  "existing_ids_load_s": 0.0,
-  "wall_time_s": 296.9556981920032
+  "resume": true,
+  "existing_ids_load_s": 0.024421615999017376,
+  "wall_time_s": 313.84123373499824,
+  "config_verbatim": "name: vss-control\ndataset: prime\nsplit: test-0.1\n# One chunk per node: STaRK's precomputed vectors are one per node document,\n# so the control path must present each document whole for them to apply.\nchunker: whole-document\nembeddings: precomputed-ada002\ndimension: 1536\naggregation: max\nagent: dense\nk: 20\n",
+  "cache_hits": 0,
+  "cache_misses": 0,
+  "complete": true
 }

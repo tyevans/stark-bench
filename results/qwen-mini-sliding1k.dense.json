@@ -1,29 +1,47 @@
 {
   "config_name": "qwen-mini-sliding1k",
   "config_verbatim": "# Pipeline smoke-test cell -- NOT a reportable number.\n#\n# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are\n# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors\n# sampled from the candidate list (seed 20260819). `candidates.json` is\n# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with\n# both endpoints inside the subset, so `upsert_relationships` cannot raise\n# `MissingEntityError`. The query files are symlinks -- there is one copy.\n#\n# ## Read the scores as a floor on nothing and a check on everything\n#\n# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's\n# 129,375, so every metric here is INFLATED against the real arms and the two\n# must never appear in the same table. What this cell is for is the other\n# thing: it exercises prefixes, dimension, table keying, the chunker, the\n# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather\n# than ~90, on a model no arm in this repo has ever run.\n#\n# Every real bug in this project has been silent and surfaced only because a\n# number looked wrong. This is the cheapest place to find the next one.\n#\n# Arm against arm within the mini set is still meaningful -- the three mini\n# configs differ only in chunker, exactly as the full sweep does.\nname: qwen-mini-sliding1k\ndataset: prime-mini\nsplit: test-0.1\nchunker: sliding-1000-500\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# See `qwen-wholedoc.yaml` for why the document side is empty and the query\n# side carries an instruction. Every qwen config states both.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n",
+  "split": "test-0.1",
+  "chat_model": null,
   "queries": 280,
   "metrics": {
-    "mrr": 0.3970636772257941,
+    "mrr": 0.39693365349833454,
     "hit@1": 0.3357142857142857,
     "hit@5": 0.45357142857142857,
-    "recall@20": 0.5223813892741288
+    "recall@20": 0.5259528178455574
   },
   "cost": {
     "tool_calls_per_query": 1.0,
     "llm_calls_per_query": 0.0,
     "tokens_per_query": null,
-    "seconds_total": 61.41959693725221
+    "seconds_total": 21.121571566016428,
+    "seconds_wall": 5.432183099999747,
+    "query_concurrency": 4,
+    "query_embed_prewarm_failed": 0,
+    "query_embed_prewarm_texts": 280,
+    "query_embed_prewarm_requests": 3,
+    "query_embed_hits": 280,
+    "query_embed_misses": 0,
+    "query_embed_live_calls": 0,
+    "exhausted_queries": null,
+    "ann_index": "kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_mini_sliding1",
+    "ann_index_definition": "CREATE INDEX kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_mini_sliding1 ON public.kg_chunks_qwen3_embedding_0_6b_1e22db42 USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64') WHERE (tenant_id = '0913b450-68d0-521c-9ba0-623e50df32c3'::uuid)",
+    "ann_index_scans_cumulative": 813,
+    "hnsw_ef_search": "800",
+    "retrieval_is_exact": false
   },
   "ingest": {
     "nodes": 10000,
-    "chunks": 15738,
-    "skipped": 8546,
-    "edges": 85524,
+    "chunks": 24284,
+    "skipped": 0,
+    "edges": 0,
     "self_loops_dropped": 0,
-    "edges_ingested": true,
-    "resume": true,
-    "existing_ids_load_s": 0.05264030699618161,
-    "wall_time_s": 414.8033709800802,
-    "config_verbatim": "# Pipeline smoke-test cell -- NOT a reportable number.\n#\n# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are\n# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors\n# sampled from the candidate list (seed 20260819). `candidates.json` is\n# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with\n# both endpoints inside the subset, so `upsert_relationships` cannot raise\n# `MissingEntityError`. The query files are symlinks -- there is one copy.\n#\n# ## Read the scores as a floor on nothing and a check on everything\n#\n# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's\n# 129,375, so every metric here is INFLATED against the real arms and the two\n# must never appear in the same table. What this cell is for is the other\n# thing: it exercises prefixes, dimension, table keying, the chunker, the\n# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather\n# than ~90, on a model no arm in this repo has ever run.\n#\n# Every real bug in this project has been silent and surfaced only because a\n# number looked wrong. This is the cheapest place to find the next one.\n#\n# Arm against arm within the mini set is still meaningful -- the three mini\n# configs differ only in chunker, exactly as the full sweep does.\nname: qwen-mini-sliding1k\ndataset: prime-mini\nsplit: test-0.1\nchunker: sliding-1000-500\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# See `qwen-wholedoc.yaml` for why the document side is empty and the query\n# side carries an instruction. Every qwen config states both.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n"
+    "edges_ingested": false,
+    "resume": false,
+    "existing_ids_load_s": 0.0,
+    "wall_time_s": 407.67427617299836,
+    "config_verbatim": "# Pipeline smoke-test cell -- NOT a reportable number.\n#\n# `data/prime-mini` is a 10,000-node subset of PRIME: all 599 nodes that are\n# a gold answer to one of the 280 `test-0.1` queries, plus 9,401 distractors\n# sampled from the candidate list (seed 20260819). `candidates.json` is\n# filtered to exactly those 10,000 and `edges.jsonl` to the 85,524 edges with\n# both endpoints inside the subset, so `upsert_relationships` cannot raise\n# `MissingEntityError`. The query files are symlinks -- there is one copy.\n#\n# ## Read the scores as a floor on nothing and a check on everything\n#\n# A 10,000-candidate pool is a 13x easier retrieval problem than PRIME's\n# 129,375, so every metric here is INFLATED against the real arms and the two\n# must never appear in the same table. What this cell is for is the other\n# thing: it exercises prefixes, dimension, table keying, the chunker, the\n# graph load and the stark_qa sidecar end to end in ~6 minutes per arm rather\n# than ~90, on a model no arm in this repo has ever run.\n#\n# Every real bug in this project has been silent and surfaced only because a\n# number looked wrong. This is the cheapest place to find the next one.\n#\n# Arm against arm within the mini set is still meaningful -- the three mini\n# configs differ only in chunker, exactly as the full sweep does.\nname: qwen-mini-sliding1k\ndataset: prime-mini\nsplit: test-0.1\nchunker: sliding-1000-500\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# See `qwen-wholedoc.yaml` for why the document side is empty and the query\n# side carries an instruction. Every qwen config states both.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n",
+    "cache_hits": 10860,
+    "cache_misses": 13424
   }
 }

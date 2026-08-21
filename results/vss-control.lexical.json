@@ -1,6 +1,8 @@
 {
   "config_name": "vss-control",
   "config_verbatim": "name: vss-control\ndataset: prime\nsplit: test-0.1\n# One chunk per node: STaRK's precomputed vectors are one per node document,\n# so the control path must present each document whole for them to apply.\nchunker: whole-document\nembeddings: precomputed-ada002\ndimension: 1536\naggregation: max\nagent: dense\nk: 20\n",
+  "split": "test-0.1",
+  "chat_model": null,
   "queries": 280,
   "metrics": {
     "mrr": 0.18482870165524737,
@@ -12,7 +14,15 @@
     "tool_calls_per_query": 1.0,
     "llm_calls_per_query": 0.0,
     "tokens_per_query": null,
-    "seconds_total": 94.40016623516567
+    "seconds_total": 218.95167704202686,
+    "seconds_wall": 55.06732546299827,
+    "query_concurrency": 4,
+    "exhausted_queries": null,
+    "ann_index": null,
+    "ann_index_definition": null,
+    "ann_index_scans_cumulative": null,
+    "hnsw_ef_search": "800",
+    "retrieval_is_exact": true
   },
   "ingest": {
     "nodes": 129375,
@@ -21,8 +31,12 @@
     "edges": 0,
     "self_loops_dropped": 0,
     "edges_ingested": false,
-    "resume": false,
-    "existing_ids_load_s": 0.0,
-    "wall_time_s": 296.9556981920032
+    "resume": true,
+    "existing_ids_load_s": 0.024421615999017376,
+    "wall_time_s": 313.84123373499824,
+    "config_verbatim": "name: vss-control\ndataset: prime\nsplit: test-0.1\n# One chunk per node: STaRK's precomputed vectors are one per node document,\n# so the control path must present each document whole for them to apply.\nchunker: whole-document\nembeddings: precomputed-ada002\ndimension: 1536\naggregation: max\nagent: dense\nk: 20\n",
+    "cache_hits": 0,
+    "cache_misses": 0,
+    "complete": true
   }
 }

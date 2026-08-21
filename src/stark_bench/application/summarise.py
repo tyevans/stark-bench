@@ -207,6 +207,27 @@ def _fmt(value: object, places: int = 5) -> str:
     return str(value)
 
 
+def _retrieval(cost: dict) -> str:
+    """Exact scan, or an ANN index and how wide its search was.
+
+    Without this the table cannot distinguish a number taken against an
+    exact scan from one taken against an HNSW index, and the difference is
+    not small: on the 549,697-row tenant, `ef_search = 200` costs 0.011 mrr
+    against exact, which is larger than the whole measured effect of
+    several architecture changes reported here.
+
+    `--` for a report written before the provenance block existed. That is
+    honest rather than tidy: those runs predate any index in this database,
+    so they were exact, but the file does not say so and this column must
+    not claim knowledge the artefact does not carry.
+    """
+    if "retrieval_is_exact" not in cost:
+        return "--"
+    if cost["retrieval_is_exact"]:
+        return "exact"
+    return f"hnsw/ef={cost.get('hnsw_ef_search', '?')}"
+
+
 def render(rows: Iterable[Row]) -> str:
     """One markdown document, one section per dataset."""
     rows = list(rows)
@@ -242,8 +263,8 @@ def render(rows: Iterable[Row]) -> str:
             "| config | agent | embed model | chat model | chunker "
             "| chunks/node | mrr | hit@1 "
             "| hit@5 | recall@20 | llm calls/query | tokens/query "
-            "| gpu seconds | wall seconds | conc | cut off |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| gpu seconds | wall seconds | conc | cut off | retrieval |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in sorted(
             section, key=lambda r: (-r.metrics.get("mrr", 0.0), r.config, r.agent)
@@ -258,7 +279,8 @@ def render(rows: Iterable[Row]) -> str:
                 f"| {_fmt(row.cost.get('seconds_total'), 1)} "
                 f"| {_fmt(row.cost.get('seconds_wall'), 1)} "
                 f"| {_fmt(row.cost.get('query_concurrency'))} "
-                f"| {_fmt(row.cost.get('exhausted_queries'))} |"
+                f"| {_fmt(row.cost.get('exhausted_queries'))} "
+                f"| {_retrieval(row.cost)} |"
             )
         out.append("")
     return "\n".join(out)
