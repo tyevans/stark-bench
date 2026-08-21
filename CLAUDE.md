@@ -39,16 +39,23 @@ report against `count(*)` for that arm's tenant and prints `MISSING` for
 corpora that no longer exist.
 
 Live: `qwen-rel-sliding1k` (549,697), `qwen-wholedoc` (151,232),
-`qwen-rel-whole` (129,656), and the three `qwen-mini-*` arms.
+`qwen-rel-whole` (129,656), `vss-control` (129,375), and the three
+`qwen-mini-*` arms.
 
 **Gone**, and needing a re-ingest before they can be scored again: every
-nomic and Nemotron arm, and `vss-control`. `results/*.json` for them live
-on disk and survived, so their numbers are still readable — they just
-cannot be reproduced without rebuilding the corpus.
+nomic and Nemotron arm. `results/*.json` for them live on disk and
+survived, so their numbers are still readable — they just cannot be
+reproduced without rebuilding the corpus.
 
-`vss-control` is the cheap one: it reloads from STaRK's precomputed vectors
-in minutes with no endpoint time, and reproducing `0.23057383129905376`
-exactly is the check that it came back correctly.
+`vss-control` was rebuilt on 2026-08-21 and **reproduced
+`0.23057383129905376` to every digit**, which is the check that it came
+back correctly. It costs minutes and no endpoint time, since it reloads
+STaRK's precomputed vectors.
+
+That exact match is now doing double duty. The rebuild ran through
+redstring PR #71's rewritten `ORDER BY`, so it is also the evidence that
+the rewrite is behaviour-preserving on real data to seventeen significant
+figures rather than merely monotonic in argument.
 
 A `--run` against a missing corpus now refuses up front rather than
 scoring an empty store as a bad retriever.
@@ -130,7 +137,7 @@ should. Four families:
 | family | what varies |
 |---|---|
 | `dense`, `lexical`, `hybrid` | retrieval only, no LLM |
-| `zero_shot`, `deep` | LLM-driven, never yet scored |
+| `zero_shot`, `deep` | LLM-driven; scored only on the dead Nemotron arms |
 | `rerank`, `rerank40`, `rerank40lean` | rerank on full documents |
 | `rerank40title*`, `rerank80*` | rerank on lean encodings — see FINDINGS 1b |
 
@@ -451,8 +458,28 @@ handful of near-tied argmaxes flip and the ranking moves.
 hit@5 should not be quoted precisely on these arms at all** — its floor is
 ~0.011, about 2.5% relative.
 
-Retrieval-only arms are unaffected — no LLM — and `vss-control`
-reproducing `0.23057383129905376` to every digit remains a valid check.
+**Retrieval-only arms are NOT unaffected. This paragraph used to say they
+were, and that was falsified on 2026-08-21.** Two runs of
+`qwen-rel-sliding1k` dense — same code, same rows, no index in either —
+disagreed on **103 of 280 queries**, moving mrr by 0.000054 and recall@20
+by 0.000397.
+
+The cause is upstream of the database: the same text embedded twice
+against the endpoint, alone, back to back, returns **different vectors**
+(max component delta 3.3e-03, cosine 0.99981). Calls 2, 3 and 4 agree with
+each other and differ from call 1, so it is the first call after idle
+rather than per-call jitter; the mechanism is not pinned down.
+
+The noise source was never "an LLM" — it is a batched inference server,
+and the query embedder is one of those too. So **a dense or hybrid mrr
+difference below ~0.0002 is noise.** The LLM floor above still dominates
+and is unchanged.
+
+`vss-control` reproducing `0.23057383129905376` to every digit remains a
+valid check, and this explains why: its vectors are precomputed, so it
+makes no live embedding call. That is also why it is deliberately left
+**unindexed** while every other arm is indexed — it is the one arm whose
+exactness is the check. See B-QUERY-EMBED-NONDETERMINISM-1.
 
 Whether `--query-concurrency 1` restores determinism is unresolved and
 cheap to settle: two serial runs of one arm. If it does, the cause is
@@ -485,9 +512,20 @@ indexed document carries a `- relations:` block naming the node's neighbours:
 produced when this section was written — above `vss-control`'s best
 (0.23111) and above STaRK's published ada-002 VSS figure of 0.2350.
 
+**Both have since been beaten by chunking the same corpus.**
+`qwen-rel-sliding1k` — the identical relational documents in
+1000-character windows — reaches **0.34675** hybrid and **0.25319** dense
+with no LLM at all, against `qwen-rel-whole`'s 0.27711 and 0.18269 on the
+same basis (`hnsw/ef=800`). That is the best retrieval-only figure here
+and above every published retriever on this split, including GritLM-7b
+at 0.2499 — on an embedder that loses to ada-002 by 6.4 mrr on the dense
+channel, so the margin is corpus construction and fusion rather than the
+model.
+
 **Reranking has since gone well past it.** The current best is
-`qwen-rel-whole` + `rerank40` at **0.46323**, and the cheap lean arms reach
-0.39343 at roughly a twentieth of the cost. `hybrid` remains the right
+`qwen-rel-whole` + `rerank40` at **0.46323** (measured on exact retrieval,
+before the index — see the indexed-basis section), and the best lean arm
+is `rerank40titlerelmatrix` at 0.41771. `hybrid` remains the right
 baseline to read the rerank arms against, because reranking can only
 reorder what it found: at `fetch=20`, recall@20 is *identical* to hybrid's
 to four decimals, by construction.
@@ -571,6 +609,83 @@ long tail can move. And `native-wholedoc` splits rather than truncates the
 2.07% of documents the endpoint will not take whole, deliberately — truncating
 would make that arm hold less *text* than the others, measuring content loss
 and calling it granularity.
+
+## Retrieval is indexed now, and that is a basis, not a detail
+
+As of 2026-08-21 each live tenant has a **partial HNSW index** built by
+`scripts/build_ann_indexes.py`, and the database is set to
+`hnsw.ef_search = 800`. Every report records `ann_index`,
+`ann_index_scans_cumulative`, `hnsw_ef_search` and `retrieval_is_exact` in
+its cost block, because an approximate number and an exact one are
+otherwise indistinguishable on disk.
+
+**The right `ef_search` depends on corpus size, and a sweep on a small
+corpus will mislead you.** Measured against exact scans on both:
+
+| `ef_search` | `qwen-rel-whole` dense (129,656) | `qwen-rel-sliding1k` dense (549,697) |
+|---|---|---|
+| 40 (pgvector default) | −0.0032 mrr, −0.0117 recall@20 | not measured |
+| 200 | −0.0040 mrr | **−0.0110 mrr** |
+| 400 | not measured | −0.0028 mrr |
+| 800 | +0.0002 mrr (= exact) | +0.0003 mrr (= exact) |
+
+200 was chosen first, off the 129k corpus alone, and costs nearly three
+times as much on the 550k one. **There is no speed argument for the lower
+setting**: `qwen-rel-sliding1k` dense is 8.0s at 800 against ~30s at 200
+and 165.8s exact, because a wider walk still beats scanning 2.25GB of
+vectors. Sweep on the largest corpus you have, not the fastest one.
+
+**Numbers taken on this basis are not comparable to numbers taken before
+it.** Check `retrieval_is_exact` and `hnsw_ef_search` before comparing two
+rows.
+
+`vss-control` is deliberately **not** indexed. See the reproducibility
+section above.
+
+### Why partial, and why it took a redstring change
+
+A single ANN index over the shared multi-tenant chunk table is the trap
+redstring's own docstring describes: the planner either takes the `k`
+globally nearest rows and drops other tenants' afterwards, or ignores the
+index entirely. `WHERE tenant_id = '...'` makes it usable only for queries
+carrying that predicate, which is redstring BACKLOG B10k's option (3) and
+fits because there are six tenants, not six thousand.
+
+That alone was not enough. redstring's `_semantic_candidates_sql` ordered
+by `1 - (embedding <=> $2) / 2 DESC`, which no pgvector opclass can serve,
+so the first three indexes built here went **completely unused** — 5.7GB,
+`idx_scan = 0` on all three — and made dense retrieval **3.1x slower**
+(165.8s -> 519.1s) by evicting the table from the page cache. redstring
+PR #71 changes the ordering to the raw distance ascending. Same order,
+same tie-break, servable by an index.
+
+**Verify with `idx_scan`, never with `EXPLAIN` of a query you wrote
+yourself.** `EXPLAIN` on the simplified `ORDER BY embedding <=> $1 LIMIT
+20` shows a beautiful index scan and is about a query this codebase never
+issues; that is how the above survived an hour.
+
+```
+select indexrelname, idx_scan from pg_stat_user_indexes
+ where indexrelname like '%hnsw%';
+```
+
+### Building them
+
+`uv run python scripts/build_ann_indexes.py <config-name>...`, roughly one
+minute per 130k rows at 1024 dimensions. Three traps, all hit:
+
+- Docker's default `/dev/shm` is 64M and defeats a parallel build. It must
+  also **exceed `maintenance_work_mem`**, because a parallel build
+  allocates that much *shared* memory — 12G of work mem against 2G of shm
+  fails with `DiskFullError` on a host with 131G free. `docker-compose.yml`
+  now sets `shm_size: 16gb`.
+- The memory cliff is real but not a cliff: at 2G (under the 2.25GB of raw
+  vectors) the build fell back to disk and ran at 0.9%/min; at 12G it ran
+  at 2.4%/min. Better by 2.6x, not by an order of magnitude.
+- **Killing the client does not cancel `CREATE INDEX`.** The backend runs
+  on and finishes. Cancel it with `pg_cancel_backend`, and do not assume a
+  build died because its launcher did — one index here completed after its
+  process was written off, and the relaunch collided with it.
 
 ## Chunk tables are keyed on the embedding model
 
@@ -821,18 +936,45 @@ anywhere. `PerQueryDeepAgent` in `harness/agents.py` rebuilds the budget per
 
 ## Still to do
 
-1. **Run the four built-but-unrun arms.** `rerank40titlerelhybrid` and
-   `rerank40titlereldense` isolate whether an embedding selector beats BM25
-   alone; `rerank40titlerelmatrix` tests three averaged score axes;
-   `rerank80titlerelranked` asks whether the recall curve has flattened past
-   40 candidates. All need the endpoint.
-2. **Score `qwen-rel-sliding1k` on `dense` and `hybrid`.** Its `lexical`
-   number is in (FINDINGS 1c, +29% over whole-document) and the config's
-   more interesting prediction — that dense may improve, because a
-   1000-character window isolates the relations block into its own chunk —
-   is still open.
-3. **`zero_shot` and `deep` have still never been scored**, and `deep`
-   needs `--ingest-edges` first (B-DEEP-EDGES-1).
+1. ~~**Run the four built-but-unrun arms.**~~ **Done 2026-08-21.**
+   `rerank40titlerelmatrix` 0.41771 is the best lean arm; `rerank80titlerelranked`
+   0.40486; `rerank40titlereldense` 0.37999 and `rerank40titlerelhybrid`
+   0.37984 both lose to BM25-ranked selection and are within 0.0002 of each
+   other, answering FINDINGS 1b: an embedding selector does not beat BM25.
+   See FINDINGS §10.
+2. ~~**Score `qwen-rel-sliding1k` on `dense` and `hybrid`.**~~ **Done
+   2026-08-21**, and the config's prediction held: dense 0.25319 against
+   `qwen-rel-whole`'s 0.18269, hybrid 0.34675 against 0.27711. Chunking the
+   relational corpus helps both channels, not just the lexical one.
+3. **`zero_shot` and `deep` have never been scored on a LIVE corpus.** This
+   entry used to say they had never been scored at all, which is wrong:
+   five results exist, on the three Nemotron arms, whose ingests carried
+   all 8,100,498 edges -- so `deep` had its `neighbors` tool and
+   B-DEEP-EDGES-1 was satisfied for those runs. They cannot be reproduced,
+   because those corpora are gone.
+
+   What they measured is worth keeping, because it is not encouraging for
+   the agentic architectures:
+
+   | corpus | dense | hybrid | zero_shot | deep |
+   |---|---|---|---|---|
+   | `native-wholedoc` | 0.2163 | 0.2187 | 0.2139 | 0.1851 |
+   | `native-sliding1k` | 0.2125 | 0.2211 | 0.2199 | 0.2015 |
+   | `redstring-native` | 0.1845 | 0.1985 | 0.1998 | — |
+
+   `zero_shot` costs one LLM call per query and matches or slightly
+   trails `hybrid`, which costs none. `deep` costs ~7.46 LLM calls per
+   query -- against a cap of 8, so most queries ran to exhaustion -- and
+   is the **worst** arm on both corpora where it ran, below even
+   `lexical` on one. Reranking, which is not agentic, beats everything
+   here by a wide margin (`native-wholedoc` `rerank` = 0.3408).
+
+   So the open question is not "do they work" but "do they work on the
+   rel corpora", where retrieval is far stronger and `deep`'s
+   `neighbors` tool has relational text to walk. That needs
+   `--ingest-edges` on a live tenant first: the qwen arms were ingested
+   without edges.
+
 4. Whole-branch review, then `superpowers:finishing-a-development-branch`.
 
 When reading the chunking sweep, hold one caveat: its three points are

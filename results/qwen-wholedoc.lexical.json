@@ -1,6 +1,8 @@
 {
   "config_name": "qwen-wholedoc",
   "config_verbatim": "# The PRIME re-baseline on qwen3-embedding-0.6b.\n#\n# Exists because the embedder changed again. Every PRIME arm in `results/` is\n# either Nemotron-3-Embed-1B or nomic-embed-text, and comparing a qwen number\n# against either requires that nothing else moved.\n#\n# ## The chunker is `capped-whole-2400` and that is deliberate\n#\n# qwen does NOT need the cap. It is served with `n_ctx 32768` and a physical\n# batch that took a 40,000-character input in one piece -- probed against the\n# live endpoint before this config was written, not inferred from the GGUF.\n# The whole corpus would come through whole; PRIME's longest document is\n# 52,260 characters and the mean is 870.\n#\n# The cap is kept anyway, at nomic's value, because `nomic-wholedoc` is the\n# arm this is compared against and nomic could not exceed 2400. Lifting it\n# here would vary the model AND the granularity at once -- exactly the\n# confound `nomic-wholedoc.yaml` documents regretting when it inherited\n# Nemotron's 5000-character cap. RESULTS.md finding 4 measures a 25% spread\n# in dense mrr across chunkers, so the cap is not a free variable.\n#\n# `qwen-wholedoc` minus `nomic-wholedoc` is therefore the embedding model and\n# nothing else. That is the one clean single-variable model comparison this\n# repository has ever had, and it is worth giving up an unconstrained\n# whole-document arm to get. Running qwen uncapped is a legitimate follow-up\n# cell, not this one -- see B-QWEN-UNCAPPED-1.\nname: qwen-wholedoc\ndataset: prime\nsplit: test-0.1\nchunker: capped-whole-2400\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# Qwen3-Embedding is asymmetric in a different shape from every other model\n# here. The corpus side takes NO prefix -- the empty string is the correct\n# value, not an omission -- and the query side takes a one-line instruction\n# followed by `Query: `, which is the format the model was trained with.\n# Getting this wrong is silent in the usual way: the vectors stay well-formed\n# and score plausibly, just below what the model can do.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n",
+  "split": "test-0.1",
+  "chat_model": null,
   "queries": 280,
   "metrics": {
     "mrr": 0.20478567755115884,
@@ -12,7 +14,21 @@
     "tool_calls_per_query": 1.0,
     "llm_calls_per_query": 0.0,
     "tokens_per_query": null,
-    "seconds_total": 157.44349094724748
+    "seconds_total": 300.340992913003,
+    "seconds_wall": 75.71812501800014,
+    "query_concurrency": 4,
+    "query_embed_prewarm_failed": 0,
+    "query_embed_prewarm_texts": 280,
+    "query_embed_prewarm_requests": 3,
+    "query_embed_hits": 0,
+    "query_embed_misses": 0,
+    "query_embed_live_calls": 0,
+    "exhausted_queries": null,
+    "ann_index": "kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_wholedoc",
+    "ann_index_definition": "CREATE INDEX kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_wholedoc ON public.kg_chunks_qwen3_embedding_0_6b_1e22db42 USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64') WHERE (tenant_id = '394ced66-2821-564e-bdf0-e20e0d0a416d'::uuid)",
+    "ann_index_scans_cumulative": 1120,
+    "hnsw_ef_search": "800",
+    "retrieval_is_exact": false
   },
   "ingest": {
     "nodes": 129375,

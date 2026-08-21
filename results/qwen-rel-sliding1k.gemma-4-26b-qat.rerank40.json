@@ -2,20 +2,20 @@
   "config_name": "qwen-rel-sliding1k",
   "config_verbatim": "# The cell FINDINGS.md \u00a77 asks for first: redstring's chunking, on the\n# corpus that actually matters.\n#\n# ## Why this arm exists\n#\n# Everything measured on `prime-rel` so far is `whole-document`, chosen\n# deliberately so the relations result would be a statement about the\n# corpus and not about granularity. That choice worked -- and it means the\n# best number this project has (`qwen-rel-whole` + rerank, 0.41948) says\n# almost nothing about redstring, because redstring's chunker was switched\n# off for it.\n#\n# This arm turns it back on. `qwen-rel-sliding1k` minus `qwen-rel-whole`,\n# at a fixed model and a fixed corpus, is the cost or benefit of chunking\n# the relations text.\n#\n# ## Why `sliding-1000-500` rather than `boundary-preference`\n#\n# `boundary-preference` came last on dense retrieval on Nemotron, on nomic,\n# and on qwen's mini set -- three models, same ordering (FINDINGS \u00a73).\n# Re-testing a three-time loser on the good corpus is worth less than\n# measuring the chunker that has beaten it every time. If sliding wins here\n# too, that is a fourth data point and the diagnostic FINDINGS \u00a73 asks for\n# gets built instead of a fifth arm.\n#\n# ## The prediction worth writing down before the number exists\n#\n# The `- relations:` block sits at the END of each document, and the\n# relations finding is that those neighbour names are what the lexical\n# channel matches. A 1000-character window with 500 overlap therefore does\n# something specific to this corpus that it did not do to `prime`: it\n# **isolates the relations block into its own chunk** for the 19.5% of\n# documents over 2,400 characters.\n#\n# Two outcomes are plausible and they point opposite ways:\n#\n# - Dense may IMPROVE. `qwen-rel-whole` dense moved only +0.004 over\n#   no-relations, which was read as \"a single vector compresses the\n#   neighbour names away\". If that reading is right, giving the names their\n#   own vector should recover some of it -- and `aggregation: max` means\n#   one strong chunk carries the node.\n# - Lexical may DEGRADE, or not move. BM25 already sees every term in the\n#   document whether it is one chunk or four; what changes is the length\n#   normalisation and the per-chunk idf, not what is visible.\n#\n# If dense rises and lexical holds, chunking is worth its cost on this\n# corpus and the \u00a73 diagnostic has its mechanism. If dense does not move,\n# the +0.004 has a different explanation and the compression story is\n# wrong. Either way this is a cell whose result is informative, which is\n# the bar an arm has to clear.\n#\n# ## Cost\n#\n# The embedding cache pays here for the first time on a real arm. Every\n# document under 1000 characters yields a single chunk byte-identical to\n# its `whole-document` chunk, so it is a guaranteed hit on the vectors\n# `qwen-rel-whole` already paid for. Documents above the window are all\n# misses. Measured cross-chunker hit rate on `prime-mini` was 44.7%\n# (CLAUDE.md), and that is the number to check this run against -- an arm\n# with near-zero hits is telling you the cache key is wrong, which nothing\n# else in the report would show.\nname: qwen-rel-sliding1k\ndataset: prime-rel\nsplit: test-0.1\nchunker: sliding-1000-500\nembeddings: qwen3-embedding-0.6b\ndimension: 1024\naggregation: max\nagent: dense\nk: 20\n\n# See `qwen-rel-whole.yaml`. The document side being empty is the correct\n# value for Qwen3-Embedding, not an omission.\ndocument_prefix: \"\"\nquery_prefix: \"Instruct: Given a query, retrieve relevant documents that answer the query\\nQuery: \"\n",
   "split": "test-0.1",
-  "chat_model": null,
+  "chat_model": "gemma-4-26b-qat",
   "queries": 280,
   "metrics": {
-    "mrr": 0.25318579089694787,
-    "hit@1": 0.16785714285714284,
-    "hit@5": 0.35714285714285715,
-    "recall@20": 0.3908381703176669
+    "mrr": 0.4134131874756089,
+    "hit@1": 0.34285714285714286,
+    "hit@5": 0.5071428571428571,
+    "recall@20": 0.5041974500220802
   },
   "cost": {
-    "tool_calls_per_query": 1.0,
-    "llm_calls_per_query": 0.0,
+    "tool_calls_per_query": 2.0,
+    "llm_calls_per_query": 1.0,
     "tokens_per_query": null,
-    "seconds_total": 22.838409285994203,
-    "seconds_wall": 5.9042682189992775,
+    "seconds_total": 6721.71902032101,
+    "seconds_wall": 1685.504980185,
     "query_concurrency": 4,
     "query_embed_prewarm_failed": 0,
     "query_embed_prewarm_texts": 280,
@@ -26,7 +26,7 @@
     "exhausted_queries": null,
     "ann_index": "kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_rel_sliding1k",
     "ann_index_definition": "CREATE INDEX kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_rel_sliding1k ON public.kg_chunks_qwen3_embedding_0_6b_1e22db42 USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64') WHERE (tenant_id = 'ab815a67-af9a-52e4-a2e1-fc3bacfd77c0'::uuid)",
-    "ann_index_scans_cumulative": 1960,
+    "ann_index_scans_cumulative": 2520,
     "hnsw_ef_search": "800",
     "retrieval_is_exact": false
   },

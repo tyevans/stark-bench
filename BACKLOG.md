@@ -635,3 +635,108 @@ Related: B-SLIDING-REDUNDANT-1 is a DIFFERENT defect with a similar smell.
 Its redundant tail chunk has a distinct `start_char` but identical text to
 part of its predecessor -- not byte-identical to a whole chunk, so it does
 NOT collide, and it is still written.
+
+## B-ANN-INDEX-UNREACHABLE-1: redstring's chunk query cannot use an HNSW index at all
+
+Attempted on 2026-08-21 and reverted the same night. Partial HNSW indexes
+were built for `qwen-rel-whole`, `qwen-rel-sliding1k` and `qwen-wholedoc`
+(5.7GB total, ~9 minutes of build). **All three ended with `idx_scan = 0`:
+not one query used them.**
+
+`PostgresChunkStore._semantic_candidates_sql` orders by
+
+    ORDER BY 1 - (embedding <=> $2::vector) / 2 DESC, id ASC
+
+An HNSW index can only serve `ORDER BY embedding <=> $2` **ascending**. A
+similarity (distance negated and rescaled) sorted descending, with a
+secondary tie-break on `id`, is not a form the index can answer, so the
+planner takes a parallel sequential scan and a full sort every time.
+
+**The trap that cost the time here.** `EXPLAIN` on the *simplified* shape
+`ORDER BY embedding <=> $1 LIMIT 20` shows `Index Scan using ..._hnsw_...`
+and looks like proof. It is proof about a query this codebase never
+issues. Verify against the adapter's real SQL, or against `idx_scan` in
+`pg_stat_user_indexes` after a run -- the counter cannot be argued with.
+
+**It was not merely useless, it was expensive**: `qwen-rel-sliding1k` dense
+went from 165.8s to 519.1s wall, a 3.1x slowdown, with the index never
+read. 5.7GB of index competing for a page cache that was comfortably
+holding a 2.25GB table is the whole story. `shared_buffers` is at the
+128MB default, which will not have helped.
+
+**Before trying again**, one of these has to change: the tie-break dropped
+so the ORDER BY is indexable (a redstring change, and the tie-break exists
+to make the port's ordering total), or an expression index built on the
+exact `1 - (embedding <=> ...) / 2` form (pgvector opclasses do not offer
+one), or the score computed by the index and the tie-break applied after
+in a wrapper query. Redstring BACKLOG B10k's three routes all assume the
+ORDER BY is the plain distance form, and none of them notices this.
+
+`scripts/build_ann_indexes.py` is kept, with this finding at the top of its
+docstring, because the next person to notice the sequential scan will
+otherwise rebuild exactly these indexes.
+
+## B-QUERY-EMBED-NONDETERMINISM-1: retrieval-only arms are not reproducible either
+
+Found while chasing why two supposedly-exact runs of `qwen-rel-sliding1k`
+dense disagreed. **103 of 280 queries returned different predictions**,
+moving `mrr` by 0.000054 and `recall@20` by 0.000397, with no index in
+play in either run -- both were exact sequential scans over identical
+rows.
+
+The cause is upstream of the database. The same text embedded twice
+against `http://192.168.1.14:8080/v1/embeddings`, alone, back to back,
+returns **different vectors**: max absolute component delta 0.0045, which
+is nowhere near float epsilon. Batching it alongside eight filler texts
+changed nothing further, so batch composition is not the whole mechanism
+-- a first-call versus warm-server effect is at least as likely, and this
+has not been pinned down.
+
+**This falsifies a claim in CLAUDE.md**, which says of run-to-run noise
+that "Retrieval-only arms are unaffected -- no LLM". They are affected.
+The noise source was never the LLM as such; it is a batched inference
+server, and the query embedder is one of those too. `vss-control`
+reproducing `0.23057383129905376` to every digit is consistent with this
+rather than contradicting it: its vectors are precomputed and no live
+embedding call happens.
+
+**What this costs.** A dense or hybrid mrr difference below roughly 0.0001
+is noise, and the paired-run evidence for that is one pair on one arm --
+the honest floor may be higher. The existing LLM floor (~0.001 mrr,
+B-LLM-RUN-NOISE-1) is unaffected and still dominates.
+
+**The cheap fix, if reproducibility is wanted**: cache query vectors the
+way chunk vectors are already cached. `kg_embedding_cache` is
+content-addressed on `(model, document_prefix, sha256(text))` and the
+query side simply does not consult it -- every run re-embeds all 280
+queries in 3 requests. Caching them would make repeat runs of an arm exact
+against each other, at the cost of hiding a genuine model change behind a
+stale key, which is the same trade the chunk cache already makes and
+manages with `--no-cache`.
+
+## B-ANN-RECALL-KNEE-1 — ANSWERED: sweep on the largest corpus, and 800 is the answer
+
+Whether HNSW recall held at scale, validated originally at one corpus size,
+one k and one `ef_search`. Settled 2026-08-21, and not the way the first
+measurement implied.
+
+On `qwen-rel-whole` (129,656 rows) `ef_search = 200` costs 0.0040 mrr
+against an exact scan. On `qwen-rel-sliding1k` (549,697 rows) the same
+setting costs **0.0110** -- 2.8x more, and larger than the entire measured
+effect of several architecture changes in FINDINGS. 400 costs 0.0028 on
+dense; 800 lands at +0.0003, which is query-embedding noise rather than a
+gain (B-QUERY-EMBED-NONDETERMINISM-1).
+
+800 is not slower in any way that matters: `qwen-rel-sliding1k` dense is
+8.0s at 800, ~30s at 200, and 165.8s exact. A wider graph walk still beats
+scanning 2.25GB of vectors, so the lower setting bought nothing.
+
+**Standing rule, which is why this entry stays instead of being deleted:
+sweep a recall knob on the largest corpus you have.** The small corpus
+answers in a minute and gives a number wrong by 3x for the corpus that
+matters. This campaign standardised on 200 off the fast sweep and had
+started the LLM arms -- which consume retrieval output -- before the large
+corpus was measured; they were stopped and restarted.
+
+Still open: whether 800 suffices at MAG scale, another order of magnitude
+up. The rule above says measure it there rather than extrapolating this row.

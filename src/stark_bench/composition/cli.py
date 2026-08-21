@@ -50,6 +50,7 @@ from stark_bench.adapters.precomputed_embeddings import (
     node_vector_lookup,
 )
 from stark_bench.adapters.model_preflight import require_chat_model
+from stark_bench.adapters.postgres_retrieval_stats import retrieval_stats
 from stark_bench.adapters.report_file import (
     summarise_cost,
     write_predictions,
@@ -750,6 +751,9 @@ async def _do_run(config: RunConfig) -> None:
         # exhausts, and reporting 0 would claim it ran to completion under a
         # cap it does not have. Same rule as `tokens_per_query`.
         cost["exhausted_queries"] = getattr(agent, "exhausted_queries", None)
+        # Approximate-vs-exact retrieval, recorded next to the metric it
+        # moves. See `_retrieval_stats`.
+        cost.update(await retrieval_stats(POSTGRES_DSN, _table_for(config), tenant_id))
         # The denominator for the line above. "90 queries hit the cap" is
         # half a fact without the cap beside it, and the caps are module
         # constants rather than config (B-BUDGET-CAPS-1), so
