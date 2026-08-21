@@ -5,15 +5,21 @@ Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 ## B-BUDGET-CAPS-1: the per-query budget caps are constants, not config
 
 `MAX_TOOL_CALLS`, `MAX_LLM_CALLS` and `MAX_SECONDS` in
-`src/stark_bench/harness/agents.py` are module constants (8/8/60s). They are
-the single biggest lever on what a `deep` number means, and they are not in
-`RunConfig`, so they are not in `config_verbatim` either -- a deep result
-file does not record the budget it was run under. Changing them changes every
-past number's comparability with no trace in the artefacts.
+`src/stark_bench/composition/agent_registry.py` are module constants
+(8/8/60s). They are the single biggest lever on what a `deep` number means
+and they are not in `RunConfig`, so they are not in `config_verbatim`.
 
-`chat_model` was added to `RunConfig` in the same commit and these were not,
-because the caps have never been tuned and a config field nobody sets is its
-own kind of noise. The moment anyone changes one, they belong in the config.
+**Narrowed 2026-08-20, not closed.** The reports now record the caps that
+actually ran, read off the agent (`budget_max_tool_calls` and friends in
+`cost`), alongside `exhausted_queries`. That closes the half that mattered
+most: a cut-off count without its cap beside it is half a fact, and the
+artefacts carried the numerator only.
+
+What remains is that the caps cannot be SET per config -- only observed.
+Still deliberate: a config field nobody sets is its own kind of noise, and
+the caps have never been tuned. The moment anyone wants two `deep` arms at
+different budgets in one sweep, they belong in `RunConfig`, and the
+recording added today is what will make those two arms readable.
 
 ## B-DEEP-EDGES-1: `deep` against an edgeless corpus measures nothing useful
 

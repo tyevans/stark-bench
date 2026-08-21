@@ -710,6 +710,18 @@ async def _do_run(config: RunConfig) -> None:
         # exhausts, and reporting 0 would claim it ran to completion under a
         # cap it does not have. Same rule as `tokens_per_query`.
         cost["exhausted_queries"] = getattr(agent, "exhausted_queries", None)
+        # The denominator for the line above. "90 queries hit the cap" is
+        # half a fact without the cap beside it, and the caps are module
+        # constants rather than config (B-BUDGET-CAPS-1), so
+        # `config_verbatim` cannot carry them.
+        #
+        # Read off the agent rather than imported from `harness`: an agent
+        # constructed with non-default caps must report ITS caps, not the
+        # module's, or the record is wrong in exactly the case it exists for.
+        for cap in ("max_tool_calls", "max_llm_calls", "max_seconds"):
+            value = getattr(agent, cap, None)
+            if value is not None:
+                cost[f"budget_{cap}"] = value
     finally:
         await chunks.close()
         await graph.close()
