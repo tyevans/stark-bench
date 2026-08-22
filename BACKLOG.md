@@ -2,6 +2,33 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-REPHRASE-5X40-OUTLIER-1 -- the project's best recall has no explanation
+
+`rephrase` at 5 searches x k=40, pool 40 reached **recall@20 0.54502**,
+the highest figure in this project. Every attempt to attribute it has
+since been undercut:
+
+- It is **above** `rankonly`'s 80-candidate pool (0.52246), so it is not
+  simply pool depth.
+- It is **above** `rephrase` at 3 x k=80, pool 80 (0.52185), so it is not
+  simply per-search depth.
+- The paraphrase union adds **-0.0006** recall at pool 80, so "more
+  searches reach more" does not hold in general.
+
+What is left is a **narrow-pool competition** hypothesis: with
+`per_query_fetch=40` filling exactly the 40 slots, each additional search
+competes for inclusion, so the pool becomes "best of five searches"
+rather than "top 80 of one". At pool 80 fed by one k=80 search the slots
+are already full and restatements can only displace.
+
+**One run distinguishes it**: 5 searches at k=40 with `fetch=80`. Recall
+near 0.545 means search count; near 0.52 means the competition effect.
+
+Deferred because the session ended, not because it is unimportant --
+0.54502 is quoted nowhere as a headline precisely because nobody can say
+what produces it. Do not cite it as evidence for the paraphrase union
+until this is run.
+
 ## B-POOL-ORDER-IS-A-BAD-RANKING-1 -- the union is a good set and a bad order
 
 `agents/decompose.py:_pool` orders the union by best rank across searches,

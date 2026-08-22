@@ -9,10 +9,17 @@ each reaches part of the answer space the others miss. Measured here, the
 rewrites are not different angles: four restatements of a query occupy
 **1.1 independent directions** in embedding space out of a possible four.
 
-They still pay. `rephrase` — three searches, union, rerank — reaches
-**recall@20 0.545** against a single hybrid search's 0.468 on STaRK-PRIME.
-The reach is real. It just comes from somewhere other than where the
-explanation says.
+They still pay, and they pay through a channel the explanation does not
+mention. `rephrase` — three searches, union, rerank — improves mrr by
+**+0.022** over the same pipeline running one search, on the same pool,
+prompt and output format.
+
+**What restatement does *not* buy is recall.** A control with one search
+into an 80-candidate pool recalls within 0.0006 of three searches into the
+same pool. An earlier version of this document credited restatement with
++0.078 recall@20 over a single `hybrid` search; most of that was reranking
+a **deeper pool**, not the restatements. The corrected split is in *Where
+the reach actually comes from* below.
 
 ---
 
@@ -101,10 +108,30 @@ Vectors at cosine 0.92 return **59% the same nodes**. BM25 returns **32%
 the same**, and the union of four restatements reaches **2.31× as many
 distinct nodes** as any one of them.
 
-So multi-query reach on this corpus is a lexical phenomenon. Restatements
-that a bi-encoder considers near-identical are, to a term-matching
-retriever, meaningfully different queries — because they differ in exactly
-what BM25 keys on: which words are present, how often, and how rare.
+So the *disagreement* between restatements is a lexical phenomenon.
+Restatements that a bi-encoder considers near-identical are, to a
+term-matching retriever, meaningfully different queries — they differ in
+exactly what BM25 keys on: which words are present, how often, and how
+rare.
+
+**But disagreement is not the same as reach**, and this is where the
+first version of this document overreached. Measured end to end on
+STaRK-PRIME at a fixed 80-candidate pool:
+
+| step | mrr | recall@20 |
+|---|---|---|
+| ordered-index output + grouped prompt, vs `[index, score]` on a flat list | +0.0103 | +0.0112 |
+| three restatements, vs one search | **+0.0217** | **−0.0006** |
+
+The restatements retrieve different node sets (Jaccard 0.32) and reach
+2.31× as many distinct nodes — yet after reranking, the same gold answers
+end up in the top 20. What the union changes is **where in the ranking
+they land**, not whether they are present.
+
+The most likely reading: the extra nodes a second and third restatement
+surface are mostly *not* gold, but seeing a candidate confirmed by several
+independent phrasings is evidence the reranker can use. That is an
+ordering signal, not a coverage one.
 
 This lands on top of the same corpus's headline result. Adding relational
 text to documents moved the lexical channel **+22%** and the dense channel
@@ -117,11 +144,18 @@ same mechanism, opposite ends of the pipeline.
 Synonyms, term density, word forms, keyword-versus-prose. The angles are
 unavailable; the terms are not.
 
-**Do not expect a bigger candidate pool to substitute for more searches.**
-Measured separately on the same arm: going from 3 searches to 5 moved
-recall@20 by **+0.023**, while doubling the candidate pool from 40 to 80
-moved it by **+0.00003**. Reach comes from searches that disagree, and
-ranking quality comes from pool size — they are independent knobs.
+**Pool depth is where recall actually comes from, and it saturates
+early.** One search reranked into 80 candidates reaches recall@20 0.522
+against a plain top-20 hybrid's 0.468 — but widening 40 → 80 moves it by
+**+0.00003**. Almost all of the benefit is in getting past the first
+twenty; past roughly forty there is nothing left to collect.
+
+**Search count and pool size are separable, but only at narrow pools.** At
+a 40-candidate pool, 3 → 5 searches moved recall@20 by +0.023. At an
+80-candidate pool, 1 → 3 searches moved it by −0.0006. Whatever makes
+search count pay is specific to a pool narrow enough that searches compete
+for inclusion — with 80 slots filled by one deep search, extra
+restatements can only displace.
 
 **Genuine dense diversity requires leaving query space.** Two routes, both
 untested here:

@@ -316,7 +316,15 @@ rather than another arm.
 The most useful section here. Each of these drove real decisions before it
 was killed.
 
-## I.7 Paraphrasing the query widens retrieval; decomposing it does not
+## I.6 Paraphrasing the query beats decomposing it
+
+> **Read §I.6e first if you are here for the recall number.** This section
+> reads `rephrase`'s recall@20 advantage as the paraphrase union reaching
+> candidates a single search misses. A later control shows most of it was
+> **reranking a deeper pool**, and that at a fixed 80-candidate pool the
+> union adds no recall at all. The mrr advantage stands; the attribution
+> in this section does not. The reasoning is kept because it drove three
+> further experiments.
 
 Both arms use identical machinery -- plan with one LLM call, retrieve the
 original plus each planned query concurrently, union the results keeping
@@ -361,7 +369,7 @@ conjunction handling, which the relational corpus had already solved at
 index time (§II.8). Paraphrase targets **phrasing mismatch**, which
 nothing here had addressed.
 
-## I.7b A wider pool ranks better and recalls worse
+## I.6a A wider pool ranks better and recalls worse
 
 `rephrase` re-run at **3 searches x k=80, ranking 20 of 80**, against the
 **5 x k=40, 20 of 40** that measured 0.42554. Same corpus, model, encoding
@@ -393,7 +401,7 @@ pool was fine and the loss is selection; recall staying at ~0.52 means
 three searches genuinely reach less than five. They point opposite ways,
 so quoting either explanation now would be guessing.
 
-## I.7c Reach and ranking quality are separate knobs
+## I.6b Reach and ranking quality are separate knobs -- at pool 40
 
 Three `rephrase` configurations, same corpus, model, encoding and basis,
 varying only how many searches run and how many candidates reach the
@@ -415,6 +423,12 @@ Holding one knob and moving the other:
 **Recall@20 is set by how many searches run. MRR is set by how many
 candidates the model ranks.** Neither knob touches the other's metric.
 
+> **Scope, added after §I.6e.** Both measurements here are at a
+> **40-candidate pool**. At pool 80 the first half does not hold: one
+> search and three recall within 0.0006 of each other. Whatever makes
+> search count pay is specific to a pool narrow enough that searches
+> compete for inclusion.
+
 **This falsified the reading given when §I.7b was written**, which is why
 that section says "unattributed" rather than picking a story. The
 explanation offered was selection difficulty -- hit@1 and hit@5 rising
@@ -432,7 +446,7 @@ pays is untested.
 k=80, pool 80 -- is the one that should, and had not been run when this
 was written.
 
-## I.7d Restatement buys NO dense diversity, and all of its reach is lexical
+## I.6c Restatement buys NO dense diversity, and all of its reach is lexical
 
 Ten `test-0.1` queries, four restatements each, `gemma-4-26b-qat`,
 embedded with `qwen3-embedding-0.6b` and the arm's own query prefix.
@@ -505,80 +519,44 @@ candidates by traversal rather than by text at all. Both are untested here,
 and both are the only routes left to widening the dense channel -- which
 has never moved in this project.
 
-## I.9 Held at one model, a lean paraphrase arm matches full-document reranking at a fifth of the cost
+## I.6d Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
-`rerank40` on full documents scored **0.46323** and sat at the top of this
-project's table all day. It ran on `qwen3.8-27b-64k-txt`; every arm
-compared against it ran on `gemma-4-26b-qat`. Two variables, so the row
-was never a control for anything.
+`rephrase` and `rephraseshort` differ only in the final instruction:
+rank exactly 20, or return only the candidates you believe.
 
-Same architecture, model swapped:
+| | mrr | **hit@1** | hit@5 | recall@20 | named (median) |
+|---|---|---|---|---|---|
+| `rephraseshort` | 0.38628 | **0.3536** | 0.4429 | 0.36809 | 2.0 |
+| `rephrase` | 0.42554 | **0.3536** | 0.4893 | 0.54502 | 20.0 |
 
-| arm | model | mrr | hit@1 | hit@5 | recall@20 | wall | LLM calls |
-|---|---|---|---|---|---|---|---|
-| `rerank40`, full docs | qwen3.8-27b | **0.46323** | 0.4000 | 0.5393 | 0.53693 | -- | 1 |
-| `rerank40`, full docs | gemma | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s | 1 |
-| `rephrase`, lean 3x80 | gemma | **0.43689** | 0.3714 | 0.5179 | 0.52185 | **799s** | 2 |
+**hit@1 is identical to four decimal places.** The shortlist was worth
+testing on the theory that a model committing only where confident might
+be a precision instrument -- it is not. Asking for nineteen more
+candidates does not disturb its top pick, and costs nothing.
 
-**The model was worth -0.033 mrr** on identical code, encoding and corpus.
-So the headline was mostly the reranker, which is what a full-document
-reranking arm should be sensitive to.
+**The collapse in recall@20 is a structural finding, not a curiosity.**
+`rephraseshort` scores **below plain `hybrid`** on recall (0.36809 against
+0.46821), despite backfilling every list to 20 from the pooled order. With
+~2 candidates named, positions 3-20 are that pooled order -- and the pool
+is ordered by best rank across all searches, so five searches each
+contribute a rank-1 hit and displace the original query's own ranks 2-5.
 
-**Held at one model, the lean paraphrase arm matches the full-document one
-at 5.7x less wall time** -- 799s against 4583s, on a ~200-character
-encoding rather than whole PRIME records.
+So the union pool is **a good set and a bad ordering**: excellent when a
+model reranks all of it, actively harmful when it does not. That also
+retro-explains `decompose`'s mediocre recall.
 
-**It matches rather than beats, and the caveat is on the other side.**
-`rerank40` on gemma logged **8 degrading queries** (2.9%) that fell back to
-retrieval order and tripped the gate. Restoring them at the arm's own
-average adds roughly +0.004, putting it near 0.434 -- inside noise of
-`rephrase`'s 0.43689. Quote them as tied.
+`rephraseshort` additionally tripped the degradation gate with 15 degraded
+queries against `rephrase`'s 0, so its numbers carry that caveat too.
 
-Notable that the failures were **not** endpoint errors: all 1,402 HTTP
-requests returned 200, and the 8 were responses that failed schema
-validation. The verbose `{node_id: score}` shape `rerank` uses on full
-documents is the easiest one for a model to get wrong, and the ordered-index
-schema `rephrase` uses degraded **zero** queries across the same 280.
+**A note on what these are NOT compared to.** `rerank40` at 0.46323 is
+still the highest mrr on this corpus, and it ran on **`qwen3.8-27b-64k-txt`
+with full documents** -- a different model AND a different encoding. It is
+not a control for any row above, and it is the row §II.7 records as
+currently unreproducible for want of a recorded `chat_n_ctx`. The
+model-controlled comparison, `rerank40` on `gemma-4-26b-qat`, has not been
+run.
 
-**What it does not yet establish.** Whether the paraphrase union is doing
-architectural work or compensating for a weak reranker. `rephrase` on
-`qwen3.8-27b-64k-txt` separates those: if the advantage travels, it lands
-above 0.46323 at roughly a tenth of the wall time that arm would need at
-`-np 1`.
-
-## I.10 The paraphrase arm takes the top of the table, on a lean encoding
-
-`rephrase` (3 searches at k=80, union, rank 20 of 80) on
-`qwen3.8-27b-64k-txt`, `qwen-rel-whole`, `test-0.1`, `hnsw/ef=800`:
-
-| arm | model | encoding | mrr | hit@1 | hit@5 | recall@20 | wall |
-|---|---|---|---|---|---|---|---|
-| **`rephrase`** | qwen3.8-27b | lean, ~200 chars | **0.47547** | **0.4071** | **0.5607** | **0.57020** | 2200s |
-| `rerank40` | qwen3.8-27b | full documents | 0.46323 | 0.4000 | 0.5393 | 0.53693 | ~8400s est. |
-| `rephrase` | gemma | lean | 0.43689 | 0.3714 | 0.5179 | 0.52185 | 799s |
-| `rerank40` | gemma | full documents | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s |
-
-Best on every metric, with zero degraded queries, at roughly a quarter of
-the wall time of the arm it displaces.
-
-**The advantage travels across models, which is what makes it
-architectural.** Against full-document reranking on the same model,
-`rephrase` is +0.007 mrr on gemma and **+0.012 on qwen3.8-27b**. A weak
-reranker being propped up by better candidates would show the opposite --
-the gain shrinking as the reranker improves. It grew.
-
-**recall@20 0.57020 is the project record** and the margin is the story:
-+0.033 over the full-document arm, and +0.102 over a single `hybrid`
-search (0.46821). Recall@20 is the ceiling every reranker here works
-under, and nothing else in this project has moved it this far.
-
-Cost, for the same corpus and model: two LLM calls per query on ~200
-characters of candidate against one call on whole PRIME records. The
-`rerank40` wall time is estimated rather than measured -- that arm at
-`-np 1` was projected from its gemma run, and running it was not worth
-four hours to confirm a number the lean arm already beats.
-
-## I.11 CORRECTION: most of the paraphrase arm's recall was pool depth, not the union
+## I.6e CORRECTION: most of the paraphrase arm's recall was pool depth, not the union
 
 §I.7 read `rephrase`'s **+0.078 recall@20 over `hybrid`** as the union
 reaching candidates a single search misses. A control run says most of it
@@ -624,42 +602,78 @@ against the `[index, score]` pairs on a flat list that every `rerank*` arm
 here uses. That is a prompt-and-schema change with no cost, and it has not
 been applied to the other arms.
 
-## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
+## I.7 Held at one model, a lean paraphrase arm matches full-document reranking at a fifth of the cost
 
-`rephrase` and `rephraseshort` differ only in the final instruction:
-rank exactly 20, or return only the candidates you believe.
+`rerank40` on full documents scored **0.46323** and sat at the top of this
+project's table all day. It ran on `qwen3.8-27b-64k-txt`; every arm
+compared against it ran on `gemma-4-26b-qat`. Two variables, so the row
+was never a control for anything.
 
-| | mrr | **hit@1** | hit@5 | recall@20 | named (median) |
-|---|---|---|---|---|---|
-| `rephraseshort` | 0.38628 | **0.3536** | 0.4429 | 0.36809 | 2.0 |
-| `rephrase` | 0.42554 | **0.3536** | 0.4893 | 0.54502 | 20.0 |
+Same architecture, model swapped:
 
-**hit@1 is identical to four decimal places.** The shortlist was worth
-testing on the theory that a model committing only where confident might
-be a precision instrument -- it is not. Asking for nineteen more
-candidates does not disturb its top pick, and costs nothing.
+| arm | model | mrr | hit@1 | hit@5 | recall@20 | wall | LLM calls |
+|---|---|---|---|---|---|---|---|
+| `rerank40`, full docs | qwen3.8-27b | **0.46323** | 0.4000 | 0.5393 | 0.53693 | -- | 1 |
+| `rerank40`, full docs | gemma | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s | 1 |
+| `rephrase`, lean 3x80 | gemma | **0.43689** | 0.3714 | 0.5179 | 0.52185 | **799s** | 2 |
 
-**The collapse in recall@20 is a structural finding, not a curiosity.**
-`rephraseshort` scores **below plain `hybrid`** on recall (0.36809 against
-0.46821), despite backfilling every list to 20 from the pooled order. With
-~2 candidates named, positions 3-20 are that pooled order -- and the pool
-is ordered by best rank across all searches, so five searches each
-contribute a rank-1 hit and displace the original query's own ranks 2-5.
+**The model was worth -0.033 mrr** on identical code, encoding and corpus.
+So the headline was mostly the reranker, which is what a full-document
+reranking arm should be sensitive to.
 
-So the union pool is **a good set and a bad ordering**: excellent when a
-model reranks all of it, actively harmful when it does not. That also
-retro-explains `decompose`'s mediocre recall.
+**Held at one model, the lean paraphrase arm matches the full-document one
+at 5.7x less wall time** -- 799s against 4583s, on a ~200-character
+encoding rather than whole PRIME records.
 
-`rephraseshort` additionally tripped the degradation gate with 15 degraded
-queries against `rephrase`'s 0, so its numbers carry that caveat too.
+**It matches rather than beats, and the caveat is on the other side.**
+`rerank40` on gemma logged **8 degrading queries** (2.9%) that fell back to
+retrieval order and tripped the gate. Restoring them at the arm's own
+average adds roughly +0.004, putting it near 0.434 -- inside noise of
+`rephrase`'s 0.43689. Quote them as tied.
 
-**A note on what these are NOT compared to.** `rerank40` at 0.46323 is
-still the highest mrr on this corpus, and it ran on **`qwen3.8-27b-64k-txt`
-with full documents** -- a different model AND a different encoding. It is
-not a control for any row above, and it is the row §II.7 records as
-currently unreproducible for want of a recorded `chat_n_ctx`. The
-model-controlled comparison, `rerank40` on `gemma-4-26b-qat`, has not been
-run.
+Notable that the failures were **not** endpoint errors: all 1,402 HTTP
+requests returned 200, and the 8 were responses that failed schema
+validation. The verbose `{node_id: score}` shape `rerank` uses on full
+documents is the easiest one for a model to get wrong, and the ordered-index
+schema `rephrase` uses degraded **zero** queries across the same 280.
+
+**What it does not yet establish.** Whether the paraphrase union is doing
+architectural work or compensating for a weak reranker. `rephrase` on
+`qwen3.8-27b-64k-txt` separates those: if the advantage travels, it lands
+above 0.46323 at roughly a tenth of the wall time that arm would need at
+`-np 1`.
+
+## I.8 The paraphrase arm takes the top of the table, on a lean encoding
+
+`rephrase` (3 searches at k=80, union, rank 20 of 80) on
+`qwen3.8-27b-64k-txt`, `qwen-rel-whole`, `test-0.1`, `hnsw/ef=800`:
+
+| arm | model | encoding | mrr | hit@1 | hit@5 | recall@20 | wall |
+|---|---|---|---|---|---|---|---|
+| **`rephrase`** | qwen3.8-27b | lean, ~200 chars | **0.47547** | **0.4071** | **0.5607** | **0.57020** | 2200s |
+| `rerank40` | qwen3.8-27b | full documents | 0.46323 | 0.4000 | 0.5393 | 0.53693 | ~8400s est. |
+| `rephrase` | gemma | lean | 0.43689 | 0.3714 | 0.5179 | 0.52185 | 799s |
+| `rerank40` | gemma | full documents | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s |
+
+Best on every metric, with zero degraded queries, at roughly a quarter of
+the wall time of the arm it displaces.
+
+**The advantage travels across models, which is what makes it
+architectural.** Against full-document reranking on the same model,
+`rephrase` is +0.007 mrr on gemma and **+0.012 on qwen3.8-27b**. A weak
+reranker being propped up by better candidates would show the opposite --
+the gain shrinking as the reranker improves. It grew.
+
+**recall@20 0.57020 is the project record** and the margin is the story:
++0.033 over the full-document arm, and +0.102 over a single `hybrid`
+search (0.46821). Recall@20 is the ceiling every reranker here works
+under, and nothing else in this project has moved it this far.
+
+Cost, for the same corpus and model: two LLM calls per query on ~200
+characters of candidate against one call on whole PRIME records. The
+`rerank40` wall time is estimated rather than measured -- that arm at
+`-np 1` was projected from its gemma run, and running it was not worth
+four hours to confirm a number the lean arm already beats.
 
 ## II.8 Query decomposition buys nothing on a relational corpus -- the corpus already did it
 
