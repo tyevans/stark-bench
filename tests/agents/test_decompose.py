@@ -170,3 +170,28 @@ def test_the_scoring_prompt_warns_that_a_search_may_be_tangential() -> None:
     assert "Being retrieved by it does not make a candidate an answer" in _SCORE_PROMPT
     assert "EVIDENCE, not as a score" in _SCORE_PROMPT
     assert "found by only one search may still be the best answer" in _SCORE_PROMPT
+
+
+def test_one_pathological_candidate_cannot_overflow_the_prompt() -> None:
+    """A hub entity's relations must not cost the whole query.
+
+    Found the expensive way: one query in 280 produced a prompt the
+    endpoint rejected with `400`, the extract call raised, and that query
+    fell back to retrieval order. `rerank` has carried a cap for this
+    reason since it was written; this arm inherited its encoding and not
+    its guard, and widening the pool from 40 to 100 made it reachable.
+    """
+    from stark_bench.agents.decompose import _MAX_CANDIDATE_CHARS
+
+    huge = Passage(
+        node_id="hub",
+        score=1.0,
+        text="- name: " + ("verylongneighbourname " * 5000) + "\n",
+    )
+    rendered = DecomposeAgent()._render(
+        [Candidate(passage=huge, matches={0: 1})], ["q"]
+    )
+    assert len(rendered) < _MAX_CANDIDATE_CHARS + 100, (
+        f"one candidate rendered {len(rendered)} characters; an uncapped "
+        "hub entity can push the prompt past the context window"
+    )
