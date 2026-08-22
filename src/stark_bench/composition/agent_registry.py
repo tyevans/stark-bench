@@ -238,6 +238,14 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # positions 3-20 (which become retrieval order) for committing only
     # where it is confident. Whether that is better depends entirely on
     # whether hit@1 or MRR is the number you need.
+    # The same three deep searches, truncated to 40 before the model sees
+    # them. Isolates selection difficulty from pool reach: 3x80 ranking 20
+    # of 80 gained mrr and LOST 0.023 recall@20 against 5x40 ranking 20 of
+    # 40, and two variables moved at once. If recall returns to ~0.545 the
+    # pool was never the problem.
+    "rephrasenarrow": lambda config: DecomposeAgent(
+        k=config.k, rephrase=True, fetch=40
+    ),
     "rephraseshort": lambda config: DecomposeAgent(
         k=config.k, rephrase=True, rank_all=False
     ),
