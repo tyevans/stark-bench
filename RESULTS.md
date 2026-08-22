@@ -54,11 +54,13 @@ Arms on `prime` index documents that stop at the node's own details; arms on `pr
 | config | agent | embed model | chat model | ctx | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval | src |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.46323 | 0.40000 | 0.53929 | 0.53693 | 1.00 | -- | 10079.1 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-rel-whole` | rephrase | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.42554 | 0.35357 | 0.48929 | 0.54502 | 2.00 | -- | 5308.3 | 747.9 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
 | `qwen-rel-whole` | rerank | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.41948 | 0.35357 | 0.50357 | 0.46508 | 1.00 | -- | 5162.1 | -- | -- | -- | -- | pre-8de0cb2 |
 | `qwen-rel-whole` | rerank40titlerelmatrix | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.41344 | 0.33571 | 0.50714 | 0.52786 | 1.00 | -- | 3656.9 | 919.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-sliding1k` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | sliding-1000-500 | 4.250 | 0.41341 | 0.34286 | 0.50714 | 0.50420 | 1.00 | -- | 6721.7 | 1685.5 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-whole` | rerank80titlerelranked | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.40486 | 0.32500 | 0.50714 | 0.51128 | 1.00 | -- | 4016.2 | 1010.4 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-whole` | rerank40titlerelranked | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.39343 | 0.30714 | 0.49643 | 0.50672 | 1.00 | -- | 2544.0 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-rel-whole` | rephraseshort | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.38628 | 0.35357 | 0.44286 | 0.36809 | 2.00 | -- | 4585.6 | 650.3 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
 | `qwen-rel-whole` | rerank40titlereldense | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.37999 | 0.28929 | 0.50714 | 0.49830 | 1.00 | -- | 3720.3 | 932.6 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-whole` | rerank40titlerelhybrid | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.37984 | 0.28571 | 0.48571 | 0.51491 | 1.00 | -- | 3526.1 | 882.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-whole` | decompose | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.37947 | 0.32500 | 0.46429 | 0.47945 | 2.00 | -- | 6197.1 | 1402.8 | 4 | -- | hnsw/ef=800 | 8de0cb2 |

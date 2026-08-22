@@ -1,0 +1,46 @@
+# The relational 10,000-node calibration cell, and the doc2query baseline.
+#
+# `data/prime-rel-mini` holds the SAME 10,000 node ids as `prime-mini` --
+# all 599 gold answers for `test-0.1` plus 9,401 sampled distractors -- with
+# documents taken from `prime-rel` instead of `prime`. So it differs from
+# `qwen-mini-wholedoc` in exactly one way: whether a node's document carries
+# its `- relations:` block.
+#
+# ## Why this exists
+#
+# The question-generation experiment (`scripts/generate_questions.py`) needs
+# a record with something in it. A median `prime` document is **103
+# characters** -- a name, a type, a source -- and asking a model for four
+# distinguishing questions about that produces near-tautologies, since the
+# only distinguishing token is the name it is forbidden to use.
+#
+# `prime-rel` is 3.5x richer at the median (357) and 3.7x at p90 (4,273),
+# and the extra text is precisely the part STaRK queries name: the
+# neighbours. Measured on this subset: median 387, p75 1,952, p90 4,923.
+#
+# ## Read the scores as a floor on nothing
+#
+# A 10,000-candidate pool is 13x easier than PRIME's 129,375, so every
+# metric here is INFLATED against the real arms and the two must never share
+# a table. What it is for is deciding cheaply whether an idea moves a
+# number at all, before spending 33 hours of endpoint time on the full
+# corpus.
+
+name: qwen-relmini-wholedoc
+dataset: prime-rel-mini
+split: test-0.1
+chunker: capped-whole-2400
+embeddings: qwen3-embedding-0.6b
+dimension: 1024
+aggregation: max
+agent: dense
+k: 20
+
+# Qwen3-Embedding is asymmetric in a different shape from every other model
+# here. The corpus side takes NO prefix -- the empty string is the correct
+# value, not an omission -- and the query side takes a one-line instruction
+# followed by `Query: `, which is the format the model was trained with.
+# Getting this wrong is silent in the usual way: the vectors stay well-formed
+# and score plausibly, just below what the model can do.
+document_prefix: ""
+query_prefix: "Instruct: Given a query, retrieve relevant documents that answer the query\nQuery: "
