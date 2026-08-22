@@ -81,6 +81,7 @@ def test_every_architecture_is_reachable_by_name():
         "rephrasenarrow",
         "rephrasewide",
         "rankonly",
+        "rankonly100",
         "rerank40titlerelhybrid",
         "rerank40titlereldense",
         "rerank40titlerelmatrix",

@@ -261,6 +261,14 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # search at 80 with pair scores on a flat list) the output format and
     # prompt shape are.
     "rankonly": lambda config: DecomposeAgent(k=config.k, rephrase=True, sub_queries=0),
+    # `rankonly` with a 100-candidate pool. Pool depth is where the recall
+    # actually came from -- one search reranked to 80 reaches 0.52246
+    # against `hybrid`'s top-20 0.46821 -- but it saturates: 40 -> 80 moved
+    # recall by 0.00003 while moving mrr by +0.014. This asks whether the
+    # ranking half keeps paying past 80.
+    "rankonly100": lambda config: DecomposeAgent(
+        k=config.k, rephrase=True, sub_queries=0, fetch=100, per_query_fetch=100
+    ),
     "rephraseshort": lambda config: DecomposeAgent(
         k=config.k, rephrase=True, rank_all=False
     ),
