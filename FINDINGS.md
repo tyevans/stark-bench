@@ -578,6 +578,52 @@ characters of candidate against one call on whole PRIME records. The
 `-np 1` was projected from its gemma run, and running it was not worth
 four hours to confirm a number the lean arm already beats.
 
+## I.11 CORRECTION: most of the paraphrase arm's recall was pool depth, not the union
+
+§I.7 read `rephrase`'s **+0.078 recall@20 over `hybrid`** as the union
+reaching candidates a single search misses. A control run says most of it
+was not.
+
+`rankonly` -- **one** hybrid search at k=80, through the same pool, the
+same grouped render and the same ordered-index output, with no planning
+call -- against the two arms either side of it:
+
+| arm | searches | output | mrr | hit@1 | hit@5 | recall@20 | wall | calls |
+|---|---|---|---|---|---|---|---|---|
+| `rerank80titlerelranked` | 1 | pairs, flat | 0.40486 | 0.3250 | 0.5071 | 0.51128 | 1010s | 1 |
+| `rankonly` | 1 | ordering, grouped | 0.41519 | 0.3321 | 0.5036 | **0.52246** | **521s** | 1 |
+| `rephrase` | 3 | ordering, grouped | **0.43689** | 0.3714 | 0.5179 | 0.52185 | 799s | 2 |
+
+| step | mrr | recall@20 |
+|---|---|---|
+| output format + prompt shape | +0.0103 | **+0.0112** |
+| paraphrase union | +0.0217 | **-0.0006** |
+
+**At a fixed 80-candidate pool the union adds no recall.** One search and
+three recall within 0.0006 of each other. What the union buys is ordering:
++0.022 mrr with the same gold answers present, so the model ranks them
+higher rather than seeing more of them.
+
+**Where the original claim went wrong.** `hybrid`'s recall@20 is the top
+20 of one search; `rephrase`'s is the top 20 after reranking a pool of 80.
+Those differ by pool depth before any paraphrasing happens, and
+`rankonly` isolates it: **0.52246 from a single search**, against
+`hybrid`'s 0.46821. Most of the +0.078 was reranking depth. The comparison
+in §I.7 changed two things and credited one.
+
+**What is still unexplained.** `rephrase` at 5 searches x k=40, pool 40
+reached **0.54502**, above every arm here including `rankonly`'s deeper
+pool. That configuration differs from `rankonly` in both search count and
+pool size, so it remains two variables, and it is now the outlier to
+explain rather than the evidence for the union. §I.7c's "reach comes from
+search count" was measured at pool 40 and does not survive at pool 80.
+
+**A free win, separately.** The ordering output and grouped prompt improve
+both metrics *and* halve wall time -- 1010s to 521s on one LLM call --
+against the `[index, score]` pairs on a flat list that every `rerank*` arm
+here uses. That is a prompt-and-schema change with no cost, and it has not
+been applied to the other arms.
+
 ## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
 `rephrase` and `rephraseshort` differ only in the final instruction:
