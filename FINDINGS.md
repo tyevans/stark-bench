@@ -505,6 +505,47 @@ candidates by traversal rather than by text at all. Both are untested here,
 and both are the only routes left to widening the dense channel -- which
 has never moved in this project.
 
+## I.9 Held at one model, a lean paraphrase arm matches full-document reranking at a fifth of the cost
+
+`rerank40` on full documents scored **0.46323** and sat at the top of this
+project's table all day. It ran on `qwen3.8-27b-64k-txt`; every arm
+compared against it ran on `gemma-4-26b-qat`. Two variables, so the row
+was never a control for anything.
+
+Same architecture, model swapped:
+
+| arm | model | mrr | hit@1 | hit@5 | recall@20 | wall | LLM calls |
+|---|---|---|---|---|---|---|---|
+| `rerank40`, full docs | qwen3.8-27b | **0.46323** | 0.4000 | 0.5393 | 0.53693 | -- | 1 |
+| `rerank40`, full docs | gemma | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s | 1 |
+| `rephrase`, lean 3x80 | gemma | **0.43689** | 0.3714 | 0.5179 | 0.52185 | **799s** | 2 |
+
+**The model was worth -0.033 mrr** on identical code, encoding and corpus.
+So the headline was mostly the reranker, which is what a full-document
+reranking arm should be sensitive to.
+
+**Held at one model, the lean paraphrase arm matches the full-document one
+at 5.7x less wall time** -- 799s against 4583s, on a ~200-character
+encoding rather than whole PRIME records.
+
+**It matches rather than beats, and the caveat is on the other side.**
+`rerank40` on gemma logged **8 degrading queries** (2.9%) that fell back to
+retrieval order and tripped the gate. Restoring them at the arm's own
+average adds roughly +0.004, putting it near 0.434 -- inside noise of
+`rephrase`'s 0.43689. Quote them as tied.
+
+Notable that the failures were **not** endpoint errors: all 1,402 HTTP
+requests returned 200, and the 8 were responses that failed schema
+validation. The verbose `{node_id: score}` shape `rerank` uses on full
+documents is the easiest one for a model to get wrong, and the ordered-index
+schema `rephrase` uses degraded **zero** queries across the same 280.
+
+**What it does not yet establish.** Whether the paraphrase union is doing
+architectural work or compensating for a weak reranker. `rephrase` on
+`qwen3.8-27b-64k-txt` separates those: if the advantage travels, it lands
+above 0.46323 at roughly a tenth of the wall time that arm would need at
+`-np 1`.
+
 ## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
 `rephrase` and `rephraseshort` differ only in the final instruction:

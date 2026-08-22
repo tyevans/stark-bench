@@ -55,6 +55,8 @@ Arms on `prime` index documents that stop at the node's own details; arms on `pr
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.46323 | 0.40000 | 0.53929 | 0.53693 | 1.00 | -- | 10079.1 | -- | -- | -- | -- | pre-8de0cb2 |
 | `qwen-rel-whole` | rephrase | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.43689 | 0.37143 | 0.51786 | 0.52185 | 2.00 | -- | 4031.4 | 798.7 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
+| `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.43010 | 0.35357 | 0.51429 | 0.52007 | 0.97 | -- | 13640.6 | 4583.2 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
+| `qwen-rel-whole` | rephrasenarrow | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.42258 | 0.34643 | 0.51786 | 0.52188 | 2.00 | -- | 3381.4 | 637.9 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
 | `qwen-rel-whole` | rerank | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.41948 | 0.35357 | 0.50357 | 0.46508 | 1.00 | -- | 5162.1 | -- | -- | -- | -- | pre-8de0cb2 |
 | `qwen-rel-whole` | rerank40titlerelmatrix | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.41344 | 0.33571 | 0.50714 | 0.52786 | 1.00 | -- | 3656.9 | 919.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-sliding1k` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | sliding-1000-500 | 4.250 | 0.41341 | 0.34286 | 0.50714 | 0.50420 | 1.00 | -- | 6721.7 | 1685.5 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
