@@ -2,6 +2,39 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-POOL-ORDER-IS-A-BAD-RANKING-1 -- the union is a good set and a bad order
+
+`agents/decompose.py:_pool` orders the union by best rank across searches,
+ties to the original query. That was chosen to avoid the additive bias of
+RRF, and it does -- but it is a poor *ranking* even though it is a good
+*set*.
+
+Measured: `rephraseshort` names ~2 candidates and backfills the rest from
+pool order. Its recall@20 is **0.36809, below plain `hybrid`'s 0.46821**,
+on a pool whose set reaches 0.54502 when a model ranks all of it
+(`rephrase`). Five searches each contribute a rank-1 hit, and those five
+displace the original query's own ranks 2-5.
+
+So anything reading the pool order directly is worse off than reading
+`hybrid`. Today only the backfill does that, and only for candidates the
+model declined to name -- which `rank_all=True` makes rare.
+
+Options, none obviously right:
+
+1. **Rank the backfill by the original query's own position** rather than
+   by best-rank, so the tail degrades to `hybrid` instead of to something
+   worse. Cheap, and makes the floor exactly `hybrid`.
+2. **Score the pool with `rank_texts`** before the LLM sees it, giving a
+   real fused ordering rather than a rank heuristic. One extra retrieval
+   call per query, no LLM.
+3. Leave it, on the grounds that `rank_all=True` makes the tail nearly
+   empty -- which is true today and would silently rot if the prompt drifts
+   back toward shortlists.
+
+(1) is the smallest change with a guaranteed floor. Not done here because
+`rephrase` measured 0.54502 with the current ordering and changing it in
+the same breath would make the next number unattributable.
+
 ## B-DECOMPOSE-PROMPT-CAP-1 -- closed by the commit that adds it, kept here for the lesson
 
 `agents/decompose.py` rendered candidates with no per-candidate character

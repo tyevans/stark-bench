@@ -316,6 +316,88 @@ rather than another arm.
 The most useful section here. Each of these drove real decisions before it
 was killed.
 
+## I.7 Paraphrasing the query widens retrieval; decomposing it does not
+
+Both arms use identical machinery -- plan with one LLM call, retrieve the
+original plus each planned query concurrently, union the results keeping
+which search found what, then one LLM call ranks 40 candidates in a lean
+`title | ranked-relations` encoding. **The only difference is the planning
+prompt**: break the query into constraints, or restate it whole in
+different words.
+
+`qwen-rel-whole`, `test-0.1`, 280 queries, `hnsw/ef=800`,
+`gemma-4-26b-qat`:
+
+| arm | mrr | hit@1 | hit@5 | recall@20 |
+|---|---|---|---|---|
+| `hybrid` (no LLM) | 0.28156 | 0.1679 | 0.4250 | 0.46821 |
+| `decompose` | 0.37947 | 0.3250 | 0.4643 | 0.47945 |
+| `rerank40titlerelranked` | 0.39343 | 0.3071 | 0.4964 | 0.50672 |
+| `rerank40titlerelmatrix` | 0.41344 | 0.3357 | 0.5071 | 0.52786 |
+| **`rephrase`** | **0.42554** | **0.3536** | 0.4893 | **0.54502** |
+
+**The mechanism is visible in recall, which is where it was predicted.**
+Reranking cannot raise recall@20 -- it reorders what one search found. A
+multi-query arm can, and only one of these two did:
+
+| | recall@20 gain over `hybrid` |
+|---|---|
+| `decompose` | **+0.011** |
+| `rephrase` | **+0.078** |
+
+0.54502 is the highest recall@20 in this project, above `rerank40` on full
+documents (0.53693). Recall@20 is the ceiling on any reranker, so this
+raises the ceiling rather than reordering beneath it.
+
+**Why one works and the other does not.** A decomposed sub-query asks part
+of the question, so its hits match a fragment and crowd the pool with
+candidates nobody should surface. A paraphrase asks the whole question, so
+every search is full strength and every hit is on-topic. The failure mode
+that forced `decompose`'s union to become an LLM judgment does not exist
+for paraphrase.
+
+It also attacks a weakness that was still open. Decomposition targeted
+conjunction handling, which the relational corpus had already solved at
+index time (§II.8). Paraphrase targets **phrasing mismatch**, which
+nothing here had addressed.
+
+## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
+
+`rephrase` and `rephraseshort` differ only in the final instruction:
+rank exactly 20, or return only the candidates you believe.
+
+| | mrr | **hit@1** | hit@5 | recall@20 | named (median) |
+|---|---|---|---|---|---|
+| `rephraseshort` | 0.38628 | **0.3536** | 0.4429 | 0.36809 | 2.0 |
+| `rephrase` | 0.42554 | **0.3536** | 0.4893 | 0.54502 | 20.0 |
+
+**hit@1 is identical to four decimal places.** The shortlist was worth
+testing on the theory that a model committing only where confident might
+be a precision instrument -- it is not. Asking for nineteen more
+candidates does not disturb its top pick, and costs nothing.
+
+**The collapse in recall@20 is a structural finding, not a curiosity.**
+`rephraseshort` scores **below plain `hybrid`** on recall (0.36809 against
+0.46821), despite backfilling every list to 20 from the pooled order. With
+~2 candidates named, positions 3-20 are that pooled order -- and the pool
+is ordered by best rank across all searches, so five searches each
+contribute a rank-1 hit and displace the original query's own ranks 2-5.
+
+So the union pool is **a good set and a bad ordering**: excellent when a
+model reranks all of it, actively harmful when it does not. That also
+retro-explains `decompose`'s mediocre recall.
+
+`rephraseshort` additionally tripped the degradation gate with 15 degraded
+queries against `rephrase`'s 0, so its numbers carry that caveat too.
+
+**A note on what these are NOT compared to.** `rerank40` at 0.46323 is
+still the highest mrr on this corpus, and it ran on **`qwen3.8-27b-64k-txt`
+with full documents** -- a different model AND a different encoding. It is
+not a control for any row above, and it is the row §II.7 records as
+currently unreproducible for want of a recorded `chat_n_ctx`. The
+model-controlled comparison, `rerank40` on `gemma-4-26b-qat`, has not been
+run.
+
 ## II.8 Query decomposition buys nothing on a relational corpus -- the corpus already did it
 
 **Predicted before the run, in the module docstring**: `decompose` pools
