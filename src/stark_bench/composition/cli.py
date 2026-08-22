@@ -302,6 +302,27 @@ _DEGRADING_WARNINGS = (
 )
 
 
+def _agent_params(agent: object) -> dict[str, object]:
+    """The agent's own scalar fields, for the report.
+
+    Read off the instance rather than the registry entry, so an agent built
+    any other way still records what it actually ran with -- the same
+    argument the budget block above makes.
+
+    Scalars only. A field holding a prompt or a provider is not a parameter
+    a reader compares two runs on, and dumping it would bury the three
+    numbers that matter.
+    """
+    fields = getattr(type(agent), "__dataclass_fields__", None)
+    if not fields:
+        return {}
+    return {
+        name: value
+        for name in fields
+        if isinstance(value := getattr(agent, name, None), int | float | str | bool)
+    }
+
+
 class _AgentWarnings(logging.Handler):
     """Separates a degraded run from a run that merely reported on itself.
 
@@ -787,6 +808,15 @@ async def _do_run(config: RunConfig) -> None:
         # Wall time is measured around the whole query set rather than
         # derived from the calls, which overlap under concurrency.
         run_started = perf_counter()
+        # Captured BEFORE the run, not when the report is written.
+        #
+        # The checkout can move while an arm is in flight -- it did on
+        # 2026-08-21, mid-run, when redstring `main` gained two commits.
+        # The process had already imported the old code, so its BEHAVIOUR
+        # was the old commit while a probe at report time would have
+        # recorded the new one. That is the exact silent-basis error this
+        # field exists to prevent, reintroduced by reading it too late.
+        provenance = source_provenance()
         warnings = _AgentWarnings()
         agent_logger = logging.getLogger("stark_bench.agents")
         agent_logger.addHandler(warnings)
@@ -845,6 +875,14 @@ async def _do_run(config: RunConfig) -> None:
             value = getattr(agent, cap, None)
             if value is not None:
                 cost[f"budget_{cap}"] = value
+        # The agent's OWN parameters, which live in `agent_registry` and so
+        # appear in no config file. `config_verbatim` is the config's bytes
+        # and the registry is code, so two runs of `rephrase` at fetch=40
+        # and fetch=80 were previously identical on disk apart from the
+        # metric -- which reads as an architecture result and is not one.
+        # This is the same gap `retrieval_is_exact` and `chat_n_ctx` close
+        # one layer down.
+        cost["agent_params"] = _agent_params(agent)
         # See `_AgentWarnings`. Recorded rather than only printed, because
         # the number that matters is read off the file months later.
         cost["agent_warnings"] = warnings.count
@@ -858,7 +896,7 @@ async def _do_run(config: RunConfig) -> None:
         # PR #72 moved what `sliding-1000-500` emits without renaming it
         # -- so a commit is the only identifier that cannot drift from
         # what it names. See `source_provenance`.
-        cost.update(source_provenance())
+        cost.update(provenance)
         # The per-slot context the chat peer accepted, probed rather
         # than inferred from the model id -- see `chat_context_window`.
         # Recorded on every run, including retrieval-only ones where it
@@ -895,9 +933,11 @@ async def _do_run(config: RunConfig) -> None:
             f"llm_calls_per_query={cost.get('llm_calls_per_query')}; a rerank "
             f"agent whose extract calls fail returns retrieval order, which "
             f"scores like a slightly-worse `hybrid`. Check the run log for "
-            f"'extract failed' (the call raised) and 'empty scores' (the call "
-            f"returned nothing usable, which leaves llm_calls_per_query at a "
-            f"clean 1.0 and is invisible everywhere else). "
+            f"'extract failed' (the call raised -- which includes a 200 "
+            f"whose body failed schema validation, not only a 5xx) and "
+            f"'empty scores' (the call returned nothing usable, which "
+            f"leaves llm_calls_per_query at a clean 1.0 and is invisible "
+            f"everywhere else). "
             f"{warnings.diagnostics} further warning(s) were diagnostics and "
             f"did not gate this run."
         )

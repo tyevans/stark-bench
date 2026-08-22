@@ -238,6 +238,37 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # positions 3-20 (which become retrieval order) for committing only
     # where it is confident. Whether that is better depends entirely on
     # whether hit@1 or MRR is the number you need.
+    # The same three deep searches, truncated to 40 before the model sees
+    # them. Isolates selection difficulty from pool reach: 3x80 ranking 20
+    # of 80 gained mrr and LOST 0.023 recall@20 against 5x40 ranking 20 of
+    # 40, and two variables moved at once. If recall returns to ~0.545 the
+    # pool was never the problem.
+    "rephrasenarrow": lambda config: DecomposeAgent(
+        k=config.k, rephrase=True, fetch=40
+    ),
+    # Five searches AND eighty candidates. The two knobs measured
+    # independent on 2026-08-21: pool size 80 -> 40 moved recall@20 by
+    # 0.00003 and mrr by -0.014, while 3 -> 5 searches moved recall by
+    # +0.023 and mrr by +0.003. So reach comes from search count and
+    # ranking quality from pool size, and nothing had yet raised both.
+    "rephrasewide": lambda config: DecomposeAgent(
+        k=config.k, rephrase=True, sub_queries=4
+    ),
+    # The control for the paraphrase union: ONE hybrid search at k=80,
+    # the same pool, grouped render and ordered-index output as
+    # `rephrase`, and no planning call. Against `rephrase` the union is
+    # the only variable; against `rerank80titlerelranked` (0.40486, one
+    # search at 80 with pair scores on a flat list) the output format and
+    # prompt shape are.
+    "rankonly": lambda config: DecomposeAgent(k=config.k, rephrase=True, sub_queries=0),
+    # `rankonly` with a 100-candidate pool. Pool depth is where the recall
+    # actually came from -- one search reranked to 80 reaches 0.52246
+    # against `hybrid`'s top-20 0.46821 -- but it saturates: 40 -> 80 moved
+    # recall by 0.00003 while moving mrr by +0.014. This asks whether the
+    # ranking half keeps paying past 80.
+    "rankonly100": lambda config: DecomposeAgent(
+        k=config.k, rephrase=True, sub_queries=0, fetch=100, per_query_fetch=100
+    ),
     "rephraseshort": lambda config: DecomposeAgent(
         k=config.k, rephrase=True, rank_all=False
     ),

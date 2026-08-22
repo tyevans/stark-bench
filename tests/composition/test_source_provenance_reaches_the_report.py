@@ -150,3 +150,23 @@ def test_provenance_never_raises_when_git_itself_is_unavailable(monkeypatch) -> 
     assert all(
         value is None for value in recorded.values()
     ), f"expected every field unrecorded, got {recorded}"
+
+
+def test_provenance_is_captured_before_the_run_not_after() -> None:
+    """The checkout can move while an arm is in flight, and did.
+
+    On 2026-08-21 redstring `main` gained two commits mid-run. The process
+    had already imported the old code, so its behaviour was the old commit
+    -- while a probe at report time would have recorded the new one, which
+    is the silent-basis error the field exists to prevent.
+
+    Asserts by position: the `source_provenance()` call must appear before
+    the `await run(` that executes the query set.
+    """
+    source = Path(cli_module.__file__).read_text(encoding="utf-8")
+    captured = source.index("provenance = source_provenance()")
+    executed = source.index("predictions = await run(")
+    assert captured < executed, (
+        "source_provenance() is called after the query set runs, so a "
+        "checkout that moves mid-run records the wrong commit"
+    )

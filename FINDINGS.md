@@ -316,7 +316,15 @@ rather than another arm.
 The most useful section here. Each of these drove real decisions before it
 was killed.
 
-## I.7 Paraphrasing the query widens retrieval; decomposing it does not
+## I.6 Paraphrasing the query beats decomposing it
+
+> **Read §I.6e first if you are here for the recall number.** This section
+> reads `rephrase`'s recall@20 advantage as the paraphrase union reaching
+> candidates a single search misses. A later control shows most of it was
+> **reranking a deeper pool**, and that at a fixed 80-candidate pool the
+> union adds no recall at all. The mrr advantage stands; the attribution
+> in this section does not. The reasoning is kept because it drove three
+> further experiments.
 
 Both arms use identical machinery -- plan with one LLM call, retrieve the
 original plus each planned query concurrently, union the results keeping
@@ -361,7 +369,157 @@ conjunction handling, which the relational corpus had already solved at
 index time (§II.8). Paraphrase targets **phrasing mismatch**, which
 nothing here had addressed.
 
-## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
+## I.6a A wider pool ranks better and recalls worse
+
+`rephrase` re-run at **3 searches x k=80, ranking 20 of 80**, against the
+**5 x k=40, 20 of 40** that measured 0.42554. Same corpus, model, encoding
+and basis:
+
+| config | mrr | hit@1 | hit@5 | recall@20 |
+|---|---|---|---|---|
+| 5 searches, k=40, pool 40 | 0.42554 | 0.3536 | 0.4893 | **0.54502** |
+| 3 searches, k=80, pool 80 | **0.43689** | **0.3714** | **0.5179** | 0.52185 |
+| delta | +0.011 | +0.018 | +0.029 | **-0.023** |
+
+0.43689 is the best `gemma-4-26b-qat` arm and the best lean arm in this
+project, beating `rerank40titlerelmatrix` on every metric at the same
+encoding. But recall@20 -- the ceiling any reranker works under, and the
+thing §I.7 was about -- went the other way.
+
+**Two variables moved at once and the split is not attributed.** Searches
+went 5 -> 3 and fetch went 40 -> 80 in the same run. Both stories fit:
+fewer searches reach fewer golds, and ranking 20 out of 80 is harder than
+20 out of 40.
+
+The *shape* favours the second. hit@1 and hit@5 rose, which is what more
+good candidates to choose among produces; recall fell, which is what more
+candidates to sift produces. A thinner pool would have depressed all four.
+
+**One run separates them**: 3 x k=80 with `fetch=40` -- the same deep pool,
+truncated before the model sees it. Recall returning to ~0.545 means the
+pool was fine and the loss is selection; recall staying at ~0.52 means
+three searches genuinely reach less than five. They point opposite ways,
+so quoting either explanation now would be guessing.
+
+## I.6b Reach and ranking quality are separate knobs -- at pool 40
+
+Three `rephrase` configurations, same corpus, model, encoding and basis,
+varying only how many searches run and how many candidates reach the
+prompt:
+
+| config | mrr | hit@1 | hit@5 | recall@20 |
+|---|---|---|---|---|
+| 5 searches, k=40, pool 40 | 0.42554 | 0.3536 | 0.4893 | **0.54502** |
+| 3 searches, k=80, pool 80 | **0.43689** | **0.3714** | 0.5179 | 0.52185 |
+| 3 searches, k=80, pool 40 | 0.42258 | 0.3464 | 0.5179 | 0.52188 |
+
+Holding one knob and moving the other:
+
+| change | recall@20 | mrr |
+|---|---|---|
+| pool 80 -> 40, same 3 searches | **+0.00003** | -0.01431 |
+| 3 -> 5 searches, same pool 40 | **+0.02314** | +0.00296 |
+
+**Recall@20 is set by how many searches run. MRR is set by how many
+candidates the model ranks.** Neither knob touches the other's metric.
+
+> **Scope, added after §I.6e.** Both measurements here are at a
+> **40-candidate pool**. At pool 80 the first half does not hold: one
+> search and three recall within 0.0006 of each other. Whatever makes
+> search count pay is specific to a pool narrow enough that searches
+> compete for inclusion.
+
+**This falsified the reading given when §I.7b was written**, which is why
+that section says "unattributed" rather than picking a story. The
+explanation offered was selection difficulty -- hit@1 and hit@5 rising
+while recall fell looked like a model drowning in eighty candidates.
+Truncating to forty restored recall by **0.00003**. Selection was never
+the mechanism; three searches simply reach fewer gold answers than five.
+
+It also bears on whether late paraphrases are worth generating. The
+concern was that a fourth and fifth rewrite drift far enough to stop being
+the same question -- and they may, but they **find golds the first three
+do not**, which is reach and not noise. Whether a seventh or ninth still
+pays is untested.
+
+**Neither configuration raises both.** `rephrasewide` -- 5 searches at
+k=80, pool 80 -- is the one that should, and had not been run when this
+was written.
+
+## I.6c Restatement buys NO dense diversity, and all of its reach is lexical
+
+Ten `test-0.1` queries, four restatements each, `gemma-4-26b-qat`,
+embedded with `qwen3-embedding-0.6b` and the arm's own query prefix.
+
+**Effective rank** answers "how many independent perspectives did four
+restatements actually produce" -- the eigenvalue spread of the normalised
+Gram matrix, where 1.0 means every restatement points the same way and 4.0
+means mutually orthogonal:
+
+| prompt | cos(pairs) | cos(to original) | eff. rank (PR) | eff. rank (H) |
+|---|---|---|---|---|
+| "rewrite 4 different ways" | 0.9517 | 0.9593 | **1.08** | 1.21 |
+| six prescribed angles | 0.9188 | 0.9202 | **1.13** | 1.34 |
+
+**Four restatements yield ~1.1 directions.** Prescribing angles --
+mechanism, relational, taxonomic, keyword, declarative, clinical -- moves
+it by 0.05.
+
+Even the deliberately structural one does not escape. A bag-of-keywords
+restatement (`DCC-mediated attractive signaling actin filaments
+actin-binding LIM protein family`) sits at **0.9146** mean cosine to its
+three prose siblings, against `mechanism`'s 0.9159. Dropping it changes
+effective rank from 1.13/4 to 1.11/3 -- proportionally nothing.
+
+**This is the embedder working correctly, not the prompt failing.** A
+query encoder *should* map faithful paraphrases to one point; that
+invariance is the training objective. Asking for dense diversity through
+restatement fights it.
+
+Two reasons the angles collapse are worth separating. The general one is
+above. The specific one is that **PRIME queries are already fully
+specified** -- "which gene or protein is engaged in DCC-mediated
+attractive signaling, can bind to actin filaments, and belongs to the
+actin-binding LIM protein family" already states its mechanism, its
+relations and its taxonomy, so "restate from the mechanism angle" has
+nothing left to select.
+
+### Where the reach actually comes from
+
+Same restatements, retrieved per channel, Jaccard overlap between the
+sets each returns:
+
+| channel | Jaccard | distinct nodes reached, vs one search |
+|---|---|---|
+| semantic | 0.5934 | 1.56x |
+| **lexical** | **0.3174** | **2.31x** |
+| hybrid | 0.4189 | 1.92x |
+
+Vectors at cosine 0.92 retrieve 59% the same nodes. **BM25 retrieves only
+32% the same**, and the union of four restatements reaches 2.31x as many
+distinct nodes as any one of them.
+
+So `rephrase`'s +0.023 recall@20 for two extra searches (§I.7c) is **BM25
+term variation**, not semantic coverage. That sits directly on top of §I.1:
+relational text helped through the lexical channel (+22% against dense's
++2%), and query restatement widens through the lexical channel too. Same
+corpus, same mechanism, opposite ends of the pipeline.
+
+### What follows
+
+**Stop designing restatements for semantic angles.** They are unavailable,
+and the prompt engineering to chase them is wasted. Design them for
+**surface-form variation** -- synonyms, term density, word forms,
+keyword-versus-prose -- which is what the channel that pays actually keys
+on.
+
+**Genuine dense diversity requires leaving query space.** A hypothetical
+*document* (HyDE) lives where the corpus lives, and graph expansion reaches
+candidates by traversal rather than by text at all. Both are untested here,
+and both are the only routes left to widening the dense channel -- which
+has never moved in this project.
+
+## I.6d Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
 `rephrase` and `rephraseshort` differ only in the final instruction:
 rank exactly 20, or return only the candidates you believe.
@@ -397,6 +555,125 @@ not a control for any row above, and it is the row §II.7 records as
 currently unreproducible for want of a recorded `chat_n_ctx`. The
 model-controlled comparison, `rerank40` on `gemma-4-26b-qat`, has not been
 run.
+
+## I.6e CORRECTION: most of the paraphrase arm's recall was pool depth, not the union
+
+§I.7 read `rephrase`'s **+0.078 recall@20 over `hybrid`** as the union
+reaching candidates a single search misses. A control run says most of it
+was not.
+
+`rankonly` -- **one** hybrid search at k=80, through the same pool, the
+same grouped render and the same ordered-index output, with no planning
+call -- against the two arms either side of it:
+
+| arm | searches | output | mrr | hit@1 | hit@5 | recall@20 | wall | calls |
+|---|---|---|---|---|---|---|---|---|
+| `rerank80titlerelranked` | 1 | pairs, flat | 0.40486 | 0.3250 | 0.5071 | 0.51128 | 1010s | 1 |
+| `rankonly` | 1 | ordering, grouped | 0.41519 | 0.3321 | 0.5036 | **0.52246** | **521s** | 1 |
+| `rephrase` | 3 | ordering, grouped | **0.43689** | 0.3714 | 0.5179 | 0.52185 | 799s | 2 |
+
+| step | mrr | recall@20 |
+|---|---|---|
+| output format + prompt shape | +0.0103 | **+0.0112** |
+| paraphrase union | +0.0217 | **-0.0006** |
+
+**At a fixed 80-candidate pool the union adds no recall.** One search and
+three recall within 0.0006 of each other. What the union buys is ordering:
++0.022 mrr with the same gold answers present, so the model ranks them
+higher rather than seeing more of them.
+
+**Where the original claim went wrong.** `hybrid`'s recall@20 is the top
+20 of one search; `rephrase`'s is the top 20 after reranking a pool of 80.
+Those differ by pool depth before any paraphrasing happens, and
+`rankonly` isolates it: **0.52246 from a single search**, against
+`hybrid`'s 0.46821. Most of the +0.078 was reranking depth. The comparison
+in §I.7 changed two things and credited one.
+
+**What is still unexplained.** `rephrase` at 5 searches x k=40, pool 40
+reached **0.54502**, above every arm here including `rankonly`'s deeper
+pool. That configuration differs from `rankonly` in both search count and
+pool size, so it remains two variables, and it is now the outlier to
+explain rather than the evidence for the union. §I.7c's "reach comes from
+search count" was measured at pool 40 and does not survive at pool 80.
+
+**A free win, separately.** The ordering output and grouped prompt improve
+both metrics *and* halve wall time -- 1010s to 521s on one LLM call --
+against the `[index, score]` pairs on a flat list that every `rerank*` arm
+here uses. That is a prompt-and-schema change with no cost, and it has not
+been applied to the other arms.
+
+## I.7 Held at one model, a lean paraphrase arm matches full-document reranking at a fifth of the cost
+
+`rerank40` on full documents scored **0.46323** and sat at the top of this
+project's table all day. It ran on `qwen3.8-27b-64k-txt`; every arm
+compared against it ran on `gemma-4-26b-qat`. Two variables, so the row
+was never a control for anything.
+
+Same architecture, model swapped:
+
+| arm | model | mrr | hit@1 | hit@5 | recall@20 | wall | LLM calls |
+|---|---|---|---|---|---|---|---|
+| `rerank40`, full docs | qwen3.8-27b | **0.46323** | 0.4000 | 0.5393 | 0.53693 | -- | 1 |
+| `rerank40`, full docs | gemma | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s | 1 |
+| `rephrase`, lean 3x80 | gemma | **0.43689** | 0.3714 | 0.5179 | 0.52185 | **799s** | 2 |
+
+**The model was worth -0.033 mrr** on identical code, encoding and corpus.
+So the headline was mostly the reranker, which is what a full-document
+reranking arm should be sensitive to.
+
+**Held at one model, the lean paraphrase arm matches the full-document one
+at 5.7x less wall time** -- 799s against 4583s, on a ~200-character
+encoding rather than whole PRIME records.
+
+**It matches rather than beats, and the caveat is on the other side.**
+`rerank40` on gemma logged **8 degrading queries** (2.9%) that fell back to
+retrieval order and tripped the gate. Restoring them at the arm's own
+average adds roughly +0.004, putting it near 0.434 -- inside noise of
+`rephrase`'s 0.43689. Quote them as tied.
+
+Notable that the failures were **not** endpoint errors: all 1,402 HTTP
+requests returned 200, and the 8 were responses that failed schema
+validation. The verbose `{node_id: score}` shape `rerank` uses on full
+documents is the easiest one for a model to get wrong, and the ordered-index
+schema `rephrase` uses degraded **zero** queries across the same 280.
+
+**What it does not yet establish.** Whether the paraphrase union is doing
+architectural work or compensating for a weak reranker. `rephrase` on
+`qwen3.8-27b-64k-txt` separates those: if the advantage travels, it lands
+above 0.46323 at roughly a tenth of the wall time that arm would need at
+`-np 1`.
+
+## I.8 The paraphrase arm takes the top of the table, on a lean encoding
+
+`rephrase` (3 searches at k=80, union, rank 20 of 80) on
+`qwen3.8-27b-64k-txt`, `qwen-rel-whole`, `test-0.1`, `hnsw/ef=800`:
+
+| arm | model | encoding | mrr | hit@1 | hit@5 | recall@20 | wall |
+|---|---|---|---|---|---|---|---|
+| **`rephrase`** | qwen3.8-27b | lean, ~200 chars | **0.47547** | **0.4071** | **0.5607** | **0.57020** | 2200s |
+| `rerank40` | qwen3.8-27b | full documents | 0.46323 | 0.4000 | 0.5393 | 0.53693 | ~8400s est. |
+| `rephrase` | gemma | lean | 0.43689 | 0.3714 | 0.5179 | 0.52185 | 799s |
+| `rerank40` | gemma | full documents | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s |
+
+Best on every metric, with zero degraded queries, at roughly a quarter of
+the wall time of the arm it displaces.
+
+**The advantage travels across models, which is what makes it
+architectural.** Against full-document reranking on the same model,
+`rephrase` is +0.007 mrr on gemma and **+0.012 on qwen3.8-27b**. A weak
+reranker being propped up by better candidates would show the opposite --
+the gain shrinking as the reranker improves. It grew.
+
+**recall@20 0.57020 is the project record** and the margin is the story:
++0.033 over the full-document arm, and +0.102 over a single `hybrid`
+search (0.46821). Recall@20 is the ceiling every reranker here works
+under, and nothing else in this project has moved it this far.
+
+Cost, for the same corpus and model: two LLM calls per query on ~200
+characters of candidate against one call on whole PRIME records. The
+`rerank40` wall time is estimated rather than measured -- that arm at
+`-np 1` was projected from its gemma run, and running it was not worth
+four hours to confirm a number the lean arm already beats.
 
 ## II.8 Query decomposition buys nothing on a relational corpus -- the corpus already did it
 

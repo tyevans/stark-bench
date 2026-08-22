@@ -53,9 +53,13 @@ Arms on `prime` index documents that stop at the node's own details; arms on `pr
 
 | config | agent | embed model | chat model | ctx | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval | src |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen-rel-whole` | rephrase | qwen3-embedding-0.6b | qwen3.8-27b-64k-txt | 64k | whole-document | 1.002 | 0.47547 | 0.40714 | 0.56071 | 0.57020 | 2.00 | -- | 9685.2 | 2199.7 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
 | `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.46323 | 0.40000 | 0.53929 | 0.53693 | 1.00 | -- | 10079.1 | -- | -- | -- | -- | pre-8de0cb2 |
-| `qwen-rel-whole` | rephrase | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.42554 | 0.35357 | 0.48929 | 0.54502 | 2.00 | -- | 5308.3 | 747.9 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
+| `qwen-rel-whole` | rephrase | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.43689 | 0.37143 | 0.51786 | 0.52185 | 2.00 | -- | 4031.4 | 798.7 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
+| `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.43010 | 0.35357 | 0.51429 | 0.52007 | 0.97 | -- | 13640.6 | 4583.2 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
+| `qwen-rel-whole` | rephrasenarrow | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.42258 | 0.34643 | 0.51786 | 0.52188 | 2.00 | -- | 3381.4 | 637.9 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
 | `qwen-rel-whole` | rerank | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.41948 | 0.35357 | 0.50357 | 0.46508 | 1.00 | -- | 5162.1 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-rel-whole` | rankonly | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.41519 | 0.33214 | 0.50357 | 0.52246 | 1.00 | -- | 2068.6 | 520.9 | 4 | -- | hnsw/ef=800 | dc9ec27 |
 | `qwen-rel-whole` | rerank40titlerelmatrix | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.41344 | 0.33571 | 0.50714 | 0.52786 | 1.00 | -- | 3656.9 | 919.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-sliding1k` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | sliding-1000-500 | 4.250 | 0.41341 | 0.34286 | 0.50714 | 0.50420 | 1.00 | -- | 6721.7 | 1685.5 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 | `qwen-rel-whole` | rerank80titlerelranked | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.40486 | 0.32500 | 0.50714 | 0.51128 | 1.00 | -- | 4016.2 | 1010.4 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |

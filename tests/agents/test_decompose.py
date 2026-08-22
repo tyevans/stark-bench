@@ -344,3 +344,25 @@ def test_the_two_instructions_ask_for_genuinely_different_things() -> None:
 
 def test_rank_all_is_the_default() -> None:
     assert DecomposeAgent().rank_all is True
+
+
+def test_zero_planned_queries_skips_the_planning_call_entirely() -> None:
+    """The control arm must not spend an LLM call asking for no rewrites.
+
+    `sub_queries=0` is how `rankonly` isolates the paraphrase union: one
+    search, the same pool machinery, render and output format. Asking the
+    model to "rewrite this 0 different ways" would both waste a call and
+    produce whatever it decided that meant.
+    """
+    import asyncio
+
+    class _Tools:
+        called = False
+
+        async def extract(self, prompt, schema):  # noqa: ANN001, ANN202, ARG002
+            _Tools.called = True
+            raise AssertionError("the planning call should not happen")
+
+    agent = DecomposeAgent(rephrase=True, sub_queries=0)
+    assert asyncio.run(agent._plan(_Query(1), _Tools())) == []  # type: ignore[arg-type]
+    assert _Tools.called is False, "sub_queries=0 still made a planning call"
