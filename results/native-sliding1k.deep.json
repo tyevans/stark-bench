@@ -12,7 +12,8 @@
     "tool_calls_per_query": 14.767857142857142,
     "llm_calls_per_query": 7.460714285714285,
     "tokens_per_query": null,
-    "seconds_total": 3495.9392826143885
+    "seconds_total": 3495.9392826143885,
+    "redstring_release": "pre-8de0cb2"
   },
   "ingest": {
     "nodes": 129375,

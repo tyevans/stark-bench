@@ -60,6 +60,32 @@ figures rather than merely monotonic in argument.
 A `--run` against a missing corpus now refuses up front rather than
 scoring an empty store as a bad retriever.
 
+## Every report records the code that produced it
+
+As of 2026-08-21 each run and each ingest stores `redstring_commit`,
+`redstring_branch`, `redstring_src_dirty` and the same three for this
+repository. `RESULTS.md` renders the redstring commit as a `src` column,
+with `*` for a dirty `src/`.
+
+The reason is a third instance of one pattern. redstring PR #72 changed
+what `SlidingWindowChunker` emits **without changing its name**, and four
+configs name `sliding-1000-500`. Before that, a model id was reused for a
+different model (ADR 0002), and a chat model's id read `64k` at every
+`-np`. In all three the identifier held still while the thing moved. A
+commit cannot.
+
+The 63 reports written before this are stamped `pre-8de0cb2` by
+`scripts/annotate_pre_release_results.py` -- an explicit stamp, not an
+inference from a missing field, because inferred metadata reads exactly
+like recorded metadata until it is wrong. It claims only that they predate
+that merge; the exact commit is unrecoverable.
+
+**So the live sliding-window corpora hold chunks the current library would
+not produce**, including `qwen-rel-sliding1k` at 549,697 rows -- the source
+of this project's best retrieval-only figures. Those numbers stand as
+measured and cannot be reproduced without a re-ingest. See
+B-SLIDING-CORPORA-PREDATE-THE-FIX-1.
+
 **`redstring` is a path dependency and the path is load-bearing:**
 
 ```toml
@@ -67,7 +93,7 @@ scoring an empty store as a bad retriever.
 redstring = { path = "../redstring", editable = true }
 ```
 
-It points at the user's own checkout, on `main`. It used to point at
+It points at the user's own checkout. Which BRANCH is not guaranteed and is now recorded rather than assumed: every arm run on 2026-08-21 was measured on `perf/indexable-semantic-order` while this file said `main`. `git -C ../redstring rev-parse --abbrev-ref HEAD`, or read the `src` column. It used to point at
 `../redstring-chunkfix`, a worktree kept deliberately separate so that
 checkout could sit on a feature branch without changing what this benchmark
 measures — that worktree still exists, on the older
@@ -347,6 +373,50 @@ comparison; there isn't one.
 Background a long ingest with the harness's own backgrounding, **not `nohup`
 or `setsid`** — those did not survive here, twice, and the second time the
 launcher exited 0 while the real work never started.
+
+## The chat peer's context is `--ctx-size / -np`, and it is recorded now
+
+Same arithmetic as the embedding peer above, on the chat side, and it bit
+harder because the model id contains a number that is **not** the answer.
+`qwen3.8-27b-64k-txt` is one `--ctx-size 65536` process divided by `-np`:
+
+| `-np` | per-request context |
+|---|---|
+| 4 | 16,384 |
+| 2 | 32,768 |
+| 1 | 65,536 |
+
+The id reads `64k` at every one of them.
+
+Measured on 2026-08-21, `rerank40` over whole PRIME documents:
+
+| model | `n_ctx` at the time | LLM calls rejected |
+|---|---|---|
+| `qwen3.8-27b-64k-txt` | 16,384 | **72 of 79 (91%)** |
+| `gemma-4-26b-qat` | 32,768 | 17 of 280 (6%) |
+
+A rejection is a `400` with `type: exceed_context_size_error`, and **the arm
+does not stop**: `rerank` catches extract failures and falls back to
+retrieval order, which scores like a slightly-worse `hybrid`. That is the
+tenth silent failure in this project and the third of exactly this shape.
+
+**Every run now probes it and records `cost["chat_n_ctx"]`.** The probe
+sends a 200,000-token prompt and reads `n_ctx` out of the rejection --
+~1.4s, no prefill, no GPU. `/props` is not routed through llama-swap, so
+the server's own error is again the only reachable oracle, exactly as with
+the chunk cap. `RESULTS.md` renders it as a `ctx` column.
+
+**The number this explains is the headline.** `qwen-rel-whole` +
+`rerank40` = 0.46323 with 280/280 successful calls, which cannot happen at
+16,384. It was taken at a lower `-np`, nothing recorded which, and it is
+**not reproducible until re-run**. See B-CHAT-CTX-UNRECORDED-1. Treat every
+`rerank*` row without a `ctx` value the same way: its prompts fit, which is
+a lower bound, not a setting.
+
+Ask before changing `-np` mid-campaign, and re-probe after any restart --
+`uv run python -c "from stark_bench.adapters.model_preflight import
+chat_context_window as c; print(c('http://192.168.1.14:8080/v1/',
+'gemma-4-26b-qat'))"`.
 
 ## Reasoning is off, and the request wins over the server
 
@@ -630,10 +700,31 @@ corpus will mislead you.** Measured against exact scans on both:
 | 800 | +0.0002 mrr (= exact) | +0.0003 mrr (= exact) |
 
 200 was chosen first, off the 129k corpus alone, and costs nearly three
-times as much on the 550k one. **There is no speed argument for the lower
-setting**: `qwen-rel-sliding1k` dense is 8.0s at 800 against ~30s at 200
-and 165.8s exact, because a wider walk still beats scanning 2.25GB of
-vectors. Sweep on the largest corpus you have, not the fastest one.
+times as much on the 550k one.
+
+**The speed side of that trade is about one second.** Measured on
+`qwen-rel-sliding1k`, 280 queries at `--query-concurrency 4`:
+
+| | dense wall | hybrid wall |
+|---|---|---|
+| exact | 165.8s | 372.3s |
+| ef=200 | 4.6s | 246.9s |
+| ef=400 | 7.3s | 180.1s |
+| ef=800 | 5.9s | 183.9s |
+
+Neither column is monotonic in `ef_search`, and that is the finding
+rather than an anomaly to explain away: **page-cache state is larger
+than the effect**. Hybrid is *faster* at the wider setting because its
+cost is BM25 over the terms table, which `ef_search` does not touch at
+all.
+
+An earlier version of this section said "8.0s at 800 against ~30s at
+200". That was **wrong** — the 30s came from a cold-cache run of a
+different arm, carried over without checking, and it made a real
+quality/speed decision look free when the honest statement is that the
+speed side is under a second and below the noise. Quote the table.
+
+Sweep on the largest corpus you have, not the fastest one.
 
 **Numbers taken on this basis are not comparable to numbers taken before
 it.** Check `retrieval_is_exact` and `hnsw_ef_search` before comparing two

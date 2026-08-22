@@ -2,6 +2,186 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-DECOMPOSE-SELECTION-1 -- the strongest argument for decomposition is still untested
+
+`agents/decompose.py` argues that a decomposed query should let relation
+**selection** become constraint-aware: FINDINGS 1b measured selection at
+**+0.083 mrr**, the largest single lever in the campaign, and every arm
+here selects using the blurred whole query.
+
+`_render` does not do that. It builds one selector by joining the original
+query and every sub-query, then ranks each candidate's relations against
+that string. Since the sub-queries are largely verbatim fragments of the
+original, the selector is close to a noisier copy of the raw query -- which
+is what `rerank40titlerelranked` already uses.
+
+So the first decompose run (0.37127) tested fusion, not selection, while
+its docstring claimed otherwise. The docstring is now corrected.
+
+Closing it means ranking each candidate's relations against **the
+constraint being tested**, and showing the model which constraint each
+kept name belongs to. Deferred rather than done because the unify step
+changed in the same edit, and changing both at once would make neither
+attributable -- the campaign's own one-variable rule.
+
+## B-SLIDING-CORPORA-PREDATE-THE-FIX-1 -- live sliding-window tenants hold chunks no current code would produce
+
+redstring PR #72 (merged into `main` as `8de0cb2`) fixed
+`SlidingWindowChunker`'s redundant tail -- the defect this project reported
+as its second redstring finding. Two changes: a break point landing at or
+before the previous chunk's end now falls back to the hard boundary, and
+the loop stops once a chunk reaches the end of the text instead of emitting
+one final wholly-contained window.
+
+**Four configs name `sliding-1000-500`** -- `qwen-rel-sliding1k`,
+`qwen-mini-sliding1k`, `qwen-sliding1k`, `native-sliding1k` -- and the
+first two are live, `qwen-rel-sliding1k` at 549,697 rows. Every one of
+those chunks was written by the pre-fix chunker. Nothing in the database or
+in any report records which chunker version produced a row.
+
+So: **existing sliding-window numbers are not comparable to numbers taken
+after any re-ingest of those tenants.** They are still valid as measured;
+they simply describe a corpus the current library would not rebuild. That
+includes this campaign's best retrieval-only figures, `qwen-rel-sliding1k`
+hybrid at 0.34675 and dense at 0.25319, and today's finding that chunking
+costs the lean rerank arm 0.063 mrr.
+
+This is the second time chunking has changed mid-campaign. PR #64 was the
+first, and `CLAUDE.md` carries the diff command that was run at the qwen
+re-ingest to prove comparability across it. **That check has no equivalent
+here**, because there is no second checkout to diff against -- the old
+behaviour exists only in rows already written.
+
+Closing it means re-ingesting the sliding tenants under the fixed chunker
+and re-scoring, which is roughly 90 minutes of endpoint time for
+`qwen-rel-sliding1k` alone plus the re-scores. Worth doing before any
+sliding-window number is published, and NOT worth doing to chase a
+comparison already made.
+
+The general gap this exposes: `retrieval` and `ctx` columns were added to
+`RESULTS.md` so an invisible basis could not hide, and **the chunker
+version is a basis with no column at all**. An ingest report records the
+chunker's *name* (`sliding-1000-500`), which is exactly the identifier that
+stayed constant while the behaviour changed underneath it -- the same shape
+as a chat model whose id says `64k` at every `-np`.
+
+## B-DEEP-NEVER-FAIRLY-TESTED-1 -- the agentic arm's numbers are about 2026-08-19, not about agentic retrieval
+
+`deep` scored 0.1851 (`native-wholedoc`) and 0.2015 (`native-sliding1k`),
+and those figures have been quoted repeatedly since -- including in this
+session -- as evidence that agentic architectures lose on this benchmark.
+**They do not support that claim**, and the reasons are all recorded
+elsewhere in this repo:
+
+- Both corpora are **`prime`, not `prime-rel`**: the documents carry no
+  `- relations:` block. An agent whose premise is walking relationships was
+  measured on text that names none of them.
+- Retrieval underneath it was far weaker. `hybrid` managed **0.2187** on
+  that corpus against **0.34675** on `qwen-rel-sliding1k` now. An arm that
+  reranks or re-searches cannot exceed what retrieval reaches.
+- It predates every encoding lesson the campaign paid for: lean
+  observations, ranked relation selection (FINDINGS 1b, +0.083 mrr from
+  selection alone), ANN indexes, and `ef_search` tuning.
+- Its context bound was loose enough that a **72,000-character
+  observation** reached the model untouched -- found as a weak-test defect,
+  not as a deliberate setting.
+- Nemotron-3-Embed-1B, **Q4_K_M with no importance matrix and no MTEB
+  evaluation**, is the embedder for all three of those arms.
+
+So the honest statement is that **agentic retrieval has never been fairly
+tested here**, not that it lost. Deleting this entry requires a run that
+fixes the above, which needs:
+
+1. A `prime-rel` tenant ingested with `--ingest-edges`. The qwen arms were
+   not -- `neighbors` and `relationships` return empty against them, which
+   is B-DEEP-EDGES-1 and would turn a data finding into an architecture
+   finding.
+2. The edge load itself, ~28 minutes for PRIME's 8,100,498 relationships.
+3. Lean observation encoding, so the agent spends its context on candidates
+   rather than on database provenance.
+
+What deferring taught: a number keeps its authority long after the
+conditions that produced it have been superseded, and nothing in
+`RESULTS.md` marks a row as measured on a corpus that no longer represents
+the project's best. The `retrieval` and `ctx` columns exist for exactly
+this reason; corpus generation has no such column.
+
+## B-EXTRACT-USAGE-1 -- the cost half of every LLM arm is unmeasured
+
+`adapters/redstring_toolset.py:341` records `tokens=None` for every
+`extract` call, with an accurate comment: redstring's `LlmProvider.extract`
+returns the parsed model and no usage. So `tokens_per_query` is `None` on
+all sixteen LLM arms in `results/`, and `RESULTS.md` renders `--`.
+
+That was tolerable while the question was "which architecture scores
+highest". It stopped being tolerable on 2026-08-21, when the question
+became **accuracy per token**: `rerank40titlerelmatrix` scores 0.41771
+against `rerank40`-on-whole-documents at 0.46323, and the entire argument
+for the lean arm is that it buys 90% of the accuracy for a small fraction
+of the prompt. **We cannot currently state that fraction.** Wall time is
+the only proxy in the file (800s against ~8400s projected), and wall time
+moves with `-np`, batching and page cache, none of which are the
+architecture.
+
+Two ways to close it, and the choice is not obvious:
+
+1. **Widen the port.** `extract` returns usage alongside the model, the way
+   `EmbeddingProvider` grew `embed_query` for the prefix gap (redstring ADR
+   0043). Correct, reusable, and needs a redstring PR -- the third design
+   gap this project has found in that port, which is itself worth noting.
+2. **Record `len(prompt)` at the call site**, which the toolset already
+   has. Exact rather than estimated, free, and directly comparable across
+   arms -- but characters, not tokens, so it cannot be compared to a
+   provider's bill or to a context limit.
+
+(2) is not a worse version of (1); it measures a different thing. Prompt
+characters are what the *architecture* controls, and they are the same
+number whatever tokenizer is downstream. Completion tokens are what the
+*server* spends. An honest cost column probably wants both.
+
+**Do not synthesise tokens from characters.** That is the estimate-beside-
+the-real-thing mistake CLAUDE.md records for the chunk cap, where three
+wrong caps in a row came from reasoning about tokenization instead of
+asking the server.
+
+## B-CHAT-CTX-UNRECORDED-1 -- a number's context budget was never in its report
+
+`src/stark_bench/adapters/model_preflight.py:chat_context_window` now probes
+it and `cli.py` records it as `cost["chat_n_ctx"]`, so this entry is about
+the **arms measured before that existed**, which cannot be fixed by code.
+
+The chat peer serves `qwen3.8-27b-64k-txt` from one `--ctx-size 65536`
+process divided by `-np`. The id says `64k` at every setting. On 2026-08-21
+the same id served **16,384** tokens per request at `-np 4` and **65,536**
+at `-np 1`, hours apart, and `gemma-4-26b-qat` went 32,768 -> 65,536 the
+same way.
+
+At 16,384 a `rerank40` arm over whole PRIME documents lost **72 of its
+first 79** LLM calls to `exceed_context_size_error`, and continued: `rerank`
+catches extract failures and falls back to retrieval order. `agent_warnings`
+now stops that arm from being reported.
+
+**What the gate cannot fix is the arm that passed.** `qwen-rel-whole` +
+`rerank40` = **0.46323**, this project's best number, ran with
+`llm_calls_per_query = 1.0` -- 280/280 -- which is impossible at 16,384.
+So it was taken at a lower `-np`, its report does not say which, and it is
+therefore **not currently reproducible**. Every `rerank*` row written before
+today has the same hole; they are clean at `llm/q = 1.0`, so their prompts
+fit, but "fit" is a lower bound and not a setting.
+
+What deferring taught: the value of `retrieval_is_exact` was that it made an
+invisible basis visible on disk. This is the identical shape one layer up,
+and it was missed because the endpoint is treated as a fixed thing that
+either answers or does not. It is a *configured* thing, reconfigured for
+VRAM reasons between runs, and the reconfiguration is silent in both
+directions -- a too-small context degrades an arm, and a restored one makes
+the degradation vanish without explaining the earlier number.
+
+**Closing it** means re-running the pre-2026-08-21 `rerank*` arms with
+`chat_n_ctx` recorded, at roughly an hour each. Worth doing for the 0.46323
+headline specifically, since a headline that cannot be reproduced is worth
+less than a slightly lower one that can.
+
 ## B-BUDGET-CAPS-1: the per-query budget caps are constants, not config
 
 `MAX_TOOL_CALLS`, `MAX_LLM_CALLS` and `MAX_SECONDS` in
@@ -727,9 +907,12 @@ effect of several architecture changes in FINDINGS. 400 costs 0.0028 on
 dense; 800 lands at +0.0003, which is query-embedding noise rather than a
 gain (B-QUERY-EMBED-NONDETERMINISM-1).
 
-800 is not slower in any way that matters: `qwen-rel-sliding1k` dense is
-8.0s at 800, ~30s at 200, and 165.8s exact. A wider graph walk still beats
-scanning 2.25GB of vectors, so the lower setting bought nothing.
+800 is not slower in any way that matters, and the measurement matters
+more than the claim: dense is 4.6s at 200, 7.3s at 400, 5.9s at 800
+across 280 queries, against 165.8s exact. Non-monotonic, because
+page-cache state exceeds the effect. Hybrid is 246.9s at 200 against
+183.9s at 800 -- faster wider, since its cost is BM25 over the terms
+table. So the lower setting bought about a second and cost 0.011 mrr.
 
 **Standing rule, which is why this entry stays instead of being deleted:
 sweep a recall knob on the largest corpus you have.** The small corpus
@@ -740,3 +923,33 @@ corpus was measured; they were stopped and restarted.
 
 Still open: whether 800 suffices at MAG scale, another order of magnitude
 up. The rule above says measure it there rather than extrapolating this row.
+
+## B-ENDPOINT-5XX-DEGRADES-ARMS-1: llama-swap 5xx turns a rerank arm into hybrid
+
+**Half closed 2026-08-21.** The detection half is done: `agent_warnings`
+is recorded in every report and any agent warning makes `--run` exit
+non-zero, after the report is written. What remains is the cause.
+
+The chat peer returns `502 Bad Gateway` under model switching, and
+`503 Loading model` while a peer warms. Both surface as a failed `extract`
+call; the rerank agent logs `rerank: extract failed`, falls back to
+retrieval order, and produces a plausible-looking number. Measured the
+same night: one arm at `llm_calls_per_query = 0.0` scoring 0.29188 (every
+call failed), one at 0.9179 scoring 0.41880 (8.2% failed). Neither was
+distinguishable from a real result without reading that field.
+
+`qwen3.8-27b-64k-txt` returned 502 to a bare four-token chat request while
+`gemma-4-26b-qat` answered 200 in the same second, so this is not load --
+that model could not be served at all at that moment. Whether it is VRAM
+against a resident gemma, a llama-swap config problem, or the peer being
+down is **not diagnosed**, and diagnosing it needs the endpoint owner.
+
+The embedding side already has a workaround: probe `/v1/embeddings` until
+it returns 200 before starting an arm, which fixed three arms that had
+died on `503 Loading model`. The chat side has no equivalent and should
+get one -- a warm probe per arm against the *chat* model, same shape.
+
+Do not add blind retries instead. The openai client already retries every
+`>=500`, and it retried here; the failures outlasted it. A retry count
+tuned without knowing whether the model can be served at all is the kind
+of fix that looks like a fix.

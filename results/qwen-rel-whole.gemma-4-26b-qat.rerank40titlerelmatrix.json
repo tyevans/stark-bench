@@ -5,17 +5,17 @@
   "chat_model": "gemma-4-26b-qat",
   "queries": 280,
   "metrics": {
-    "mrr": 0.417705177555659,
-    "hit@1": 0.3464285714285714,
+    "mrr": 0.4134432985447347,
+    "hit@1": 0.3357142857142857,
     "hit@5": 0.5071428571428571,
-    "recall@20": 0.5225033110672874
+    "recall@20": 0.5278604539244303
   },
   "cost": {
     "tool_calls_per_query": 2.0,
     "llm_calls_per_query": 1.0,
     "tokens_per_query": null,
-    "seconds_total": 3183.580205211001,
-    "seconds_wall": 800.0214321410022,
+    "seconds_total": 3656.8559991570255,
+    "seconds_wall": 919.1589687099986,
     "query_concurrency": 4,
     "query_embed_prewarm_failed": 0,
     "query_embed_prewarm_texts": 280,
@@ -26,9 +26,12 @@
     "exhausted_queries": null,
     "ann_index": "kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_rel_whole",
     "ann_index_definition": "CREATE INDEX kg_chunks_qwen3_embedding_0_6b_1e22db42_hnsw_qwen_rel_whole ON public.kg_chunks_qwen3_embedding_0_6b_1e22db42 USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64') WHERE (tenant_id = '43742085-fabf-58e0-9c1a-77687d532ea6'::uuid)",
-    "ann_index_scans_cumulative": 3980,
+    "ann_index_scans_cumulative": 5214,
     "hnsw_ef_search": "800",
-    "retrieval_is_exact": false
+    "retrieval_is_exact": false,
+    "agent_warnings": 171,
+    "chat_n_ctx": 65536,
+    "redstring_release": "pre-8de0cb2"
   },
   "ingest": {
     "nodes": 129375,

@@ -8,64 +8,68 @@ Arms on `prime` index documents that stop at the node's own details; arms on `pr
 
 ## `prime`
 
-| config | agent | embed model | chat model | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `native-wholedoc` | rerank | Nemotron-3-Embed-1B | -- | capped-whole-5000 | 1.057 | 0.34075 | 0.28571 | 0.40000 | 0.36799 | 1.00 | -- | 4364.7 | -- | -- | -- | -- |
-| `vss-control` | hybrid | precomputed-ada002 | -- | whole-document | 1.000 | 0.23111 | 0.16429 | 0.32143 | 0.37096 | 0.00 | -- | 1090.8 | 275.8 | 4 | -- | exact |
-| `vss-control` | dense | precomputed-ada002 | -- | whole-document | 1.000 | 0.23057 | 0.15357 | 0.31071 | 0.37878 | 0.00 | -- | 836.8 | 211.8 | 4 | -- | exact |
-| `native-sliding1k` | hybrid | Nemotron-3-Embed-1B | -- | sliding-1000-500 | 2.238 | 0.22105 | 0.15714 | 0.28571 | 0.34217 | 0.00 | -- | 460.4 | -- | -- | -- | -- |
-| `native-sliding1k` | zero_shot | Nemotron-3-Embed-1B | -- | sliding-1000-500 | 2.238 | 0.21991 | 0.15000 | 0.30714 | 0.35640 | 1.00 | -- | 535.0 | -- | -- | -- | -- |
-| `native-wholedoc` | hybrid | Nemotron-3-Embed-1B | -- | capped-whole-5000 | 1.057 | 0.21872 | 0.15000 | 0.29643 | 0.36799 | 0.00 | -- | 225.7 | -- | -- | -- | -- |
-| `native-wholedoc` | dense | Nemotron-3-Embed-1B | -- | capped-whole-5000 | 1.057 | 0.21635 | 0.13571 | 0.30357 | 0.37780 | 0.00 | -- | 124.0 | -- | -- | -- | -- |
-| `native-wholedoc` | zero_shot | Nemotron-3-Embed-1B | -- | capped-whole-5000 | 1.057 | 0.21387 | 0.15000 | 0.29643 | 0.35170 | 1.00 | -- | 545.3 | -- | -- | -- | -- |
-| `native-sliding1k` | dense | Nemotron-3-Embed-1B | -- | sliding-1000-500 | 2.238 | 0.21252 | 0.13929 | 0.29643 | 0.33735 | 0.00 | -- | 245.6 | -- | -- | -- | -- |
-| `nomic-wholedoc` | hybrid | nomic-embed-text | -- | capped-whole-2400 | 1.169 | 0.21198 | 0.13929 | 0.31071 | 0.32121 | 0.00 | -- | 1380.8 | -- | -- | -- | -- |
-| `nomic-wholedoc` | lexical | nomic-embed-text | -- | capped-whole-2400 | 1.169 | 0.20479 | 0.15357 | 0.27143 | 0.23987 | 0.00 | -- | 100.2 | -- | -- | -- | -- |
-| `qwen-wholedoc` | lexical | qwen3-embedding-0.6b | -- | capped-whole-2400 | 1.169 | 0.20479 | 0.15357 | 0.27143 | 0.23987 | 0.00 | -- | 300.3 | 75.7 | 4 | -- | hnsw/ef=800 |
-| `native-sliding1k` | deep | Nemotron-3-Embed-1B | -- | sliding-1000-500 | 2.238 | 0.20147 | 0.12500 | 0.27857 | 0.36167 | 7.46 | -- | 3495.9 | -- | -- | -- | -- |
-| `redstring-native` | lexical | Nemotron-3-Embed-1B | -- | boundary-preference | 1.139 | 0.20141 | 0.14286 | 0.27500 | 0.24017 | 0.00 | -- | 123.1 | -- | -- | -- | -- |
-| `redstring-native` | zero_shot | Nemotron-3-Embed-1B | -- | boundary-preference | 1.139 | 0.19978 | 0.13929 | 0.26071 | 0.35226 | 1.00 | -- | 522.2 | -- | -- | -- | -- |
-| `native-sliding1k` | lexical | Nemotron-3-Embed-1B | -- | sliding-1000-500 | 2.238 | 0.19878 | 0.14643 | 0.26429 | 0.24452 | 0.00 | -- | 219.3 | -- | -- | -- | -- |
-| `redstring-native` | hybrid | Nemotron-3-Embed-1B | -- | boundary-preference | 1.139 | 0.19854 | 0.13571 | 0.26429 | 0.35162 | 0.00 | -- | 245.6 | -- | -- | -- | -- |
-| `qwen-wholedoc` | hybrid | qwen3-embedding-0.6b | -- | capped-whole-2400 | 1.169 | 0.19592 | 0.11786 | 0.30714 | 0.35594 | 0.00 | -- | 337.9 | 85.2 | 4 | -- | hnsw/ef=800 |
-| `native-wholedoc` | lexical | Nemotron-3-Embed-1B | -- | capped-whole-5000 | 1.057 | 0.19441 | 0.14643 | 0.27143 | 0.21968 | 0.00 | -- | 123.4 | -- | -- | -- | -- |
-| `nomic-wholedoc` | dense | nomic-embed-text | -- | capped-whole-2400 | 1.169 | 0.18931 | 0.11429 | 0.28929 | 0.30688 | 0.00 | -- | 459.7 | -- | -- | -- | -- |
-| `native-wholedoc` | deep | Nemotron-3-Embed-1B | -- | capped-whole-5000 | 1.057 | 0.18508 | 0.11429 | 0.27143 | 0.32323 | 7.46 | -- | 2942.7 | -- | -- | -- | -- |
-| `vss-control` | lexical | precomputed-ada002 | -- | whole-document | 1.000 | 0.18483 | 0.14286 | 0.26071 | 0.21393 | 0.00 | -- | 219.0 | 55.1 | 4 | -- | exact |
-| `redstring-native` | dense | Nemotron-3-Embed-1B | -- | boundary-preference | 1.139 | 0.18446 | 0.12143 | 0.25000 | 0.32397 | 0.00 | -- | 121.2 | -- | -- | -- | -- |
-| `qwen-wholedoc` | dense | qwen3-embedding-0.6b | -- | capped-whole-2400 | 1.169 | 0.18100 | 0.11429 | 0.25357 | 0.27457 | 0.00 | -- | 22.3 | 5.8 | 4 | -- | hnsw/ef=800 |
+| config | agent | embed model | chat model | ctx | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval | src |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `native-wholedoc` | rerank | Nemotron-3-Embed-1B | -- | -- | capped-whole-5000 | 1.057 | 0.34075 | 0.28571 | 0.40000 | 0.36799 | 1.00 | -- | 4364.7 | -- | -- | -- | -- | pre-8de0cb2 |
+| `vss-control` | hybrid | precomputed-ada002 | -- | -- | whole-document | 1.000 | 0.23111 | 0.16429 | 0.32143 | 0.37096 | 0.00 | -- | 1090.8 | 275.8 | 4 | -- | exact | pre-8de0cb2 |
+| `vss-control` | dense | precomputed-ada002 | -- | 64k | whole-document | 1.000 | 0.23057 | 0.15357 | 0.31071 | 0.37878 | 0.00 | -- | 525.3 | 132.0 | 4 | -- | exact | 8de0cb2 |
+| `native-sliding1k` | hybrid | Nemotron-3-Embed-1B | -- | -- | sliding-1000-500 | 2.238 | 0.22105 | 0.15714 | 0.28571 | 0.34217 | 0.00 | -- | 460.4 | -- | -- | -- | -- | pre-8de0cb2 |
+| `native-sliding1k` | zero_shot | Nemotron-3-Embed-1B | -- | -- | sliding-1000-500 | 2.238 | 0.21991 | 0.15000 | 0.30714 | 0.35640 | 1.00 | -- | 535.0 | -- | -- | -- | -- | pre-8de0cb2 |
+| `native-wholedoc` | hybrid | Nemotron-3-Embed-1B | -- | -- | capped-whole-5000 | 1.057 | 0.21872 | 0.15000 | 0.29643 | 0.36799 | 0.00 | -- | 225.7 | -- | -- | -- | -- | pre-8de0cb2 |
+| `native-wholedoc` | dense | Nemotron-3-Embed-1B | -- | -- | capped-whole-5000 | 1.057 | 0.21635 | 0.13571 | 0.30357 | 0.37780 | 0.00 | -- | 124.0 | -- | -- | -- | -- | pre-8de0cb2 |
+| `native-wholedoc` | zero_shot | Nemotron-3-Embed-1B | -- | -- | capped-whole-5000 | 1.057 | 0.21387 | 0.15000 | 0.29643 | 0.35170 | 1.00 | -- | 545.3 | -- | -- | -- | -- | pre-8de0cb2 |
+| `native-sliding1k` | dense | Nemotron-3-Embed-1B | -- | -- | sliding-1000-500 | 2.238 | 0.21252 | 0.13929 | 0.29643 | 0.33735 | 0.00 | -- | 245.6 | -- | -- | -- | -- | pre-8de0cb2 |
+| `nomic-wholedoc` | hybrid | nomic-embed-text | -- | -- | capped-whole-2400 | 1.169 | 0.21198 | 0.13929 | 0.31071 | 0.32121 | 0.00 | -- | 1380.8 | -- | -- | -- | -- | pre-8de0cb2 |
+| `nomic-wholedoc` | lexical | nomic-embed-text | -- | -- | capped-whole-2400 | 1.169 | 0.20479 | 0.15357 | 0.27143 | 0.23987 | 0.00 | -- | 100.2 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-wholedoc` | lexical | qwen3-embedding-0.6b | -- | -- | capped-whole-2400 | 1.169 | 0.20479 | 0.15357 | 0.27143 | 0.23987 | 0.00 | -- | 300.3 | 75.7 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `native-sliding1k` | deep | Nemotron-3-Embed-1B | -- | -- | sliding-1000-500 | 2.238 | 0.20147 | 0.12500 | 0.27857 | 0.36167 | 7.46 | -- | 3495.9 | -- | -- | -- | -- | pre-8de0cb2 |
+| `redstring-native` | lexical | Nemotron-3-Embed-1B | -- | -- | boundary-preference | 1.139 | 0.20141 | 0.14286 | 0.27500 | 0.24017 | 0.00 | -- | 123.1 | -- | -- | -- | -- | pre-8de0cb2 |
+| `redstring-native` | zero_shot | Nemotron-3-Embed-1B | -- | -- | boundary-preference | 1.139 | 0.19978 | 0.13929 | 0.26071 | 0.35226 | 1.00 | -- | 522.2 | -- | -- | -- | -- | pre-8de0cb2 |
+| `native-sliding1k` | lexical | Nemotron-3-Embed-1B | -- | -- | sliding-1000-500 | 2.238 | 0.19878 | 0.14643 | 0.26429 | 0.24452 | 0.00 | -- | 219.3 | -- | -- | -- | -- | pre-8de0cb2 |
+| `redstring-native` | hybrid | Nemotron-3-Embed-1B | -- | -- | boundary-preference | 1.139 | 0.19854 | 0.13571 | 0.26429 | 0.35162 | 0.00 | -- | 245.6 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-wholedoc` | hybrid | qwen3-embedding-0.6b | -- | -- | capped-whole-2400 | 1.169 | 0.19592 | 0.11786 | 0.30714 | 0.35594 | 0.00 | -- | 337.9 | 85.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `native-wholedoc` | lexical | Nemotron-3-Embed-1B | -- | -- | capped-whole-5000 | 1.057 | 0.19441 | 0.14643 | 0.27143 | 0.21968 | 0.00 | -- | 123.4 | -- | -- | -- | -- | pre-8de0cb2 |
+| `nomic-wholedoc` | dense | nomic-embed-text | -- | -- | capped-whole-2400 | 1.169 | 0.18931 | 0.11429 | 0.28929 | 0.30688 | 0.00 | -- | 459.7 | -- | -- | -- | -- | pre-8de0cb2 |
+| `native-wholedoc` | deep | Nemotron-3-Embed-1B | -- | -- | capped-whole-5000 | 1.057 | 0.18508 | 0.11429 | 0.27143 | 0.32323 | 7.46 | -- | 2942.7 | -- | -- | -- | -- | pre-8de0cb2 |
+| `vss-control` | lexical | precomputed-ada002 | -- | -- | whole-document | 1.000 | 0.18483 | 0.14286 | 0.26071 | 0.21393 | 0.00 | -- | 219.0 | 55.1 | 4 | -- | exact | pre-8de0cb2 |
+| `redstring-native` | dense | Nemotron-3-Embed-1B | -- | -- | boundary-preference | 1.139 | 0.18446 | 0.12143 | 0.25000 | 0.32397 | 0.00 | -- | 121.2 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-wholedoc` | dense | qwen3-embedding-0.6b | -- | -- | capped-whole-2400 | 1.169 | 0.18100 | 0.11429 | 0.25357 | 0.27457 | 0.00 | -- | 22.3 | 5.8 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 
 ## `prime-mini`
 
-| config | agent | embed model | chat model | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `qwen-mini-sliding1k` | hybrid | qwen3-embedding-0.6b | -- | sliding-1000-500 | 2.428 | 0.40790 | 0.31786 | 0.50000 | 0.55299 | 0.00 | -- | 60.4 | 15.4 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-sliding1k` | dense | qwen3-embedding-0.6b | -- | sliding-1000-500 | 2.428 | 0.39693 | 0.33571 | 0.45357 | 0.52595 | 0.00 | -- | 21.1 | 5.4 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-boundary` | hybrid | qwen3-embedding-0.6b | -- | boundary-preference | 1.164 | 0.38831 | 0.30714 | 0.48929 | 0.54035 | 0.00 | -- | 69.8 | 17.6 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-wholedoc` | hybrid | qwen3-embedding-0.6b | -- | capped-whole-2400 | 1.198 | 0.38731 | 0.30000 | 0.50000 | 0.54915 | 0.00 | -- | 52.5 | 13.5 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-sliding1k` | lexical | qwen3-embedding-0.6b | -- | sliding-1000-500 | 2.428 | 0.38036 | 0.33571 | 0.42857 | 0.41274 | 0.00 | -- | 34.9 | 8.9 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-boundary` | lexical | qwen3-embedding-0.6b | -- | boundary-preference | 1.164 | 0.36619 | 0.32500 | 0.41429 | 0.40571 | 0.00 | -- | 126.7 | 32.4 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-wholedoc` | lexical | qwen3-embedding-0.6b | -- | capped-whole-2400 | 1.198 | 0.36618 | 0.32143 | 0.41786 | 0.41340 | 0.00 | -- | 27.4 | 7.1 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-wholedoc` | dense | qwen3-embedding-0.6b | -- | capped-whole-2400 | 1.198 | 0.35894 | 0.28929 | 0.43214 | 0.49056 | 0.00 | -- | 19.8 | 5.1 | 4 | -- | hnsw/ef=800 |
-| `qwen-mini-boundary` | dense | qwen3-embedding-0.6b | -- | boundary-preference | 1.164 | 0.35689 | 0.28929 | 0.42500 | 0.49491 | 0.00 | -- | 38.9 | 9.9 | 4 | -- | hnsw/ef=800 |
+| config | agent | embed model | chat model | ctx | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval | src |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen-mini-sliding1k` | hybrid | qwen3-embedding-0.6b | -- | -- | sliding-1000-500 | 2.428 | 0.40790 | 0.31786 | 0.50000 | 0.55299 | 0.00 | -- | 60.4 | 15.4 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-sliding1k` | dense | qwen3-embedding-0.6b | -- | -- | sliding-1000-500 | 2.428 | 0.39693 | 0.33571 | 0.45357 | 0.52595 | 0.00 | -- | 21.1 | 5.4 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-boundary` | hybrid | qwen3-embedding-0.6b | -- | -- | boundary-preference | 1.164 | 0.38831 | 0.30714 | 0.48929 | 0.54035 | 0.00 | -- | 69.8 | 17.6 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-wholedoc` | hybrid | qwen3-embedding-0.6b | -- | -- | capped-whole-2400 | 1.198 | 0.38731 | 0.30000 | 0.50000 | 0.54915 | 0.00 | -- | 52.5 | 13.5 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-sliding1k` | lexical | qwen3-embedding-0.6b | -- | -- | sliding-1000-500 | 2.428 | 0.38036 | 0.33571 | 0.42857 | 0.41274 | 0.00 | -- | 34.9 | 8.9 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-boundary` | lexical | qwen3-embedding-0.6b | -- | -- | boundary-preference | 1.164 | 0.36619 | 0.32500 | 0.41429 | 0.40571 | 0.00 | -- | 126.7 | 32.4 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-wholedoc` | lexical | qwen3-embedding-0.6b | -- | -- | capped-whole-2400 | 1.198 | 0.36618 | 0.32143 | 0.41786 | 0.41340 | 0.00 | -- | 27.4 | 7.1 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-wholedoc` | dense | qwen3-embedding-0.6b | -- | -- | capped-whole-2400 | 1.198 | 0.35894 | 0.28929 | 0.43214 | 0.49056 | 0.00 | -- | 19.8 | 5.1 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-mini-boundary` | dense | qwen3-embedding-0.6b | -- | -- | boundary-preference | 1.164 | 0.35689 | 0.28929 | 0.42500 | 0.49491 | 0.00 | -- | 38.9 | 9.9 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
 
 ## `prime-rel`
 
-| config | agent | embed model | chat model | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | -- | whole-document | 1.002 | 0.46323 | 0.40000 | 0.53929 | 0.53693 | 1.00 | -- | 10079.1 | -- | -- | -- | -- |
-| `qwen-rel-whole` | rerank | qwen3-embedding-0.6b | -- | whole-document | 1.002 | 0.41948 | 0.35357 | 0.50357 | 0.46508 | 1.00 | -- | 5162.1 | -- | -- | -- | -- |
-| `qwen-rel-whole` | rerank40titlerelmatrix | qwen3-embedding-0.6b | gemma-4-26b-qat | whole-document | 1.002 | 0.41771 | 0.34643 | 0.50714 | 0.52250 | 1.00 | -- | 3183.6 | 800.0 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-sliding1k` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | sliding-1000-500 | 4.250 | 0.41341 | 0.34286 | 0.50714 | 0.50420 | 1.00 | -- | 6721.7 | 1685.5 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-whole` | rerank80titlerelranked | qwen3-embedding-0.6b | gemma-4-26b-qat | whole-document | 1.002 | 0.40486 | 0.32500 | 0.50714 | 0.51128 | 1.00 | -- | 4016.2 | 1010.4 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-whole` | rerank40titlerelranked | qwen3-embedding-0.6b | gemma-4-26b-qat | whole-document | 1.002 | 0.39343 | 0.30714 | 0.49643 | 0.50672 | 1.00 | -- | 2544.0 | -- | -- | -- | -- |
-| `qwen-rel-whole` | rerank40titlereldense | qwen3-embedding-0.6b | gemma-4-26b-qat | whole-document | 1.002 | 0.37999 | 0.28929 | 0.50714 | 0.49830 | 1.00 | -- | 3720.3 | 932.6 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-whole` | rerank40titlerelhybrid | qwen3-embedding-0.6b | gemma-4-26b-qat | whole-document | 1.002 | 0.37984 | 0.28571 | 0.48571 | 0.51491 | 1.00 | -- | 3526.1 | 882.2 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-sliding1k` | hybrid | qwen3-embedding-0.6b | -- | sliding-1000-500 | 4.250 | 0.34675 | 0.25000 | 0.46429 | 0.49065 | 0.00 | -- | 730.8 | 183.9 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-whole` | rerank40title | qwen3-embedding-0.6b | gemma-4-26b-qat | whole-document | 1.002 | 0.33975 | 0.25357 | 0.45000 | 0.47206 | 1.00 | -- | 1932.8 | -- | -- | -- | -- |
-| `qwen-rel-sliding1k` | lexical | qwen3-embedding-0.6b | -- | sliding-1000-500 | 4.250 | 0.32131 | 0.23929 | 0.42500 | 0.40363 | 0.00 | -- | 951.0 | 239.4 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-whole` | rerank40titlerel | qwen3-embedding-0.6b | gemma-4-26b-qat | whole-document | 1.002 | 0.31010 | 0.20714 | 0.46429 | 0.47186 | 1.00 | -- | 2422.7 | 606.1 | 4 | -- | -- |
-| `qwen-rel-whole` | hybrid | qwen3-embedding-0.6b | -- | whole-document | 1.002 | 0.28156 | 0.16786 | 0.42500 | 0.46821 | 0.00 | -- | 258.6 | 65.2 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-sliding1k` | dense | qwen3-embedding-0.6b | -- | sliding-1000-500 | 4.250 | 0.25319 | 0.16786 | 0.35714 | 0.39084 | 0.00 | -- | 22.8 | 5.9 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-whole` | lexical | qwen3-embedding-0.6b | -- | whole-document | 1.002 | 0.24913 | 0.18214 | 0.33571 | 0.33724 | 0.00 | -- | 246.4 | 62.1 | 4 | -- | hnsw/ef=800 |
-| `qwen-rel-whole` | dense | qwen3-embedding-0.6b | -- | whole-document | 1.002 | 0.18680 | 0.10357 | 0.28929 | 0.34750 | 0.00 | -- | 20.2 | 5.2 | 4 | -- | hnsw/ef=800 |
+| config | agent | embed model | chat model | ctx | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval | src |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.46323 | 0.40000 | 0.53929 | 0.53693 | 1.00 | -- | 10079.1 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.41948 | 0.35357 | 0.50357 | 0.46508 | 1.00 | -- | 5162.1 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank40titlerelmatrix | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.41344 | 0.33571 | 0.50714 | 0.52786 | 1.00 | -- | 3656.9 | 919.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-sliding1k` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | sliding-1000-500 | 4.250 | 0.41341 | 0.34286 | 0.50714 | 0.50420 | 1.00 | -- | 6721.7 | 1685.5 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank80titlerelranked | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.40486 | 0.32500 | 0.50714 | 0.51128 | 1.00 | -- | 4016.2 | 1010.4 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank40titlerelranked | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.39343 | 0.30714 | 0.49643 | 0.50672 | 1.00 | -- | 2544.0 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank40titlereldense | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.37999 | 0.28929 | 0.50714 | 0.49830 | 1.00 | -- | 3720.3 | 932.6 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank40titlerelhybrid | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.37984 | 0.28571 | 0.48571 | 0.51491 | 1.00 | -- | 3526.1 | 882.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-sliding1k` | rerank40titlerelmatrix | qwen3-embedding-0.6b | qwen3.8-27b-64k-txt | 64k | sliding-1000-500 | 4.250 | 0.37780 | 0.28929 | 0.49286 | 0.48249 | 1.00 | -- | 10322.6 | 2591.1 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | decompose | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.37127 | 0.30000 | 0.51071 | 0.47843 | 2.00 | -- | 3628.2 | 911.6 | 4 | -- | hnsw/ef=800 | -- |
+| `qwen-rel-whole` | rerank40titlerelmatrix | qwen3-embedding-0.6b | qwen3.8-27b-64k-txt | 64k | whole-document | 1.002 | 0.36942 | 0.28214 | 0.48571 | 0.51275 | 1.00 | -- | 8473.6 | 2135.1 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-sliding1k` | rerank40titlerelmatrix | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | sliding-1000-500 | 4.250 | 0.35039 | 0.27143 | 0.46071 | 0.48069 | 1.00 | -- | 4247.0 | 1066.0 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-sliding1k` | hybrid | qwen3-embedding-0.6b | -- | -- | sliding-1000-500 | 4.250 | 0.34675 | 0.25000 | 0.46429 | 0.49065 | 0.00 | -- | 730.8 | 183.9 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank40title | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.33975 | 0.25357 | 0.45000 | 0.47206 | 1.00 | -- | 1932.8 | -- | -- | -- | -- | pre-8de0cb2 |
+| `qwen-rel-sliding1k` | lexical | qwen3-embedding-0.6b | -- | -- | sliding-1000-500 | 4.250 | 0.32131 | 0.23929 | 0.42500 | 0.40363 | 0.00 | -- | 951.0 | 239.4 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | rerank40titlerel | qwen3-embedding-0.6b | gemma-4-26b-qat | -- | whole-document | 1.002 | 0.31010 | 0.20714 | 0.46429 | 0.47186 | 1.00 | -- | 2422.7 | 606.1 | 4 | -- | -- | pre-8de0cb2 |
+| `qwen-rel-whole` | hybrid | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.28156 | 0.16786 | 0.42500 | 0.46821 | 0.00 | -- | 258.6 | 65.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-sliding1k` | dense | qwen3-embedding-0.6b | -- | -- | sliding-1000-500 | 4.250 | 0.25319 | 0.16786 | 0.35714 | 0.39084 | 0.00 | -- | 22.8 | 5.9 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | lexical | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.24913 | 0.18214 | 0.33571 | 0.33724 | 0.00 | -- | 246.4 | 62.1 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |
+| `qwen-rel-whole` | dense | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.18680 | 0.10357 | 0.28929 | 0.34750 | 0.00 | -- | 20.2 | 5.2 | 4 | -- | hnsw/ef=800 | pre-8de0cb2 |

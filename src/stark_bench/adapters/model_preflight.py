@@ -51,3 +51,71 @@ def require_chat_model(base_url: str, model: str, *, timeout: float = 10.0) -> N
             f"DEFAULT_CHAT_MODEL. Refusing to start, because the LLM agents "
             f"catch extract failures and would score as plain retrieval."
         )
+
+
+#: A prompt no served context can hold. The server rejects it during
+#: tokenization, before any prefill, so the probe costs ~1.4s and no GPU
+#: work -- measured against the 27B at 65,536 tokens.
+_OVERSIZED_TOKENS = 200_000
+
+
+def chat_context_window(
+    base_url: str, model: str, *, timeout: float = 30.0
+) -> int | None:
+    """The per-slot context the endpoint will actually accept, or `None`.
+
+    ## Why this is probed rather than read from the model id
+
+    The id carries a number and the number is not the answer. This endpoint
+    serves `qwen3.8-27b-64k-txt` from a single `--ctx-size 65536` process
+    divided by `-np`, so at `-np 4` each request gets **16,384** tokens
+    while the id still says `64k`. On 2026-08-21 that cost a rerank arm 72
+    of its first 79 LLM calls, and the arm carried on and wrote a report:
+    `rerank` catches extract failures and falls back to retrieval order.
+
+    The same run also showed why this must be recorded and not merely
+    checked. `qwen-rel-whole` + `rerank40` scored **0.46323** with 280/280
+    LLM calls succeeding, which is impossible at 16,384 -- so that number
+    was taken at a lower `-np`, and nothing in its report says so. It reads
+    as reproducible and is not.
+
+    ## Why an oversized prompt rather than `/props`
+
+    `/props` is not routed through llama-swap; only the `/v1/*` surface is
+    reachable, the same limitation that made `/tokenize` unavailable when
+    the chunk cap needed one. So the oracle is the server's own rejection,
+    which cannot disagree with the server -- and it answers with `n_ctx`
+    directly rather than requiring a binary search.
+
+    `None` on any failure, for the reason `require_chat_model` returns on a
+    network error: an unreachable endpoint is a different fact from a small
+    context, and a probe that aborted runs would be a new way to lose them.
+    A `None` in the report reads as "not measured", which is true.
+    """
+    payload = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "word " * _OVERSIZED_TOKENS}],
+            "max_tokens": 1,
+        }
+    ).encode()
+    request = urllib.request.Request(  # noqa: S310
+        base_url.rstrip("/") + "/chat/completions",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310
+            # A 200 means the server took 200,000 tokens, which no model
+            # here does. Refusing to guess is better than recording a
+            # ceiling this probe did not establish.
+            return None
+    except urllib.error.HTTPError as error:
+        try:
+            body = json.load(error)
+        except Exception:
+            return None
+        n_ctx = body.get("error", {}).get("n_ctx")
+        return n_ctx if isinstance(n_ctx, int) else None
+    except Exception:
+        return None
