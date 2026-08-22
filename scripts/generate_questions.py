@@ -59,11 +59,25 @@ from stark_bench.composition.cli import _data_dir, _llm_for
 
 logger = logging.getLogger("generate_questions")
 
-#: Characters of the record shown to the generator. PRIME documents run to
-#: ~12,000 characters and the informative head -- name, type, summary --
-#: is at the front, so this is a budget rather than a truncation risk.
-#: Keeping it small matters: one call per node means prefill dominates.
-_MAX_DOCUMENT_CHARS = 2_000
+#: Characters of the record shown to the generator.
+#:
+#: Measured, not guessed. Against `gemma-4-26b-qat`, the whole prompt at
+#: 2,000 characters came to 293-909 tokens -- 909 even for the corpus's
+#: 27,629-character maximum, because the cap bounds it. At ~3.2 characters
+#: per token here (PRIME carries identifiers that tokenise far worse than
+#: the 4.3 of prose), 6,000 characters is ~2,700 tokens: still tiny against
+#: a 65,536-token context, and inside a 4,096-token slot if `-np` is raised
+#: to 16.
+#:
+#: 6,000 rather than 2,000 because the corpus that matters is `prime-rel`,
+#: whose p90 document is 4,923 characters against plain `prime`'s 1,338.
+#: The relations block is the part worth generating from -- it names the
+#: neighbours STaRK queries ask about -- and a 2,000-character cap would
+#: truncate it away on exactly the nodes where it exists.
+#:
+#: Prefill is not the cost here anyway: four questions is ~150 decode
+#: tokens, and decode is sequential where prefill is one batched pass.
+_MAX_DOCUMENT_CHARS = 6_000
 
 
 class Questions(BaseModel):
@@ -165,8 +179,14 @@ async def main() -> int:
             return await _one(node, llm, args.count)
 
     with out.open("a", encoding="utf-8") as handle:
-        for chunk_start in range(0, len(todo), 200):
-            batch = todo[chunk_start : chunk_start + 200]
+        # 25, not 200. The batch size is how much work an interruption
+        # throws away, and this endpoint is shared and has been restarted
+        # four times in one session -- a 200-node batch lost ten minutes of
+        # generation that had already been paid for. Small batches cost
+        # nothing here: the flush is a write, and `concurrency` requests
+        # stay in flight regardless.
+        for chunk_start in range(0, len(todo), 25):
+            batch = todo[chunk_start : chunk_start + 25]
             for result in await asyncio.gather(*(bounded(n) for n in batch)):
                 if result is None:
                     failed += 1

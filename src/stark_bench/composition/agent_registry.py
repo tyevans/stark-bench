@@ -229,6 +229,10 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # its recall@20 is not `hybrid`'s by construction. See
     # `agents/decompose.py` for the hypothesis and the prediction.
     "decompose": lambda config: DecomposeAgent(k=config.k),
+    # Same machinery, whole-question paraphrases instead of constraint
+    # pieces. Isolates phrasing mismatch from conjunction handling: every
+    # search asks the complete question, so no hit can be tangential.
+    "rephrase": lambda config: DecomposeAgent(k=config.k, rephrase=True),
 }
 
 

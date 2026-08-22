@@ -169,6 +169,23 @@ _ORDER_PROMPT = (
 )
 
 
+_REPHRASE_PROMPT = (
+    "Rewrite this biomedical search query {count} different ways.\n\n"
+    "Each rewrite must ask THE SAME question, complete -- not a piece of "
+    "it. Vary how it is asked: the word order, the framing, the general "
+    "vocabulary, whether it reads as a question or a description.\n\n"
+    "RULES:\n"
+    "1. Copy every entity name, gene symbol, drug name, disease name and "
+    "identifier EXACTLY as written -- character for character. The search "
+    "is partly lexical and an altered name will not match. Rephrase the "
+    "words AROUND them.\n"
+    "2. Keep every constraint. If the query asks for something that targets "
+    "X and treats Y, every rewrite must still ask for both.\n"
+    "3. Do not answer the question or guess what the answer is.\n\n"
+    "Query: {query}"
+)
+
+
 class SubQueries(BaseModel):
     """The decomposition. Field docstrings are load-bearing.
 
@@ -313,9 +330,28 @@ class DecomposeAgent:
     #: width. Sweep after, not during.
     relation_per_type: int = 1
     relation_max_types: int = 8
+    #: Ask for whole-question paraphrases instead of constraint pieces.
+    #:
+    #: Decomposition lost on `prime-rel` (0.37947 against a plain
+    #: reranker's 0.39343) and the diagnosis was that the corpus solves the
+    #: conjunction at index time: the relations block puts the neighbour
+    #: names in the document, so BM25 already matches "targets X and treats
+    #: Y" against a document containing X and Y.
+    #:
+    #: Paraphrase attacks a different weakness -- **phrasing mismatch**,
+    #: which is a dense-channel problem, and dense is the channel that has
+    #: never moved here (0.18-0.25, and +2% from relational text against
+    #: lexical's +22%).
+    #:
+    #: It also removes this design's worst failure mode by construction. A
+    #: decomposed sub-query asks part of the question, so its hits can be
+    #: tangential and the unify step has to judge that. A paraphrase asks
+    #: the WHOLE question, so every search is full strength and every hit
+    #: is on-topic.
+    rephrase: bool = False
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
-        sub_queries = await self._decompose(query, tools)
+        sub_queries = await self._plan(query, tools)
 
         # The original ALWAYS participates, so fusion cannot score below
         # `hybrid` on a bad decomposition. See the module docstring.
@@ -338,7 +374,7 @@ class DecomposeAgent:
 
         return self._rank(candidates, ordering)
 
-    async def _decompose(self, query: Query, tools: Toolset) -> list[str]:
+    async def _plan(self, query: Query, tools: Toolset) -> list[str]:
         """The sub-queries, or `[]` when the call fails or returns nothing.
 
         `[]` is not a defect: `retrieve` always searches the original query
@@ -350,7 +386,12 @@ class DecomposeAgent:
         """
         try:
             plan = await tools.extract(
-                _DECOMPOSE_PROMPT.format(query=query.text), SubQueries
+                (
+                    _REPHRASE_PROMPT.format(query=query.text, count=_MAX_SUB_QUERIES)
+                    if self.rephrase
+                    else _DECOMPOSE_PROMPT.format(query=query.text)
+                ),
+                SubQueries,
             )
         except Exception:
             logger.warning(

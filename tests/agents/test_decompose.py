@@ -287,3 +287,34 @@ def test_the_prompt_asks_for_an_order_and_not_for_scores() -> None:
     assert list(Ordering.model_fields) == [
         "indexes"
     ], f"the schema is not an ordering: {list(Ordering.model_fields)}"
+
+
+def test_the_rephrase_prompt_asks_for_whole_questions_not_pieces() -> None:
+    """The distinction is the entire point of the mode.
+
+    A decomposed sub-query asks part of the question and can retrieve
+    tangentially; a paraphrase asks all of it, so every hit is on-topic and
+    the unify step has a much easier job.
+    """
+    from stark_bench.agents.decompose import _REPHRASE_PROMPT
+
+    assert "THE SAME question, complete -- not a piece of it" in _REPHRASE_PROMPT
+    assert "Keep every constraint" in _REPHRASE_PROMPT
+
+
+def test_both_planning_prompts_demand_verbatim_entity_names() -> None:
+    """The measured gain is lexical; a paraphrased name destroys it.
+
+    A rewrite of `Chronic myeloid leukemia` to "chronic blood cancer of the
+    myeloid line" reads as a good paraphrase and silently drops the arm to
+    dense-only, with every count in the report clean.
+    """
+    from stark_bench.agents.decompose import _DECOMPOSE_PROMPT, _REPHRASE_PROMPT
+
+    for prompt in (_DECOMPOSE_PROMPT, _REPHRASE_PROMPT):
+        assert "EXACTLY" in prompt or "EXACTLY as they appear" in prompt
+        assert "lexical" in prompt
+
+
+def test_rephrase_is_off_by_default_so_the_measured_arm_is_unchanged() -> None:
+    assert DecomposeAgent().rephrase is False
