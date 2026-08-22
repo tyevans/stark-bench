@@ -361,6 +361,38 @@ conjunction handling, which the relational corpus had already solved at
 index time (§II.8). Paraphrase targets **phrasing mismatch**, which
 nothing here had addressed.
 
+## I.7b A wider pool ranks better and recalls worse
+
+`rephrase` re-run at **3 searches x k=80, ranking 20 of 80**, against the
+**5 x k=40, 20 of 40** that measured 0.42554. Same corpus, model, encoding
+and basis:
+
+| config | mrr | hit@1 | hit@5 | recall@20 |
+|---|---|---|---|---|
+| 5 searches, k=40, pool 40 | 0.42554 | 0.3536 | 0.4893 | **0.54502** |
+| 3 searches, k=80, pool 80 | **0.43689** | **0.3714** | **0.5179** | 0.52185 |
+| delta | +0.011 | +0.018 | +0.029 | **-0.023** |
+
+0.43689 is the best `gemma-4-26b-qat` arm and the best lean arm in this
+project, beating `rerank40titlerelmatrix` on every metric at the same
+encoding. But recall@20 -- the ceiling any reranker works under, and the
+thing §I.7 was about -- went the other way.
+
+**Two variables moved at once and the split is not attributed.** Searches
+went 5 -> 3 and fetch went 40 -> 80 in the same run. Both stories fit:
+fewer searches reach fewer golds, and ranking 20 out of 80 is harder than
+20 out of 40.
+
+The *shape* favours the second. hit@1 and hit@5 rose, which is what more
+good candidates to choose among produces; recall fell, which is what more
+candidates to sift produces. A thinner pool would have depressed all four.
+
+**One run separates them**: 3 x k=80 with `fetch=40` -- the same deep pool,
+truncated before the model sees it. Recall returning to ~0.545 means the
+pool was fine and the loss is selection; recall staying at ~0.52 means
+three searches genuinely reach less than five. They point opposite ways,
+so quoting either explanation now would be guessing.
+
 ## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
 `rephrase` and `rephraseshort` differ only in the final instruction:
