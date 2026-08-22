@@ -150,27 +150,22 @@ _DECOMPOSE_PROMPT = (
     "Query: {query}"
 )
 
-_SCORE_PROMPT = (
-    "Rank these candidate entities against the search query.\n\n"
-    "Query: {query}\n\n"
-    "The query was split into these numbered searches, and (0) is the "
-    "original query itself:\n{constraints}\n\n"
-    "Each candidate is marked with which searches retrieved it and at what "
-    "rank -- `(found by 0@3, 2@1)` means search (0) ranked it 3rd and "
-    "search (2) ranked it 1st.\n\n"
-    "Use that as EVIDENCE, not as a score. In particular:\n"
-    "- A search may be tangential. Being retrieved by it does not make a "
-    "candidate an answer, and a candidate found by several tangential "
-    "searches is still not an answer.\n"
-    "- Judge each candidate against the ORIGINAL query. A good answer "
-    "satisfies what was actually asked, whichever searches happened to "
-    "find it.\n"
-    "- A candidate found by only one search may still be the best answer.\n\n"
-    "Score 0-100, where 100 is certainly the answer and 0 is irrelevant. "
-    "Return one [index, score] pair for EVERY candidate below, using the "
-    "bracketed index exactly as shown: [[1, 90], [2, 15], ...]. Return as "
-    "many pairs as there are candidates. Do not return an empty list.\n\n"
-    "Candidates:\n{candidates}"
+_ORDER_PROMPT = (
+    "You are choosing which entities answer a biomedical search query.\n\n"
+    "QUERY: {query}\n\n"
+    "Candidates are grouped by the search that found them. The first group "
+    "is the query itself; the others are supplemental searches for single "
+    "constraints, and a supplemental search may be TANGENTIAL -- being "
+    "found by one is not evidence that a candidate answers the query.\n\n"
+    "{groups}\n"
+    "Judge every candidate against the QUERY above, not against the search "
+    "that happened to find it. A candidate listed under one supplemental "
+    "search may still be the best answer; a candidate listed under several "
+    "may be no answer at all.\n\n"
+    "Return the bracketed indexes of the best candidates, most relevant "
+    "first, at most 20 of them: [4, 17, 2, ...]. Fewer than 20 is fine if "
+    "fewer are plausible. Do not repeat an index and do not return an "
+    "empty list."
 )
 
 
@@ -192,14 +187,29 @@ class SubQueries(BaseModel):
     )
 
 
-class ScoredCandidates(BaseModel):
-    """`[index, score]` pairs, indexed from 1 as rendered in the prompt."""
+class Ordering(BaseModel):
+    """The top candidates, best first, by their bracketed index.
 
-    scores: list[tuple[int, float]] = Field(
+    An ORDER rather than scores, which is both the easier task and the one
+    the benchmark actually measures. Scoring every candidate asks for
+    `fetch` numbers of decode and invites the degenerate answer: the
+    `matrix` encoding logged 431 warnings on 2026-08-21 that the model gave
+    the same number for every dimension. An ordered list of 20 integers is
+    ~20 tokens, and "which twenty, in what order" is exactly the question
+    MRR and Hit@k score.
+
+    Field docstrings are load-bearing. On 2026-08-20 a reranker returned
+    `{"scores": []}` for most queries after the schema descriptions were
+    stripped to save tokens -- the description was the only text telling
+    the model what to put in the array, and its absence read as an
+    architecture result. Do not trim these.
+    """
+
+    indexes: list[int] = Field(
         description=(
-            "One [index, score] pair per candidate, where index is the "
-            "bracketed number shown beside that candidate and score is "
-            "0-100. Include every candidate."
+            "The bracketed indexes of the best candidates, most relevant "
+            "first. Return at most 20, fewer if fewer are plausible. Use "
+            "each index at most once, and invent no indexes."
         )
     )
 
@@ -278,21 +288,24 @@ class DecomposeAgent:
     k: int = 20
     #: Candidates reaching the unify call.
     #:
-    #: 100, not the 40 that is the economy knee for `rerank*`. Those arms
-    #: rerank ONE list, so a wider fetch buys progressively worse candidates
-    #: -- `rerank80titlerelranked` gained only +0.011 mrr for double the
-    #: tokens. This arm pools SEVERAL lists, so the extra slots hold each
-    #: search's own strong hits rather than another search's tail, and a
-    #: pool no wider than one list means the union can only rearrange which
-    #: candidates survive, never reach one a single search missed. Reaching
-    #: those is the entire reason to decompose.
+    #: 40, back down from the 100 that measured 0.37947. Two reasons, and
+    #: the first is the measurement: widening 40 -> 100 bought **+0.001
+    #: recall@20**, so the pool was not where the answer was. The second is
+    #: that asking a model to order 100 lean rows is a harder task than the
+    #: benchmark needs -- `k` is 20, and everything past the fortieth
+    #: candidate is a row the model must read and reject.
     #:
-    #: Affordable because the encoding is lean: ~200 characters a candidate,
-    #: so 100 of them is ~20k characters against a 65,536-token context.
-    fetch: int = 100
-    #: Retrieved per sub-query before fusion. Wider than `fetch` because
-    #: fusion discards: a candidate ranked 30th by one sub-query and 30th by
-    #: another should surface, and it cannot if each list stopped at 20.
+    #: 40 also makes this directly comparable to `rerank40titlerelranked`
+    #: (0.39343), which sees the same count in the same encoding. The only
+    #: differences left are where the candidates came from and what the
+    #: model is asked to return.
+    fetch: int = 40
+    #: Retrieved per search before pooling.
+    #:
+    #: Equal to `fetch`, so the pool can still be a genuine union -- a
+    #: candidate ranked 30th by two different searches reaches the prompt
+    #: where a narrower per-search fetch would drop it -- while the number
+    #: of rows the model reads stays at what reranking already uses.
     per_query_fetch: int = 40
     #: Neighbour names kept per relation type, and relation types shown.
     #: Held at the values `rerank40titlerelranked` measured (0.39343) so a
@@ -320,11 +333,10 @@ class DecomposeAgent:
         if not candidates:
             return []
 
-        constraints = "\n".join(f"({i}) {text}" for i, text in enumerate(searches))
-        rendered = self._render(candidates, searches)
-        scores = await self._score(query, constraints, rendered, len(candidates), tools)
+        groups = self._render(candidates, searches)
+        ordering = await self._order(query, groups, len(candidates), tools)
 
-        return self._rank(candidates, scores)
+        return self._rank(candidates, ordering)
 
     async def _decompose(self, query: Query, tools: Toolset) -> list[str]:
         """The sub-queries, or `[]` when the call fails or returns nothing.
@@ -357,87 +369,130 @@ class DecomposeAgent:
         return wanted[:_MAX_SUB_QUERIES]
 
     def _render(self, candidates: Sequence[Candidate], searches: Sequence[str]) -> str:
-        """Title, relations, and which constraints actually reached this node.
+        """Candidates grouped under the search that found them.
 
-        The retrieval evidence is rendered verbatim -- `(found by 0@3, 2@1)`
-        means the original query ranked it third and constraint 2 ranked it
-        first -- rather than summarised into a score. That is the whole
-        point of the rewrite: whether a match reinforces or merely
-        co-occurs is a judgment, and a count throws away exactly the
-        distinction that makes a constraint tangential.
+        The flat list this replaced annotated each candidate `(found by
+        0@3, 2@1)` and left the model to reconstruct the structure. Grouping
+        states it: here is the original query and what it found, here are
+        the supplemental searches and what they found. A candidate reached
+        by more than one search appears once, under its best-ranking
+        search, with the others noted -- repeating it would make the same
+        entity look like several.
 
-        Relations are still selected against the joined searches, which is
-        NOT the per-constraint selection this module's docstring argues
-        for. See B-DECOMPOSE-SELECTION-1: changing both the unify step and
-        the selection at once would make neither attributable.
+        Relations are still selected against the joined searches rather
+        than per-constraint. See B-DECOMPOSE-SELECTION-1.
         """
         selector = " ".join(searches)
+        # Each candidate belongs to the search that ranked it best; ties go
+        # to the lower search index, so the original query keeps its own.
+        owned: dict[int, list[tuple[Candidate, int]]] = {}
+        for position, candidate in enumerate(candidates):
+            owner = min(candidate.matches, key=lambda i: (candidate.matches[i], i))
+            owned.setdefault(owner, []).append((candidate, position))
+
         lines: list[str] = []
-        for index, candidate in enumerate(candidates, start=1):
-            passage = candidate.passage
-            title = title_of(passage.text)
-            relations = ranked_relations(
-                passage.text,
-                selector,
-                per_type=self.relation_per_type,
-                max_types=self.relation_max_types,
+        for search_index, text in enumerate(searches):
+            group = owned.get(search_index)
+            if not group:
+                continue
+            heading = (
+                "THE QUERY ITSELF found:"
+                if search_index == 0
+                else f"Supplemental search ({search_index}) {text!r} found:"
             )
-            body = f"{title} | {relations}" if relations else title
-            found = ", ".join(
-                f"{i}@{rank}" for i, rank in sorted(candidate.matches.items())
-            )
-            lines.append(f"[{index}] (found by {found}) {body[:_MAX_CANDIDATE_CHARS]}")
+            lines.append(heading)
+            group.sort(key=lambda pair: pair[0].matches[search_index])
+            for candidate, position in group:
+                passage = candidate.passage
+                title = title_of(passage.text)
+                relations = ranked_relations(
+                    passage.text,
+                    selector,
+                    per_type=self.relation_per_type,
+                    max_types=self.relation_max_types,
+                )
+                body = f"{title} | {relations}" if relations else title
+                others = sorted(i for i in candidate.matches if i != search_index)
+                also = f" (also found by {others})" if others else ""
+                lines.append(f"  [{position + 1}]{also} {body[:_MAX_CANDIDATE_CHARS]}")
+            lines.append("")
         return "\n".join(lines)
 
-    async def _score(
-        self,
-        query: Query,
-        constraints: str,
-        rendered: str,
-        count: int,
-        tools: Toolset,
-    ) -> dict[int, float] | None:
+    async def _order(
+        self, query: Query, groups: str, count: int, tools: Toolset
+    ) -> list[int] | None:
+        """The model's chosen ordering, or `None` when it gave us nothing.
+
+        Indexes outside the candidate range are dropped and repeats keep
+        their first position: a model that names an index twice meant it
+        once, and honouring the repeat would push a real candidate off the
+        end of `k`.
+        """
         try:
-            judged = await tools.extract(
-                _SCORE_PROMPT.format(
-                    query=query.text,
-                    constraints=constraints,
-                    candidates=rendered,
-                ),
-                ScoredCandidates,
+            chosen = await tools.extract(
+                _ORDER_PROMPT.format(query=query.text, groups=groups), Ordering
             )
         except Exception:
             logger.warning("decompose: extract failed for query %s", query.query_id)
             return None
-        if not judged.scores:
+        if not chosen.indexes:
             logger.warning(
-                "decompose: empty scores for query %s -- falling back to "
-                "fused retrieval order",
+                "decompose: empty scores for query %s -- the model returned "
+                "no ordering, falling back to pooled retrieval order",
                 query.query_id,
             )
             return None
-        return {index: score for index, score in judged.scores if 1 <= index <= count}
+        seen: set[int] = set()
+        ordered = [
+            index
+            for index in chosen.indexes
+            if 1 <= index <= count and not (index in seen or seen.add(index))
+        ]
+        if not ordered:
+            logger.warning(
+                "decompose: empty scores for query %s -- every index the "
+                "model returned was out of range",
+                query.query_id,
+            )
+            return None
+        return ordered
 
     def _rank(
-        self, candidates: Sequence[Candidate], scores: dict[int, float] | None
+        self, candidates: Sequence[Candidate], ordering: Sequence[int] | None
     ) -> list[Ranked]:
-        """Scored candidates first, then the rest in pooled retrieval order.
+        """The model's order first, then the pool's own order behind it.
 
-        Backfill is mandatory rather than optional: `k=20` is scored on
-        recall@20, and an agent that returned only what it scored would
-        throw away every candidate the LLM declined to mention. Unscored
-        candidates take `-1.0` so that "judged irrelevant" and "never
-        mentioned" stay distinguishable, as in `rerank`.
+        Backfill is mandatory rather than optional. `k=20` is scored on
+        recall@20, and the model is told it may return fewer than 20 -- so
+        an agent that returned only what the model named would throw away
+        every candidate it declined to mention, and recall would collapse
+        while MRR looked fine.
+
+        Scores here are positional, not the model's own: it was asked for
+        an ORDER, and inventing a score to represent a rank would put a
+        number in the report that nothing measured. Descending from 1.0
+        keeps `Ranked` sortable and preserves the order the model gave.
+        Backfilled candidates take `-1.0`, so "the model declined to name
+        this" stays distinguishable from "the model ranked it last".
         """
-        scores = scores or {}
-        ordered = sorted(
-            range(len(candidates)),
-            key=lambda i: (-scores.get(i + 1, -1.0), i),
-        )
+        # Deduplicated and bounded HERE as well as in `_order`, because a
+        # repeat or a stray index reaching this point would put the same
+        # node in the ranking twice -- and `write_predictions` keys by node
+        # id, so the duplicate collapses on write and the arm silently
+        # returns 19 candidates where it reported 20.
+        seen: set[int] = set()
+        chosen = [
+            index
+            for index in (ordering or ())
+            if 1 <= index <= len(candidates) and not (index in seen or seen.add(index))
+        ]
+        named = set(chosen)
+        rest = [i + 1 for i in range(len(candidates)) if (i + 1) not in named]
+        final = (chosen + rest)[: self.k]
         return [
             Ranked(
-                node_id=candidates[i].passage.node_id,
-                score=scores.get(i + 1, -1.0),
+                node_id=candidates[index - 1].passage.node_id,
+                score=(1.0 - position / len(final)) if index in named else -1.0,
             )
-            for i in ordered[: self.k]
+            for position, index in enumerate(final)
         ]
