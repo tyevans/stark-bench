@@ -1,4 +1,4 @@
-"""Split a conjunctive query, retrieve each part, fuse, then score.
+"""Split a conjunctive query, retrieve each part, then let the model unify.
 
 ## The hypothesis, recorded before the run
 
@@ -12,22 +12,44 @@ while BM25 matches the neighbour names as literal tokens.
 Relational corpora attacked that from the document side, by putting the
 neighbour names where BM25 could find them. This attacks it from the
 **query** side: split the query so each constraint gets its own
-full-strength retrieval, then let fusion do the conjunction. A candidate
-appearing in several sub-result lists is precisely what a conjunctive
-query is asking for, and RRF gives that for free.
+full-strength retrieval, and reach candidates no single search ranks well.
 
-**Prediction, on record so it can be wrong.** The bar is `rerank40` on
-whole documents at **0.46323**. Lean encodings have given up 0.05-0.07
-against full documents, so decomposition has to buy back more than that
-gap. Expected to beat `hybrid` (0.27711 on this corpus) comfortably and
-`rerank40titlerelranked` (0.39343) by a smaller margin; beating 0.46323 is
-the outcome that would change the recommendation.
+## What the first version got wrong, measured
+
+It fused the result lists with reciprocal-rank fusion, so a candidate found
+by three sub-queries outranked one found by a single sub-query. **That was
+the wrong step to automate.** A decomposed constraint can be genuinely part
+of the question and still retrieve candidates nobody should surface, and
+RRF promotes its top hit exactly as hard as the central constraint's.
+Whether a match reinforces or merely co-occurs is a judgment.
+
+| | mrr | recall@20 |
+|---|---|---|
+| `hybrid` | 0.28156 | 0.46821 |
+| RRF fusion (this module, first version) | **0.37127** | 0.47843 |
+| `rerank40titlerelranked` (one list, reordered) | 0.39343 | 0.50672 |
+
+Fusion bought **+0.010 recall@20** over `hybrid` while a plain reranker
+gained +0.038 by reordering `hybrid`'s own top 40. The pool was diluted,
+not widened -- what promoting tangential matches looks like.
+
+So the union is now the model's job. `_pool` takes the union, keeps which
+searches found each candidate and at what rank, and renders that as
+evidence: `(found by 0@3, 2@1)`. The prompt says explicitly that a search
+may be tangential, that being retrieved by one is not an argument, and
+that a candidate found by a single search may still be the best answer.
+
+**Prediction, on record so it can be wrong.** Against `rerank40titlerelranked`
+at 0.39343 on the same corpus and encoding. The mechanism that should pay
+is recall: the pool is 100 wide against any single search's 40, so unlike
+every `rerank*` arm this one can surface a candidate `hybrid` never
+ranked. If recall@20 does not exceed 0.50672 the widening did not happen
+and the idea is beaten here regardless of how the unify step scores.
 
 ## Why this is a workflow rather than an agent
 
-The plan is made once and everything after it is deterministic: one
-planning call, N retrievals, arithmetic fusion, one scoring call. No loop,
-no tool selection, no budget to exhaust. The LLM is used twice as a pure
+One planning call, N concurrent retrievals, one unify call. No loop, no
+tool selection, no budget to exhaust. The LLM is used twice as a pure
 function.
 
 That is a design choice about this problem, **not** a claim that agentic
@@ -38,44 +60,32 @@ where `hybrid` itself managed only 0.2187 against 0.34675 on the
 relational corpora. They also predate lean observation encodings, ranked
 relation selection, ANN indexes and `ef` tuning, and a context bound loose
 enough that a 72,000-character observation reached the model untouched.
+See B-DEEP-NEVER-FAIRLY-TESTED-1.
 
-A fair test of `deep` has not been run. It needs a `prime-rel` tenant
-ingested `--ingest-edges` (the qwen arms were not), and the encoding
-lessons this campaign paid for. See B-DEEP-EDGES-1.
+## Two properties that are load-bearing rather than tidy
 
-## Three properties that are load-bearing rather than tidy
+**The original query is always search 0**, and an exact tie on best rank
+breaks toward it. That makes a useless decomposition degrade to `hybrid`'s
+own ordering rather than to something arbitrary. A silent failure bounded
+below by a known-good arm is worth a great deal where nine of the last ten
+real defects raised no exception.
 
-**The original query is always in the fusion set.** That makes this a
-strict superset of `hybrid`: a decomposition that adds only noise gets
-diluted by RRF and the floor stays near `hybrid` rather than at "whatever
-the decomposer happened to produce". A silent failure bounded below by a
-known-good arm is worth a great deal here, where nine of the last ten real
-defects raised no exception.
+**The decomposer is told to copy entity names verbatim.** The entire
+measured gain is lexical -- BM25 matching `Chronic myeloid leukemia` as
+tokens. A decomposer that paraphrases to "blood cancer of the myeloid
+line" destroys the exact match, degrading the arm to roughly dense-only
+while every count in the report looks perfect. Probed on gemma before the
+first run: 4 of 4 queries decomposed with every sub-query verbatim.
 
-**The decomposer is told to copy entity names verbatim.** This is the
-sharpest risk in the design. The entire measured gain is lexical -- BM25
-matching `Chronic myeloid leukemia` as tokens. A decomposer that helpfully
-paraphrases to "blood cancer of the myeloid line" destroys the exact match
-that makes the channel work, degrading the arm to roughly dense-only while
-every count in the report looks perfect. It would read as "decomposition
-does not help", which is exactly the wrong conclusion.
-
-**Relations are ranked against the sub-queries, not the raw query.**
-FINDINGS 1b measured relation *selection* at **+0.083 mrr** -- the largest
-single lever in the campaign -- and every existing arm selects using the
-blurred whole query. A decomposition separates the constraints, so the
-names kept per candidate can be the ones matching the constraint actually
-being tested. This is information no reranking arm here has had.
-
-It also generalises the `matrix` encoding, whose three **fixed** dimensions
-logged 431 warnings on 2026-08-21 that the model scored them identically.
-Prescribed dimensions are not orthogonal for an arbitrary query; decomposed
-constraints are, because the query itself drew the lines.
+Relation selection still ranks against the joined searches rather than
+per-constraint, which is a gap this docstring used to claim was closed.
+See B-DECOMPOSE-SELECTION-1.
 """
 
 from __future__ import annotations
 
 import logging
+from asyncio import gather
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -122,13 +132,23 @@ _DECOMPOSE_PROMPT = (
 _SCORE_PROMPT = (
     "Rank these candidate entities against the search query.\n\n"
     "Query: {query}\n\n"
-    "The query breaks into these constraints:\n{constraints}\n\n"
-    "A candidate satisfying MORE constraints ranks higher. A candidate "
-    "satisfying none ranks lowest.\n\n"
+    "The query was split into these numbered searches, and (0) is the "
+    "original query itself:\n{constraints}\n\n"
+    "Each candidate is marked with which searches retrieved it and at what "
+    "rank -- `(found by 0@3, 2@1)` means search (0) ranked it 3rd and "
+    "search (2) ranked it 1st.\n\n"
+    "Use that as EVIDENCE, not as a score. In particular:\n"
+    "- A search may be tangential. Being retrieved by it does not make a "
+    "candidate an answer, and a candidate found by several tangential "
+    "searches is still not an answer.\n"
+    "- Judge each candidate against the ORIGINAL query. A good answer "
+    "satisfies what was actually asked, whichever searches happened to "
+    "find it.\n"
+    "- A candidate found by only one search may still be the best answer.\n\n"
+    "Score 0-100, where 100 is certainly the answer and 0 is irrelevant. "
     "Return one [index, score] pair for EVERY candidate below, using the "
-    "bracketed index exactly as shown: [[1, 90], [2, 15], ...]. Score 0-100. "
-    "Return as many pairs as there are candidates. Do not return an empty "
-    "list.\n\n"
+    "bracketed index exactly as shown: [[1, 90], [2, 15], ...]. Return as "
+    "many pairs as there are candidates. Do not return an empty list.\n\n"
     "Candidates:\n{candidates}"
 )
 
@@ -163,35 +183,92 @@ class ScoredCandidates(BaseModel):
     )
 
 
-def _fuse(ranked_lists: Sequence[Sequence[Passage]]) -> list[Passage]:
-    """Reciprocal-rank fusion over the sub-query result lists.
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """One node in the pool, with which constraints reached it and how well.
 
-    The conjunction is done here rather than by the LLM: a candidate found
-    by three sub-queries accumulates three contributions and outranks one
-    found by a single sub-query, which is what "targets X **and** treats Y"
-    means. Doing it arithmetically also means it still happens when the
-    scoring call fails, so the fallback is a fused ranking rather than a
-    single list.
+    `matches` maps a search's index in `searches` (0 is always the original
+    query) to the best rank that search gave this node. It is the evidence
+    the LLM needs to unify: "found by constraint 2 at rank 1" and "found by
+    constraints 1 and 3 at ranks 30 and 34" are different facts about a
+    candidate, and no single number preserves both.
     """
-    scores: dict[str, float] = {}
+
+    passage: Passage
+    matches: dict[int, int]
+
+    @property
+    def best_rank(self) -> int:
+        return min(self.matches.values())
+
+
+def _pool(ranked_lists: Sequence[Sequence[Passage]], *, limit: int) -> list[Candidate]:
+    """The union of the result lists, with retrieval provenance kept.
+
+    ## Why this is a union and not a fusion
+
+    The first version summed reciprocal ranks across lists, so a candidate
+    found by three sub-queries outranked one found by a single sub-query.
+    That treats every constraint as equally load-bearing, and a decomposed
+    constraint may be **tangential**: a sub-query can be a genuine part of
+    the question and still retrieve candidates that nobody should surface,
+    while its top hit gets promoted exactly as hard as the central
+    constraint's. Whether a match reinforces or merely co-occurs is a
+    judgment, and arithmetic cannot make it.
+
+    Measured: RRF fusion scored **0.37127 mrr** on `qwen-rel-whole` and
+    lifted recall@20 to 0.47843 against `hybrid`'s 0.46821 -- **+0.010**,
+    while a plain reranker over `hybrid`'s own top 40 reached 0.50672 by
+    reordering alone. The fused pool was diluted rather than widened, which
+    is what promoting tangential matches looks like.
+
+    ## Why truncation orders by best rank rather than by match count
+
+    Something must bound the prompt, and the ordering used to bound it is
+    itself a ranking decision. Best-rank asks "did any search find this
+    highly", which admits a tangential constraint's strong hit into the
+    pool **without promoting it** -- the LLM then sees it matched only that
+    constraint and can drop it. Ordering by match count would rebuild the
+    additive bias one layer down, where it is harder to see.
+
+    Ties break toward the original query's own ranking, so with no usable
+    decomposition this degrades exactly to `hybrid`'s order.
+    """
+    matches: dict[str, dict[int, int]] = {}
     seen: dict[str, Passage] = {}
-    for ranked in ranked_lists:
+    for index, ranked in enumerate(ranked_lists):
         for rank, passage in enumerate(ranked, start=1):
-            scores[passage.node_id] = scores.get(passage.node_id, 0.0) + 1.0 / (
-                _RRF_K + rank
-            )
+            per_node = matches.setdefault(passage.node_id, {})
+            # `min`: a search that found a node twice (it cannot) or two
+            # searches that both found it keep the better evidence.
+            per_node[index] = min(per_node.get(index, rank), rank)
             seen.setdefault(passage.node_id, passage)
-    order = sorted(scores, key=lambda node_id: -scores[node_id])
-    return [seen[node_id] for node_id in order]
+
+    candidates = [
+        Candidate(passage=seen[node_id], matches=per_node)
+        for node_id, per_node in matches.items()
+    ]
+    candidates.sort(key=lambda c: (c.best_rank, c.matches.get(0, 10**6)))
+    return candidates[:limit]
 
 
 @dataclass(frozen=True, slots=True)
 class DecomposeAgent:
     k: int = 20
-    #: Candidates surviving fusion that reach the scoring call. 40 is the
-    #: measured economy knee: `rerank80titlerelranked` bought +0.011 mrr
-    #: over `rerank40titlerelranked` for double the tokens.
-    fetch: int = 40
+    #: Candidates reaching the unify call.
+    #:
+    #: 100, not the 40 that is the economy knee for `rerank*`. Those arms
+    #: rerank ONE list, so a wider fetch buys progressively worse candidates
+    #: -- `rerank80titlerelranked` gained only +0.011 mrr for double the
+    #: tokens. This arm pools SEVERAL lists, so the extra slots hold each
+    #: search's own strong hits rather than another search's tail, and a
+    #: pool no wider than one list means the union can only rearrange which
+    #: candidates survive, never reach one a single search missed. Reaching
+    #: those is the entire reason to decompose.
+    #:
+    #: Affordable because the encoding is lean: ~200 characters a candidate,
+    #: so 100 of them is ~20k characters against a 65,536-token context.
+    fetch: int = 100
     #: Retrieved per sub-query before fusion. Wider than `fetch` because
     #: fusion discards: a candidate ranked 30th by one sub-query and 30th by
     #: another should surface, and it cannot if each list stopped at 20.
@@ -209,16 +286,20 @@ class DecomposeAgent:
         # The original ALWAYS participates, so fusion cannot score below
         # `hybrid` on a bad decomposition. See the module docstring.
         searches = [query.text, *sub_queries]
-        ranked_lists = [
-            await tools.search_passages(text, k=self.per_query_fetch, mode="hybrid")
-            for text in searches
-        ]
-        fused = _fuse(ranked_lists)
-        if not fused:
+        # Concurrently: independent reads, and hybrid search is dominated by
+        # BM25 over a 5.7M-row terms table, so five sequential awaits per
+        # query were a large share of this arm's wall time.
+        ranked_lists = await gather(
+            *(
+                tools.search_passages(text, k=self.per_query_fetch, mode="hybrid")
+                for text in searches
+            )
+        )
+        candidates = _pool(ranked_lists, limit=self.fetch)
+        if not candidates:
             return []
-        candidates = fused[: self.fetch]
 
-        constraints = "\n".join(f"- {text}" for text in searches)
+        constraints = "\n".join(f"({i}) {text}" for i, text in enumerate(searches))
         rendered = self._render(candidates, searches)
         scores = await self._score(query, constraints, rendered, len(candidates), tools)
 
@@ -254,18 +335,25 @@ class DecomposeAgent:
             )
         return wanted[:_MAX_SUB_QUERIES]
 
-    def _render(self, candidates: Sequence[Passage], searches: Sequence[str]) -> str:
-        """Title plus the relations matching the constraints, per candidate.
+    def _render(self, candidates: Sequence[Candidate], searches: Sequence[str]) -> str:
+        """Title, relations, and which constraints actually reached this node.
 
-        Relations are ranked against the joined sub-queries rather than the
-        raw query -- the point of the design. `ranked_relations` takes a
-        single string, so the constraints are joined; the lexical ranker
-        scores on token overlap, so a union of constraint tokens is what a
-        candidate satisfying any of them should match.
+        The retrieval evidence is rendered verbatim -- `(found by 0@3, 2@1)`
+        means the original query ranked it third and constraint 2 ranked it
+        first -- rather than summarised into a score. That is the whole
+        point of the rewrite: whether a match reinforces or merely
+        co-occurs is a judgment, and a count throws away exactly the
+        distinction that makes a constraint tangential.
+
+        Relations are still selected against the joined searches, which is
+        NOT the per-constraint selection this module's docstring argues
+        for. See B-DECOMPOSE-SELECTION-1: changing both the unify step and
+        the selection at once would make neither attributable.
         """
         selector = " ".join(searches)
         lines: list[str] = []
-        for index, passage in enumerate(candidates, start=1):
+        for index, candidate in enumerate(candidates, start=1):
+            passage = candidate.passage
             title = title_of(passage.text)
             relations = ranked_relations(
                 passage.text,
@@ -274,7 +362,10 @@ class DecomposeAgent:
                 max_types=self.relation_max_types,
             )
             body = f"{title} | {relations}" if relations else title
-            lines.append(f"[{index}] {body}")
+            found = ", ".join(
+                f"{i}@{rank}" for i, rank in sorted(candidate.matches.items())
+            )
+            lines.append(f"[{index}] (found by {found}) {body}")
         return "\n".join(lines)
 
     async def _score(
@@ -307,9 +398,9 @@ class DecomposeAgent:
         return {index: score for index, score in judged.scores if 1 <= index <= count}
 
     def _rank(
-        self, candidates: Sequence[Passage], scores: dict[int, float] | None
+        self, candidates: Sequence[Candidate], scores: dict[int, float] | None
     ) -> list[Ranked]:
-        """Scored candidates first, then the rest in fused retrieval order.
+        """Scored candidates first, then the rest in pooled retrieval order.
 
         Backfill is mandatory rather than optional: `k=20` is scored on
         recall@20, and an agent that returned only what it scored would
@@ -323,6 +414,9 @@ class DecomposeAgent:
             key=lambda i: (-scores.get(i + 1, -1.0), i),
         )
         return [
-            Ranked(node_id=candidates[i].node_id, score=scores.get(i + 1, -1.0))
+            Ranked(
+                node_id=candidates[i].passage.node_id,
+                score=scores.get(i + 1, -1.0),
+            )
             for i in ordered[: self.k]
         ]

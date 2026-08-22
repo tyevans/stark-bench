@@ -60,6 +60,32 @@ figures rather than merely monotonic in argument.
 A `--run` against a missing corpus now refuses up front rather than
 scoring an empty store as a bad retriever.
 
+## Every report records the code that produced it
+
+As of 2026-08-21 each run and each ingest stores `redstring_commit`,
+`redstring_branch`, `redstring_src_dirty` and the same three for this
+repository. `RESULTS.md` renders the redstring commit as a `src` column,
+with `*` for a dirty `src/`.
+
+The reason is a third instance of one pattern. redstring PR #72 changed
+what `SlidingWindowChunker` emits **without changing its name**, and four
+configs name `sliding-1000-500`. Before that, a model id was reused for a
+different model (ADR 0002), and a chat model's id read `64k` at every
+`-np`. In all three the identifier held still while the thing moved. A
+commit cannot.
+
+The 63 reports written before this are stamped `pre-8de0cb2` by
+`scripts/annotate_pre_release_results.py` -- an explicit stamp, not an
+inference from a missing field, because inferred metadata reads exactly
+like recorded metadata until it is wrong. It claims only that they predate
+that merge; the exact commit is unrecoverable.
+
+**So the live sliding-window corpora hold chunks the current library would
+not produce**, including `qwen-rel-sliding1k` at 549,697 rows -- the source
+of this project's best retrieval-only figures. Those numbers stand as
+measured and cannot be reproduced without a re-ingest. See
+B-SLIDING-CORPORA-PREDATE-THE-FIX-1.
+
 **`redstring` is a path dependency and the path is load-bearing:**
 
 ```toml
@@ -67,7 +93,7 @@ scoring an empty store as a bad retriever.
 redstring = { path = "../redstring", editable = true }
 ```
 
-It points at the user's own checkout, on `main`. It used to point at
+It points at the user's own checkout. Which BRANCH is not guaranteed and is now recorded rather than assumed: every arm run on 2026-08-21 was measured on `perf/indexable-semantic-order` while this file said `main`. `git -C ../redstring rev-parse --abbrev-ref HEAD`, or read the `src` column. It used to point at
 `../redstring-chunkfix`, a worktree kept deliberately separate so that
 checkout could sit on a feature branch without changing what this benchmark
 measures — that worktree still exists, on the older

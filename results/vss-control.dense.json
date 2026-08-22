@@ -14,8 +14,8 @@
     "tool_calls_per_query": 1.0,
     "llm_calls_per_query": 0.0,
     "tokens_per_query": null,
-    "seconds_total": 836.818126516042,
-    "seconds_wall": 211.83079231800002,
+    "seconds_total": 525.3452652569686,
+    "seconds_wall": 132.04510756599484,
     "query_concurrency": 4,
     "exhausted_queries": null,
     "ann_index": null,
@@ -23,7 +23,16 @@
     "ann_index_scans_cumulative": null,
     "hnsw_ef_search": "800",
     "retrieval_is_exact": true,
-    "redstring_release": "pre-8de0cb2"
+    "agent_warnings": 0,
+    "agent_warnings_degraded": 0,
+    "agent_warnings_diagnostic": 0,
+    "stark_bench_commit": "ff856e4a55a6a37e9dde6ddeb739965fef96acc1",
+    "stark_bench_branch": "bench/indexed-retrieval-campaign",
+    "stark_bench_src_dirty": false,
+    "redstring_commit": "8de0cb26dcbbd23abe3fdeb19da3940ea90ee274",
+    "redstring_branch": "main",
+    "redstring_src_dirty": false,
+    "chat_n_ctx": 65536
   },
   "ingest": {
     "nodes": 129375,
@@ -38,6 +47,7 @@
     "config_verbatim": "name: vss-control\ndataset: prime\nsplit: test-0.1\n# One chunk per node: STaRK's precomputed vectors are one per node document,\n# so the control path must present each document whole for them to apply.\nchunker: whole-document\nembeddings: precomputed-ada002\ndimension: 1536\naggregation: max\nagent: dense\nk: 20\n",
     "cache_hits": 0,
     "cache_misses": 0,
-    "complete": true
+    "complete": true,
+    "redstring_release": "pre-8de0cb2"
   }
 }

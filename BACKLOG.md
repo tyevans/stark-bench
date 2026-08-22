@@ -2,6 +2,28 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-DECOMPOSE-SELECTION-1 -- the strongest argument for decomposition is still untested
+
+`agents/decompose.py` argues that a decomposed query should let relation
+**selection** become constraint-aware: FINDINGS 1b measured selection at
+**+0.083 mrr**, the largest single lever in the campaign, and every arm
+here selects using the blurred whole query.
+
+`_render` does not do that. It builds one selector by joining the original
+query and every sub-query, then ranks each candidate's relations against
+that string. Since the sub-queries are largely verbatim fragments of the
+original, the selector is close to a noisier copy of the raw query -- which
+is what `rerank40titlerelranked` already uses.
+
+So the first decompose run (0.37127) tested fusion, not selection, while
+its docstring claimed otherwise. The docstring is now corrected.
+
+Closing it means ranking each candidate's relations against **the
+constraint being tested**, and showing the model which constraint each
+kept name belongs to. Deferred rather than done because the unify step
+changed in the same edit, and changing both at once would make neither
+attributable -- the campaign's own one-variable rule.
+
 ## B-SLIDING-CORPORA-PREDATE-THE-FIX-1 -- live sliding-window tenants hold chunks no current code would produce
 
 redstring PR #72 (merged into `main` as `8de0cb2`) fixed
