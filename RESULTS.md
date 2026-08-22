@@ -53,6 +53,7 @@ Arms on `prime` index documents that stop at the node's own details; arms on `pr
 
 | config | agent | embed model | chat model | ctx | chunker | chunks/node | mrr | hit@1 | hit@5 | recall@20 | llm calls/query | tokens/query | gpu seconds | wall seconds | conc | cut off | retrieval | src |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `qwen-rel-whole` | rephrase | qwen3-embedding-0.6b | qwen3.8-27b-64k-txt | 64k | whole-document | 1.002 | 0.47547 | 0.40714 | 0.56071 | 0.57020 | 2.00 | -- | 9685.2 | 2199.7 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
 | `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | -- | -- | whole-document | 1.002 | 0.46323 | 0.40000 | 0.53929 | 0.53693 | 1.00 | -- | 10079.1 | -- | -- | -- | -- | pre-8de0cb2 |
 | `qwen-rel-whole` | rephrase | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.43689 | 0.37143 | 0.51786 | 0.52185 | 2.00 | -- | 4031.4 | 798.7 | 4 | -- | hnsw/ef=800 | 8de0cb2 |
 | `qwen-rel-whole` | rerank40 | qwen3-embedding-0.6b | gemma-4-26b-qat | 64k | whole-document | 1.002 | 0.43010 | 0.35357 | 0.51429 | 0.52007 | 0.97 | -- | 13640.6 | 4583.2 | 4 | -- | hnsw/ef=800 | 8de0cb2 |

@@ -546,6 +546,38 @@ architectural work or compensating for a weak reranker. `rephrase` on
 above 0.46323 at roughly a tenth of the wall time that arm would need at
 `-np 1`.
 
+## I.10 The paraphrase arm takes the top of the table, on a lean encoding
+
+`rephrase` (3 searches at k=80, union, rank 20 of 80) on
+`qwen3.8-27b-64k-txt`, `qwen-rel-whole`, `test-0.1`, `hnsw/ef=800`:
+
+| arm | model | encoding | mrr | hit@1 | hit@5 | recall@20 | wall |
+|---|---|---|---|---|---|---|---|
+| **`rephrase`** | qwen3.8-27b | lean, ~200 chars | **0.47547** | **0.4071** | **0.5607** | **0.57020** | 2200s |
+| `rerank40` | qwen3.8-27b | full documents | 0.46323 | 0.4000 | 0.5393 | 0.53693 | ~8400s est. |
+| `rephrase` | gemma | lean | 0.43689 | 0.3714 | 0.5179 | 0.52185 | 799s |
+| `rerank40` | gemma | full documents | 0.43010 | 0.3536 | 0.5143 | 0.52007 | 4583s |
+
+Best on every metric, with zero degraded queries, at roughly a quarter of
+the wall time of the arm it displaces.
+
+**The advantage travels across models, which is what makes it
+architectural.** Against full-document reranking on the same model,
+`rephrase` is +0.007 mrr on gemma and **+0.012 on qwen3.8-27b**. A weak
+reranker being propped up by better candidates would show the opposite --
+the gain shrinking as the reranker improves. It grew.
+
+**recall@20 0.57020 is the project record** and the margin is the story:
++0.033 over the full-document arm, and +0.102 over a single `hybrid`
+search (0.46821). Recall@20 is the ceiling every reranker here works
+under, and nothing else in this project has moved it this far.
+
+Cost, for the same corpus and model: two LLM calls per query on ~200
+characters of candidate against one call on whole PRIME records. The
+`rerank40` wall time is estimated rather than measured -- that arm at
+`-np 1` was projected from its gemma run, and running it was not worth
+four hours to confirm a number the lean arm already beats.
+
 ## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
 `rephrase` and `rephraseshort` differ only in the final instruction:

@@ -808,6 +808,15 @@ async def _do_run(config: RunConfig) -> None:
         # Wall time is measured around the whole query set rather than
         # derived from the calls, which overlap under concurrency.
         run_started = perf_counter()
+        # Captured BEFORE the run, not when the report is written.
+        #
+        # The checkout can move while an arm is in flight -- it did on
+        # 2026-08-21, mid-run, when redstring `main` gained two commits.
+        # The process had already imported the old code, so its BEHAVIOUR
+        # was the old commit while a probe at report time would have
+        # recorded the new one. That is the exact silent-basis error this
+        # field exists to prevent, reintroduced by reading it too late.
+        provenance = source_provenance()
         warnings = _AgentWarnings()
         agent_logger = logging.getLogger("stark_bench.agents")
         agent_logger.addHandler(warnings)
@@ -887,7 +896,7 @@ async def _do_run(config: RunConfig) -> None:
         # PR #72 moved what `sliding-1000-500` emits without renaming it
         # -- so a commit is the only identifier that cannot drift from
         # what it names. See `source_provenance`.
-        cost.update(source_provenance())
+        cost.update(provenance)
         # The per-slot context the chat peer accepted, probed rather
         # than inferred from the model id -- see `chat_context_window`.
         # Recorded on every run, including retrieval-only ones where it
