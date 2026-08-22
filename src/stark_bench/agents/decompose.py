@@ -429,6 +429,13 @@ class DecomposeAgent:
         not a measurement of decomposition, and `llm_calls_per_query` would
         stay a clean 2.0 throughout.
         """
+        if self.sub_queries <= 0:
+            # No planning call at all, rather than asking for zero
+            # rewrites. This is the control for the whole design: one
+            # search, the same pool machinery, the same grouped render and
+            # the same ordering output, so the paraphrase union is the only
+            # thing that differs from `rephrase`.
+            return []
         try:
             plan = await tools.extract(
                 (

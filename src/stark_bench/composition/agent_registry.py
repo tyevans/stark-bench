@@ -254,6 +254,13 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     "rephrasewide": lambda config: DecomposeAgent(
         k=config.k, rephrase=True, sub_queries=4
     ),
+    # The control for the paraphrase union: ONE hybrid search at k=80,
+    # the same pool, grouped render and ordered-index output as
+    # `rephrase`, and no planning call. Against `rephrase` the union is
+    # the only variable; against `rerank80titlerelranked` (0.40486, one
+    # search at 80 with pair scores on a flat list) the output format and
+    # prompt shape are.
+    "rankonly": lambda config: DecomposeAgent(k=config.k, rephrase=True, sub_queries=0),
     "rephraseshort": lambda config: DecomposeAgent(
         k=config.k, rephrase=True, rank_all=False
     ),
