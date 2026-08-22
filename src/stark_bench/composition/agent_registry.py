@@ -246,6 +246,14 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     "rephrasenarrow": lambda config: DecomposeAgent(
         k=config.k, rephrase=True, fetch=40
     ),
+    # Five searches AND eighty candidates. The two knobs measured
+    # independent on 2026-08-21: pool size 80 -> 40 moved recall@20 by
+    # 0.00003 and mrr by -0.014, while 3 -> 5 searches moved recall by
+    # +0.023 and mrr by +0.003. So reach comes from search count and
+    # ranking quality from pool size, and nothing had yet raised both.
+    "rephrasewide": lambda config: DecomposeAgent(
+        k=config.k, rephrase=True, sub_queries=4
+    ),
     "rephraseshort": lambda config: DecomposeAgent(
         k=config.k, rephrase=True, rank_all=False
     ),

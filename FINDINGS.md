@@ -393,6 +393,45 @@ pool was fine and the loss is selection; recall staying at ~0.52 means
 three searches genuinely reach less than five. They point opposite ways,
 so quoting either explanation now would be guessing.
 
+## I.7c Reach and ranking quality are separate knobs
+
+Three `rephrase` configurations, same corpus, model, encoding and basis,
+varying only how many searches run and how many candidates reach the
+prompt:
+
+| config | mrr | hit@1 | hit@5 | recall@20 |
+|---|---|---|---|---|
+| 5 searches, k=40, pool 40 | 0.42554 | 0.3536 | 0.4893 | **0.54502** |
+| 3 searches, k=80, pool 80 | **0.43689** | **0.3714** | 0.5179 | 0.52185 |
+| 3 searches, k=80, pool 40 | 0.42258 | 0.3464 | 0.5179 | 0.52188 |
+
+Holding one knob and moving the other:
+
+| change | recall@20 | mrr |
+|---|---|---|
+| pool 80 -> 40, same 3 searches | **+0.00003** | -0.01431 |
+| 3 -> 5 searches, same pool 40 | **+0.02314** | +0.00296 |
+
+**Recall@20 is set by how many searches run. MRR is set by how many
+candidates the model ranks.** Neither knob touches the other's metric.
+
+**This falsified the reading given when §I.7b was written**, which is why
+that section says "unattributed" rather than picking a story. The
+explanation offered was selection difficulty -- hit@1 and hit@5 rising
+while recall fell looked like a model drowning in eighty candidates.
+Truncating to forty restored recall by **0.00003**. Selection was never
+the mechanism; three searches simply reach fewer gold answers than five.
+
+It also bears on whether late paraphrases are worth generating. The
+concern was that a fourth and fifth rewrite drift far enough to stop being
+the same question -- and they may, but they **find golds the first three
+do not**, which is reach and not noise. Whether a seventh or ninth still
+pays is untested.
+
+**Neither configuration raises both.** `rephrasewide` -- 5 searches at
+k=80, pool 80 -- is the one that should, and had not been run when this
+was written.
+
 ## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
 `rephrase` and `rephraseshort` differ only in the final instruction:
