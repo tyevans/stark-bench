@@ -111,6 +111,27 @@ _RRF_K = 60
 #: extra list contributes rank-1 mass to whatever it found, so a spurious
 #: constraint promotes a spurious candidate to the same degree a real one
 #: promotes a real candidate.
+#: Characters of any one candidate that reach the unify prompt.
+#:
+#: `rerank` caps at 3,000 because it renders whole documents. This arm
+#: renders a lean encoding -- title plus one neighbour per relation type --
+#: which is ~200 characters typically, so 500 is generous rather than
+#: tight, and 100 candidates fit in ~50k characters against a 65,536-token
+#: context.
+#:
+#: It exists because the typical case is not the binding one. PRIME hub
+#: entities carry dozens of relation types with long neighbour names, and
+#: on 2026-08-21 exactly one query in 280 produced a prompt the endpoint
+#: rejected with `400`. `rerank`'s own docstring names this as the worst
+#: failure available to these agents: the extract call raises, the agent
+#: degrades to retrieval order, and the arm scores like `hybrid` while
+#: every count in the report looks clean. Widening the pool from 40 to 100
+#: is what made it reachable here.
+#:
+#: One query is a 0.36% degradation, which the gate caught. Uncapped and
+#: with a wider pool it would not stay at one.
+_MAX_CANDIDATE_CHARS = 500
+
 _MAX_SUB_QUERIES = 4
 
 _DECOMPOSE_PROMPT = (
@@ -365,7 +386,7 @@ class DecomposeAgent:
             found = ", ".join(
                 f"{i}@{rank}" for i, rank in sorted(candidate.matches.items())
             )
-            lines.append(f"[{index}] (found by {found}) {body}")
+            lines.append(f"[{index}] (found by {found}) {body[:_MAX_CANDIDATE_CHARS]}")
         return "\n".join(lines)
 
     async def _score(

@@ -2,6 +2,30 @@
 
 Deferred work, one entry per item. Delete an entry in the commit that fixes it.
 
+## B-DECOMPOSE-PROMPT-CAP-1 -- closed by the commit that adds it, kept here for the lesson
+
+`agents/decompose.py` rendered candidates with no per-candidate character
+cap. `rerank` has carried `_MAX_PASSAGE_CHARS = 3000` since it was written,
+and its docstring names the failure exactly: "Overflowing the window is the
+worst failure available to this agent: the extract call raises, the agent
+degrades to retrieval order, and the run scores *exactly* `hybrid` -- a
+plausible-looking null."
+
+`decompose` inherited that agent's lean encoding and not its guard.
+Measured: one query in 280 produced a prompt the endpoint rejected with
+`400`. Uncapped, a single PRIME hub entity renders **110,018 characters**
+-- roughly 27k tokens from one of a hundred candidates.
+
+Widening the pool from 40 to 100 is what made it reachable, which is the
+part worth keeping: **a parameter change moved a latent defect into
+range.** Nothing about the rendering changed; the number of chances did.
+At 40 candidates it never fired, so no amount of running the previous
+configuration would have found it.
+
+Fixed at `_MAX_CANDIDATE_CHARS = 500`, generous against a ~200-character
+typical encoding, with a test that renders a pathological hub and fails
+without the cap.
+
 ## B-DECOMPOSE-SELECTION-1 -- the strongest argument for decomposition is still untested
 
 `agents/decompose.py` argues that a decomposed query should let relation

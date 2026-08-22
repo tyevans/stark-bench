@@ -316,6 +316,58 @@ rather than another arm.
 The most useful section here. Each of these drove real decisions before it
 was killed.
 
+## II.8 Query decomposition buys nothing on a relational corpus -- the corpus already did it
+
+**Predicted before the run, in the module docstring**: `decompose` pools
+100 candidates across the original query plus up to four sub-queries, so
+unlike every `rerank*` arm it can surface a candidate a single `hybrid`
+search never ranked. The stated test was recall@20 against
+`rerank40titlerelranked`'s **0.50672**.
+
+**Measured**: 0.47945. Below it, and barely above `hybrid`'s own 0.46821.
+
+| arm | mrr | hit@1 | recall@20 | LLM calls | wall |
+|---|---|---|---|---|---|
+| `hybrid` | 0.28156 | 0.1679 | 0.46821 | 0 | 65s |
+| `decompose` v1, RRF fusion, pool 40 | 0.37127 | 0.3000 | 0.47843 | 2 | 912s |
+| `decompose` v2, LLM union, pool 100 | 0.37947 | 0.3250 | 0.47945 | 2 | 1403s |
+| `rerank40titlerelranked` | 0.39343 | 0.3071 | 0.50672 | 1 | -- |
+| `rerank40titlerelmatrix` | 0.41344 | 0.3357 | 0.52786 | 1 | 919s |
+
+**The number that settles it is the one that did not move.** Widening from
+a 40-candidate fused pool to a 100-candidate union across five searches --
+2.5x the pool, five retrievals instead of one -- bought **+0.001
+recall@20**. Whatever the sub-queries retrieve, `hybrid` on the full query
+had already found.
+
+**Why, and it follows from this project's headline rather than
+contradicting it.** The relational corpus solves the conjunction at *index*
+time. A `- relations:` block puts every neighbour's name in the node's own
+document, so BM25 matches "a drug that targets X and is indicated for Y"
+against a document containing the literal strings X and Y. That is the
++22% lexical gain §I.1 records. Decomposition attacks the same weakness at
+*query* time, and arrives to find it already fixed.
+
+The prediction was built on the dense channel's failure to hold
+conjunctions (+2% against lexical's +22%). That asymmetry is real, but it
+describes the *dense* channel, and `hybrid` does not depend on the dense
+channel for this. Reasoning from one channel's weakness to the fused
+retriever's was the error.
+
+**What the rewrite did establish.** The first version fused with RRF,
+promoting a candidate for being found by several searches -- including
+tangential ones. Replacing that with an LLM union that sees which searches
+found each candidate and at what rank gained **+0.008 mrr and +0.025
+hit@1**. So arithmetic fusion was the wrong step to automate; that is a
+real result about how to combine multi-query retrieval, on an arm that
+loses anyway.
+
+**Where decomposition might still pay**, untested here: a corpus WITHOUT
+relational text, where the conjunction is not pre-solved. Every `prime`
+(non-`rel`) arm is such a corpus. That is the honest next experiment, and
+it inverts the usual direction -- the technique should help *more* on the
+weaker corpus.
+
 ## II.1 "ada-002 is reading a richer corpus"
 
 `qwen-wholedoc` dense against `vss-control` dense was read as a corpus
