@@ -107,16 +107,12 @@ logger = logging.getLogger(__name__)
 #: fusion incomparable to `hybrid`'s for no measured reason.
 _RRF_K = 60
 
-#: Sub-queries requested. Bounded because over-decomposition dilutes: every
-#: extra list contributes rank-1 mass to whatever it found, so a spurious
-#: constraint promotes a spurious candidate to the same degree a real one
-#: promotes a real candidate.
 #: Characters of any one candidate that reach the unify prompt.
 #:
 #: `rerank` caps at 3,000 because it renders whole documents. This arm
 #: renders a lean encoding -- title plus one neighbour per relation type --
 #: which is ~200 characters typically, so 500 is generous rather than
-#: tight, and 100 candidates fit in ~50k characters against a 65,536-token
+#: tight, and 80 candidates fit in ~40k characters against a 65,536-token
 #: context.
 #:
 #: It exists because the typical case is not the binding one. PRIME hub
@@ -125,14 +121,24 @@ _RRF_K = 60
 #: rejected with `400`. `rerank`'s own docstring names this as the worst
 #: failure available to these agents: the extract call raises, the agent
 #: degrades to retrieval order, and the arm scores like `hybrid` while
-#: every count in the report looks clean. Widening the pool from 40 to 100
-#: is what made it reachable here.
-#:
-#: One query is a 0.36% degradation, which the gate caught. Uncapped and
-#: with a wider pool it would not stay at one.
+#: every count in the report looks clean. Widening the pool is what made it
+#: reachable, and the pool has since widened again to 80.
 _MAX_CANDIDATE_CHARS = 500
 
-_MAX_SUB_QUERIES = 4
+#: Planned queries requested, beside the original. The default is 2, so
+#: three searches run in total.
+#:
+#: Fewer and deeper beats more and shallower here. The union's value is
+#: reach -- candidates a single search never ranked -- and reach comes from
+#: how far down each search goes, not from how many searches there are.
+#: Five searches at k=40 and three at k=80 cost the same retrieval work;
+#: the second reaches rank 80.
+#:
+#: It also bounds dilution. Every extra planned query contributes its own
+#: rank-1 hit to the pool, and those displace the original query's ranks
+#: 2-5 -- measured as `rephraseshort`'s recall@20 falling BELOW plain
+#: `hybrid` when the model did not rerank the whole pool.
+_MAX_SUB_QUERIES = 2
 
 _DECOMPOSE_PROMPT = (
     "Break this biomedical search query into its separate constraints.\n\n"
@@ -144,7 +150,7 @@ _DECOMPOSE_PROMPT = (
     "synonyms. The search is lexical and an altered name will not match.\n"
     "2. One constraint per query. If the query asks for something that "
     "targets X and treats Y, that is two constraints.\n"
-    f"3. Return at most {_MAX_SUB_QUERIES} sub-queries. Fewer is fine.\n"
+    "3. Return at most 4 sub-queries. Fewer is fine.\n"
     "4. If the query expresses only one constraint, return it unchanged as "
     "a single sub-query.\n\n"
     "Query: {query}"
@@ -330,27 +336,30 @@ def _pool(ranked_lists: Sequence[Sequence[Passage]], *, limit: int) -> list[Cand
 @dataclass(frozen=True, slots=True)
 class DecomposeAgent:
     k: int = 20
+    #: Planned queries beside the original; three searches at the default.
+    sub_queries: int = _MAX_SUB_QUERIES
     #: Candidates reaching the unify call.
     #:
-    #: 40, back down from the 100 that measured 0.37947. Two reasons, and
-    #: the first is the measurement: widening 40 -> 100 bought **+0.001
-    #: recall@20**, so the pool was not where the answer was. The second is
-    #: that asking a model to order 100 lean rows is a harder task than the
-    #: benchmark needs -- `k` is 20, and everything past the fortieth
-    #: candidate is a row the model must read and reject.
+    #: 80. Ranking 20 out of 80 rather than out of 40 doubles what the
+    #: model can reach without changing what it is asked for -- it returns
+    #: 20 either way, so the extra rows cost prefill and no decode. At ~200
+    #: characters a candidate that is ~16k characters, roughly 5k tokens
+    #: against a 65,536-token context.
     #:
-    #: 40 also makes this directly comparable to `rerank40titlerelranked`
-    #: (0.39343), which sees the same count in the same encoding. The only
-    #: differences left are where the candidates came from and what the
-    #: model is asked to return.
-    fetch: int = 40
+    #: The earlier 100 was measured and reverted for the wrong reason: it
+    #: bought +0.001 recall@20 on `decompose`, where the pool was fed by
+    #: fragment-matching sub-queries and widening it added noise. Under
+    #: paraphrase every search asks the whole question, so a wider pool
+    #: holds more on-topic candidates rather than more distractors -- which
+    #: is why `rephrase` gained +0.078 recall where `decompose` gained
+    #: +0.011.
+    fetch: int = 80
     #: Retrieved per search before pooling.
     #:
-    #: Equal to `fetch`, so the pool can still be a genuine union -- a
-    #: candidate ranked 30th by two different searches reaches the prompt
-    #: where a narrower per-search fetch would drop it -- while the number
-    #: of rows the model reads stays at what reranking already uses.
-    per_query_fetch: int = 40
+    #: Equal to `fetch`, so the pool is a genuine union: a candidate ranked
+    #: 70th by two different searches reaches the prompt, where a narrower
+    #: per-search fetch would drop it before the union ever saw it.
+    per_query_fetch: int = 80
     #: Neighbour names kept per relation type, and relation types shown.
     #: Held at the values `rerank40titlerelranked` measured (0.39343) so a
     #: difference is attributable to decomposition rather than to encoding
@@ -443,7 +452,7 @@ class DecomposeAgent:
                 "returned no sub-queries, falling back to the original alone",
                 query.query_id,
             )
-        return wanted[:_MAX_SUB_QUERIES]
+        return wanted[: self.sub_queries]
 
     def _render(self, candidates: Sequence[Candidate], searches: Sequence[str]) -> str:
         """Candidates grouped under the search that found them.

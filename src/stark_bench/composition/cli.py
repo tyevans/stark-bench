@@ -302,6 +302,27 @@ _DEGRADING_WARNINGS = (
 )
 
 
+def _agent_params(agent: object) -> dict[str, object]:
+    """The agent's own scalar fields, for the report.
+
+    Read off the instance rather than the registry entry, so an agent built
+    any other way still records what it actually ran with -- the same
+    argument the budget block above makes.
+
+    Scalars only. A field holding a prompt or a provider is not a parameter
+    a reader compares two runs on, and dumping it would bury the three
+    numbers that matter.
+    """
+    fields = getattr(type(agent), "__dataclass_fields__", None)
+    if not fields:
+        return {}
+    return {
+        name: value
+        for name in fields
+        if isinstance(value := getattr(agent, name, None), int | float | str | bool)
+    }
+
+
 class _AgentWarnings(logging.Handler):
     """Separates a degraded run from a run that merely reported on itself.
 
@@ -845,6 +866,14 @@ async def _do_run(config: RunConfig) -> None:
             value = getattr(agent, cap, None)
             if value is not None:
                 cost[f"budget_{cap}"] = value
+        # The agent's OWN parameters, which live in `agent_registry` and so
+        # appear in no config file. `config_verbatim` is the config's bytes
+        # and the registry is code, so two runs of `rephrase` at fetch=40
+        # and fetch=80 were previously identical on disk apart from the
+        # metric -- which reads as an architecture result and is not one.
+        # This is the same gap `retrieval_is_exact` and `chat_n_ctx` close
+        # one layer down.
+        cost["agent_params"] = _agent_params(agent)
         # See `_AgentWarnings`. Recorded rather than only printed, because
         # the number that matters is read off the file months later.
         cost["agent_warnings"] = warnings.count
