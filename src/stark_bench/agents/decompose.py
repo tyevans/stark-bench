@@ -150,6 +150,22 @@ _DECOMPOSE_PROMPT = (
     "Query: {query}"
 )
 
+#: The shortlist wording, kept because it is a different instrument rather
+#: than a worse one.
+#:
+#: Measured on 50 queries: a MEDIAN of 2.5 candidates named out of 40, and
+#: 16 of 50 naming exactly one. Backfill keeps recall@20 whole, so what
+#: this trades is positions 3-20 -- which become retrieval order -- for a
+#: model that only commits where it is confident. If hit@1 is materially
+#: better this way, that is a result about precision and not a defect.
+_SHORTLIST_PROMPT_TAIL = (
+    "Return the bracketed indexes of the candidates you believe answer the "
+    "query, most relevant first: [4, 17, 2, ...]. Return at most 20, and "
+    "fewer -- even one -- when only a few are plausible. Do not pad the "
+    "list with candidates you do not believe. Do not repeat an index and "
+    "do not return an empty list."
+)
+
 _ORDER_PROMPT = (
     "You are choosing which entities answer a biomedical search query.\n\n"
     "QUERY: {query}\n\n"
@@ -162,10 +178,19 @@ _ORDER_PROMPT = (
     "that happened to find it. A candidate listed under one supplemental "
     "search may still be the best answer; a candidate listed under several "
     "may be no answer at all.\n\n"
-    "Return the bracketed indexes of the best candidates, most relevant "
-    "first, at most 20 of them: [4, 17, 2, ...]. Fewer than 20 is fine if "
-    "fewer are plausible. Do not repeat an index and do not return an "
-    "empty list."
+    "{instruction}"
+)
+
+
+_RANK_ALL_INSTRUCTION = (
+    "RANK the candidates -- do not select only the ones you are sure "
+    "about. Return exactly 20 bracketed indexes, best first: "
+    "[4, 17, 2, ...].\n\n"
+    "Return 20 even when only one or two look right. Scoring counts where "
+    "the answer lands in your list, so a low-confidence guess at position "
+    "20 costs you nothing and can only help; leaving it out throws the "
+    "position away. If fewer than 20 candidates exist, return all of them. "
+    "Do not repeat an index and do not return an empty list."
 )
 
 
@@ -224,9 +249,11 @@ class Ordering(BaseModel):
 
     indexes: list[int] = Field(
         description=(
-            "The bracketed indexes of the best candidates, most relevant "
-            "first. Return at most 20, fewer if fewer are plausible. Use "
-            "each index at most once, and invent no indexes."
+            "Exactly 20 bracketed indexes, ranked most relevant first, or "
+            "all of them if fewer than 20 exist. This is a ranking, not a "
+            "shortlist: include uncertain candidates at the bottom rather "
+            "than omitting them. Use each index at most once, and invent "
+            "no indexes."
         )
     )
 
@@ -349,6 +376,15 @@ class DecomposeAgent:
     #: the WHOLE question, so every search is full strength and every hit
     #: is on-topic.
     rephrase: bool = False
+    #: Ask for a full ranking of 20 rather than only the candidates the
+    #: model believes in.
+    #:
+    #: These are different instruments. Under MRR and recall@20, omitting a
+    #: candidate can only lose position -- a guess at rank 20 is free -- so
+    #: a full ranking should win on those. A shortlist commits only where
+    #: the model is confident, which is the better shape if hit@1 is what
+    #: matters. Measured separately rather than assumed.
+    rank_all: bool = True
 
     async def retrieve(self, query: Query, tools: Toolset) -> list[Ranked]:
         sub_queries = await self._plan(query, tools)
@@ -471,7 +507,16 @@ class DecomposeAgent:
         """
         try:
             chosen = await tools.extract(
-                _ORDER_PROMPT.format(query=query.text, groups=groups), Ordering
+                _ORDER_PROMPT.format(
+                    query=query.text,
+                    groups=groups,
+                    instruction=(
+                        _RANK_ALL_INSTRUCTION
+                        if self.rank_all
+                        else _SHORTLIST_PROMPT_TAIL
+                    ),
+                ),
+                Ordering,
             )
         except Exception:
             logger.warning("decompose: extract failed for query %s", query.query_id)

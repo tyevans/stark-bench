@@ -233,6 +233,14 @@ AGENTS: dict[str, Callable[[RunConfig], Agent]] = {
     # pieces. Isolates phrasing mismatch from conjunction handling: every
     # search asks the complete question, so no hit can be tangential.
     "rephrase": lambda config: DecomposeAgent(k=config.k, rephrase=True),
+    # Same as `rephrase`, but the model returns only the candidates it
+    # believes rather than a full 20. A different instrument: it trades
+    # positions 3-20 (which become retrieval order) for committing only
+    # where it is confident. Whether that is better depends entirely on
+    # whether hit@1 or MRR is the number you need.
+    "rephraseshort": lambda config: DecomposeAgent(
+        k=config.k, rephrase=True, rank_all=False
+    ),
 }
 
 

@@ -277,44 +277,70 @@ def test_the_prompt_asks_for_an_order_and_not_for_scores() -> None:
     warnings that the model gave the same one every time. `k` is 20 and the
     metric scores an ordering, so an ordering is what to ask for.
     """
-    from stark_bench.agents.decompose import Ordering, _ORDER_PROMPT
+    from stark_bench.agents.decompose import _ORDER_PROMPT, Ordering
 
-    assert "most relevant first" in _ORDER_PROMPT
-    assert "at most 20" in _ORDER_PROMPT
-    assert (
-        "score" not in _ORDER_PROMPT.lower()
-    ), "the prompt still mentions scoring; it must ask only for an order"
+    from stark_bench.agents.decompose import _RANK_ALL_INSTRUCTION
+
+    assert "RANK the candidates" in _RANK_ALL_INSTRUCTION
+    assert "score" not in _ORDER_PROMPT.lower().replace(
+        "scoring counts", ""
+    ), "the prompt still asks for scoring; it must ask only for an order"
     assert list(Ordering.model_fields) == [
         "indexes"
     ], f"the schema is not an ordering: {list(Ordering.model_fields)}"
 
 
-def test_the_rephrase_prompt_asks_for_whole_questions_not_pieces() -> None:
-    """The distinction is the entire point of the mode.
+def test_nothing_in_the_prompt_invites_a_short_list() -> None:
+    """Measured: an earlier wording produced a MEDIAN of 2.5 of 20.
 
-    A decomposed sub-query asks part of the question and can retrieve
-    tangentially; a paraphrase asks all of it, so every hit is on-topic and
-    the unify step has a much easier job.
+    "at most 20 ... fewer than 20 is fine if fewer are plausible" read as
+    an invitation to shortlist, and 96% of queries named fewer than 20 --
+    16 of 50 named exactly one. Backfill kept recall@20 intact, so nothing
+    failed; positions 3-20 were simply retrieval order, making the arm
+    `hybrid` below rank three while looking like a reranker.
+
+    The model cannot know that omitting is never better under this metric
+    unless the prompt says so, which is what the last clause asserts.
     """
-    from stark_bench.agents.decompose import _REPHRASE_PROMPT
+    from stark_bench.agents.decompose import Ordering
 
-    assert "THE SAME question, complete -- not a piece of it" in _REPHRASE_PROMPT
-    assert "Keep every constraint" in _REPHRASE_PROMPT
+    from stark_bench.agents.decompose import _RANK_ALL_INSTRUCTION
+
+    assert (
+        "at most 20" not in _RANK_ALL_INSTRUCTION
+    ), "'at most 20' invites a shortlist; the task is a ranking of 20"
+    assert "Return exactly 20" in _RANK_ALL_INSTRUCTION
+    assert "Return 20 even when only one or two look right" in _RANK_ALL_INSTRUCTION
+    assert "costs you nothing and can only help" in _RANK_ALL_INSTRUCTION, (
+        "the prompt does not tell the model that omitting is never better, "
+        "which is the fact that produced the short lists"
+    )
+    description = Ordering.model_fields["indexes"].description or ""
+    assert (
+        "shortlist" in description and "Exactly 20" in description
+    ), "the schema description still invites the shortfall the prompt fixed"
 
 
-def test_both_planning_prompts_demand_verbatim_entity_names() -> None:
-    """The measured gain is lexical; a paraphrased name destroys it.
+def test_the_two_instructions_ask_for_genuinely_different_things() -> None:
+    """Kept as a pair, not a fix and its predecessor.
 
-    A rewrite of `Chronic myeloid leukemia` to "chronic blood cancer of the
-    myeloid line" reads as a good paraphrase and silently drops the arm to
-    dense-only, with every count in the report clean.
+    Under MRR and recall@20 an omitted candidate can only lose position, so
+    a full ranking should win there. A shortlist commits only where the
+    model believes, which is the better shape when hit@1 is the number that
+    matters. Neither is assumed; both are run.
     """
-    from stark_bench.agents.decompose import _DECOMPOSE_PROMPT, _REPHRASE_PROMPT
+    from stark_bench.agents.decompose import (
+        _RANK_ALL_INSTRUCTION,
+        _SHORTLIST_PROMPT_TAIL,
+    )
 
-    for prompt in (_DECOMPOSE_PROMPT, _REPHRASE_PROMPT):
-        assert "EXACTLY" in prompt or "EXACTLY as they appear" in prompt
-        assert "lexical" in prompt
+    assert "Return exactly 20" in _RANK_ALL_INSTRUCTION
+    assert "fewer -- even one" in _SHORTLIST_PROMPT_TAIL
+    assert "Do not pad the list" in _SHORTLIST_PROMPT_TAIL
+    assert (
+        "costs you nothing" not in _SHORTLIST_PROMPT_TAIL
+    ), "the shortlist instruction must not carry the argument for padding"
 
 
-def test_rephrase_is_off_by_default_so_the_measured_arm_is_unchanged() -> None:
-    assert DecomposeAgent().rephrase is False
+def test_rank_all_is_the_default() -> None:
+    assert DecomposeAgent().rank_all is True

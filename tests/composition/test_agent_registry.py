@@ -77,6 +77,7 @@ def test_every_architecture_is_reachable_by_name():
         "rerank80titlerelranked",
         "decompose",
         "rephrase",
+        "rephraseshort",
         "rerank40titlerelhybrid",
         "rerank40titlereldense",
         "rerank40titlerelmatrix",
