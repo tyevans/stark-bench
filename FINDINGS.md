@@ -432,6 +432,79 @@ pays is untested.
 k=80, pool 80 -- is the one that should, and had not been run when this
 was written.
 
+## I.7d Restatement buys NO dense diversity, and all of its reach is lexical
+
+Ten `test-0.1` queries, four restatements each, `gemma-4-26b-qat`,
+embedded with `qwen3-embedding-0.6b` and the arm's own query prefix.
+
+**Effective rank** answers "how many independent perspectives did four
+restatements actually produce" -- the eigenvalue spread of the normalised
+Gram matrix, where 1.0 means every restatement points the same way and 4.0
+means mutually orthogonal:
+
+| prompt | cos(pairs) | cos(to original) | eff. rank (PR) | eff. rank (H) |
+|---|---|---|---|---|
+| "rewrite 4 different ways" | 0.9517 | 0.9593 | **1.08** | 1.21 |
+| six prescribed angles | 0.9188 | 0.9202 | **1.13** | 1.34 |
+
+**Four restatements yield ~1.1 directions.** Prescribing angles --
+mechanism, relational, taxonomic, keyword, declarative, clinical -- moves
+it by 0.05.
+
+Even the deliberately structural one does not escape. A bag-of-keywords
+restatement (`DCC-mediated attractive signaling actin filaments
+actin-binding LIM protein family`) sits at **0.9146** mean cosine to its
+three prose siblings, against `mechanism`'s 0.9159. Dropping it changes
+effective rank from 1.13/4 to 1.11/3 -- proportionally nothing.
+
+**This is the embedder working correctly, not the prompt failing.** A
+query encoder *should* map faithful paraphrases to one point; that
+invariance is the training objective. Asking for dense diversity through
+restatement fights it.
+
+Two reasons the angles collapse are worth separating. The general one is
+above. The specific one is that **PRIME queries are already fully
+specified** -- "which gene or protein is engaged in DCC-mediated
+attractive signaling, can bind to actin filaments, and belongs to the
+actin-binding LIM protein family" already states its mechanism, its
+relations and its taxonomy, so "restate from the mechanism angle" has
+nothing left to select.
+
+### Where the reach actually comes from
+
+Same restatements, retrieved per channel, Jaccard overlap between the
+sets each returns:
+
+| channel | Jaccard | distinct nodes reached, vs one search |
+|---|---|---|
+| semantic | 0.5934 | 1.56x |
+| **lexical** | **0.3174** | **2.31x** |
+| hybrid | 0.4189 | 1.92x |
+
+Vectors at cosine 0.92 retrieve 59% the same nodes. **BM25 retrieves only
+32% the same**, and the union of four restatements reaches 2.31x as many
+distinct nodes as any one of them.
+
+So `rephrase`'s +0.023 recall@20 for two extra searches (§I.7c) is **BM25
+term variation**, not semantic coverage. That sits directly on top of §I.1:
+relational text helped through the lexical channel (+22% against dense's
++2%), and query restatement widens through the lexical channel too. Same
+corpus, same mechanism, opposite ends of the pipeline.
+
+### What follows
+
+**Stop designing restatements for semantic angles.** They are unavailable,
+and the prompt engineering to chase them is wasted. Design them for
+**surface-form variation** -- synonyms, term density, word forms,
+keyword-versus-prose -- which is what the channel that pays actually keys
+on.
+
+**Genuine dense diversity requires leaving query space.** A hypothetical
+*document* (HyDE) lives where the corpus lives, and graph expansion reaches
+candidates by traversal rather than by text at all. Both are untested here,
+and both are the only routes left to widening the dense channel -- which
+has never moved in this project.
+
 ## I.8 Asking for a full ranking beats asking for a shortlist, and hit@1 is unmoved
 
 `rephrase` and `rephraseshort` differ only in the final instruction:
